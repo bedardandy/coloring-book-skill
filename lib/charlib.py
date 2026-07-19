@@ -258,24 +258,23 @@ def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
                   P(f"M {cx + ex - 6} {ey - 19} Q {cx + ex} {ey - 23} {cx + ex + 6} {ey - 19}", 3)
     beardsvg = ""
     if beard:
-        # clean jaw crescent: outer edge below the chin, inner edge well clear of
-        # the mouth zone; cheeks are suppressed (they collide with the beard band)
-        beardsvg = P(f"M {cx - r * 0.70} {cy + r * 0.08} "
-                     f"Q {cx - r * 0.72} {cy + r * 0.85} {cx} {cy + r * 1.12} "
-                     f"Q {cx + r * 0.72} {cy + r * 0.85} {cx + r * 0.70} {cy + r * 0.08} "
-                     f"Q {cx + r * 0.58} {cy + r * 0.42} {cx} {cy + r * 0.60} "
-                     f"Q {cx - r * 0.58} {cy + r * 0.42} {cx - r * 0.70} {cy + r * 0.08} Z", 3.5, "white")
+        # under-jaw fringe: a crescent hanging BELOW the face circle. No stroke
+        # crosses the face interior (an inner edge across the face reads as a
+        # giant grin), so the standard mouth stays untouched.
+        beardsvg = P(f"M {cx - r * 0.82} {cy + r * 0.57} "
+                     f"Q {cx - r * 0.55} {cy + r * 1.28} {cx} {cy + r * 1.30} "
+                     f"Q {cx + r * 0.55} {cy + r * 1.28} {cx + r * 0.82} {cy + r * 0.57} "
+                     f"Q {cx + r * 0.52} {cy + r * 0.98} {cx} {cy + r * 1.00} "
+                     f"Q {cx - r * 0.52} {cy + r * 0.98} {cx - r * 0.82} {cy + r * 0.57} Z", 3.5, "white")
     eyes = DOT(cx - ex, ey) + DOT(cx + ex, ey)
     if mouth == "open":  # closed D-shape: unambiguously joyful
         msvg = P(f"M {cx - r * 0.22} {cy + r * 0.40} Q {cx} {cy + r * 0.80} {cx + r * 0.22} {cy + r * 0.40} Z", 3.5, "white")
     elif mouth == "none":
         msvg = ""
-    elif beard:  # small, modest smile tucked inside the beard's clear zone
-        msvg = P(f"M {cx - r * 0.12} {cy + r * 0.28} Q {cx} {cy + r * 0.40} {cx + r * 0.12} {cy + r * 0.28}", 3.5)
-    else:  # narrow deep U (a wide flat arc reads as a smirk)
+    else:  # narrow deep U (a wide flat arc reads as a smirk) — bearded faces too
         msvg = P(f"M {cx - r * 0.24} {cy + r * 0.40} Q {cx} {cy + r * 0.70} {cx + r * 0.24} {cy + r * 0.40}", 4)
     cheeksvg = ""
-    if cheeks and extras and not freckles and not beard:
+    if cheeks and extras and not freckles:  # under-jaw beard leaves cheeks free
         cheeksvg = C(cx - r * 0.56, cy + r * 0.34, r * 0.10, 2.5) + \
                    C(cx + r * 0.56, cy + r * 0.34, r * 0.10, 2.5)
     out = s + hairsvg + beardsvg + browsvg + eyes + msvg + cheeksvg
