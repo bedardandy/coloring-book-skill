@@ -174,7 +174,8 @@ HAIR_STYLES = ("bob_bangs", "bob", "tousled", "long_wavy", "pigtails", "curly", 
 
 
 def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
-         headband=False, extras=True, brows=False, mouth="smile", cheeks=True):
+         headband=False, extras=True, brows=False, mouth="smile", cheeks=True,
+         beard=False):
     """Head with parametric hair/glasses/freckles. Draw AFTER body & arms.
     Hair+face occupy roughly a 1.3*r radius — keep props outside it.
     Friendliness defaults (anti-eerie): brows OFF (brows close to dot eyes read
@@ -255,6 +256,11 @@ def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
     if brows:  # raised high = friendly-surprised; never close above the eyes
         browsvg = P(f"M {cx - ex - 6} {ey - 19} Q {cx - ex} {ey - 23} {cx - ex + 6} {ey - 19}", 3) + \
                   P(f"M {cx + ex - 6} {ey - 19} Q {cx + ex} {ey - 23} {cx + ex + 6} {ey - 19}", 3)
+    beardsvg = ""
+    if beard:  # short friendly beard hugging the jaw, mouth stays visible above it
+        beardsvg = P(f"M {cx - r * 0.72} {cy + r * 0.15} Q {cx} {cy + r * 1.18} {cx + r * 0.72} {cy + r * 0.15} "
+                     f"Q {cx + r * 0.45} {cy + r * 0.55} {cx} {cy + r * 0.82} "
+                     f"Q {cx - r * 0.45} {cy + r * 0.55} {cx - r * 0.72} {cy + r * 0.15} Z", 3.5, "white")
     eyes = DOT(cx - ex, ey) + DOT(cx + ex, ey)
     if mouth == "open":  # closed D-shape: unambiguously joyful
         msvg = P(f"M {cx - r * 0.22} {cy + r * 0.40} Q {cx} {cy + r * 0.80} {cx + r * 0.22} {cy + r * 0.40} Z", 3.5, "white")
@@ -266,7 +272,7 @@ def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
     if cheeks and extras and not freckles:  # freckle clusters own the cheek area
         cheeksvg = C(cx - r * 0.56, cy + r * 0.34, r * 0.10, 2.5) + \
                    C(cx + r * 0.56, cy + r * 0.34, r * 0.10, 2.5)
-    out = s + hairsvg + browsvg + eyes + msvg + cheeksvg
+    out = s + hairsvg + beardsvg + browsvg + eyes + msvg + cheeksvg
     if glasses:
         gr = r * 0.30  # scale with the head — fixed-size lenses read as owl eyes on small figures
         out += C(cx - ex, ey, gr, 3.5) + C(cx + ex, ey, gr, 3.5) + LINE(cx - ex + gr, ey, cx + ex - gr, ey, 3.5)
@@ -280,7 +286,8 @@ def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
 def face_traits(cx, cy, r, t, extras=True):
     """face() driven by a character trait dict."""
     return face(cx, cy, r, hair=t.get("hair", "tousled"), glasses=t.get("glasses", False),
-                freckles=t.get("freckles", False), headband=t.get("headband", False), extras=extras)
+                freckles=t.get("freckles", False), headband=t.get("headband", False),
+                beard=t.get("beard", False), extras=extras)
 
 
 # ---------------------------------------------------------------- kid figures
