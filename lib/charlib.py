@@ -270,8 +270,8 @@ def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
         msvg = P(f"M {cx - r * 0.22} {cy + r * 0.40} Q {cx} {cy + r * 0.80} {cx + r * 0.22} {cy + r * 0.40} Z", 3.5, "white")
     elif mouth == "none":
         msvg = ""
-    elif beard:  # smaller, higher smile that stays inside the beard's clear zone
-        msvg = P(f"M {cx - r * 0.18} {cy + r * 0.30} Q {cx} {cy + r * 0.48} {cx + r * 0.18} {cy + r * 0.30}", 4)
+    elif beard:  # small, modest smile tucked inside the beard's clear zone
+        msvg = P(f"M {cx - r * 0.12} {cy + r * 0.28} Q {cx} {cy + r * 0.40} {cx + r * 0.12} {cy + r * 0.28}", 3.5)
     else:  # narrow deep U (a wide flat arc reads as a smirk)
         msvg = P(f"M {cx - r * 0.24} {cy + r * 0.40} Q {cx} {cy + r * 0.70} {cx + r * 0.24} {cy + r * 0.40}", 4)
     cheeksvg = ""
