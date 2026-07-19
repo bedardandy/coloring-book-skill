@@ -40,9 +40,12 @@ hair silhouette + glasses + freckles + motif + height, not facial geometry.
 ### 2. Mode + plan
 - **themed** (default): ~10 pages, each starring the kids together in one child's favorite
   activity; rotate whose interest leads each page; every kid appears on most pages.
-- **story** (ages 3-6): use the 10-beat arc in `reference/story-mode.md`. Captions on every
-  page: 15-25 words, simple present tense, repeat names, chant-along refrain every 1-2 pages,
-  the child acts (never watches). Low-stakes obstacles only (hidden toy, shy pet). No rhyme.
+- **story** (ages 3-6): use the 10-beat arc in `reference/story-mode.md`. If the user
+  hasn't specified a story, offer 2-3 tropes from `reference/story-tropes.md` matched to
+  the child's age and interests (one-sentence pitch each) and let them pick. Captions on
+  every page: 15-25 words, simple present tense, repeat names, chant-along refrain every
+  1-2 pages, the child acts (never watches). Low-stakes obstacles only (hidden toy, shy
+  pet). No rhyme.
 Plan page-type variety: cover, name-tracing page (large outline letters of the kids' names),
 scene pages, one find-the-X activity page, back cover ("Made with love for ...").
 
