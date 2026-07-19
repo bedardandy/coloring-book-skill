@@ -257,19 +257,25 @@ def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
         browsvg = P(f"M {cx - ex - 6} {ey - 19} Q {cx - ex} {ey - 23} {cx - ex + 6} {ey - 19}", 3) + \
                   P(f"M {cx + ex - 6} {ey - 19} Q {cx + ex} {ey - 23} {cx + ex + 6} {ey - 19}", 3)
     beardsvg = ""
-    if beard:  # short friendly beard hugging the jaw, mouth stays visible above it
-        beardsvg = P(f"M {cx - r * 0.72} {cy + r * 0.15} Q {cx} {cy + r * 1.18} {cx + r * 0.72} {cy + r * 0.15} "
-                     f"Q {cx + r * 0.45} {cy + r * 0.55} {cx} {cy + r * 0.82} "
-                     f"Q {cx - r * 0.45} {cy + r * 0.55} {cx - r * 0.72} {cy + r * 0.15} Z", 3.5, "white")
+    if beard:
+        # clean jaw crescent: outer edge below the chin, inner edge well clear of
+        # the mouth zone; cheeks are suppressed (they collide with the beard band)
+        beardsvg = P(f"M {cx - r * 0.70} {cy + r * 0.08} "
+                     f"Q {cx - r * 0.72} {cy + r * 0.85} {cx} {cy + r * 1.12} "
+                     f"Q {cx + r * 0.72} {cy + r * 0.85} {cx + r * 0.70} {cy + r * 0.08} "
+                     f"Q {cx + r * 0.58} {cy + r * 0.42} {cx} {cy + r * 0.60} "
+                     f"Q {cx - r * 0.58} {cy + r * 0.42} {cx - r * 0.70} {cy + r * 0.08} Z", 3.5, "white")
     eyes = DOT(cx - ex, ey) + DOT(cx + ex, ey)
     if mouth == "open":  # closed D-shape: unambiguously joyful
         msvg = P(f"M {cx - r * 0.22} {cy + r * 0.40} Q {cx} {cy + r * 0.80} {cx + r * 0.22} {cy + r * 0.40} Z", 3.5, "white")
     elif mouth == "none":
         msvg = ""
+    elif beard:  # smaller, higher smile that stays inside the beard's clear zone
+        msvg = P(f"M {cx - r * 0.18} {cy + r * 0.30} Q {cx} {cy + r * 0.48} {cx + r * 0.18} {cy + r * 0.30}", 4)
     else:  # narrow deep U (a wide flat arc reads as a smirk)
         msvg = P(f"M {cx - r * 0.24} {cy + r * 0.40} Q {cx} {cy + r * 0.70} {cx + r * 0.24} {cy + r * 0.40}", 4)
     cheeksvg = ""
-    if cheeks and extras and not freckles:  # freckle clusters own the cheek area
+    if cheeks and extras and not freckles and not beard:
         cheeksvg = C(cx - r * 0.56, cy + r * 0.34, r * 0.10, 2.5) + \
                    C(cx + r * 0.56, cy + r * 0.34, r * 0.10, 2.5)
     out = s + hairsvg + beardsvg + browsvg + eyes + msvg + cheeksvg
