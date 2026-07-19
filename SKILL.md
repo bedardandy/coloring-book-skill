@@ -9,6 +9,13 @@ Produce a letter-size vector PDF of bold line-art pages starring the user's kids
 Characters are PARAMETRIC (trait vectors), never photo-likeness generation — this guarantees
 the same recognizable character on every page and avoids identity drift entirely.
 
+**NON-NEGOTIABLE: this skill's quality lives in executing `lib/charlib.py` with Python**
+(cairosvg + ghostscript). Never re-implement the drawing library by hand or "approximate"
+its helpers in another language/canvas — hand-reimplementations lose the white-fill
+back-to-front layering that makes overlapping shapes read as solid objects (you get
+transparent outline soup: trees as crossing circles, paths through heads). If you cannot
+execute Python in your environment, STOP and tell the user that instead of improvising.
+
 **FIRST: read `reference/model-tiers.md` and pick your operating mode honestly**
 (full-creative / standard / conservative) based on your own capability tier. It also
 contains the universal pre-flight layout plan — every model bottom-crams first drafts

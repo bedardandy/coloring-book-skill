@@ -70,3 +70,21 @@ python3 make_book.py 05       # rebuild just page 5
 
 Photos of real children never belong in this pipeline — the skill extracts trait
 *buckets* ("short hair, glasses") at most, and works fine with none.
+
+## Using this outside Claude Code (other agents / LLMs)
+
+The skill is plain markdown + Python, so any agent can use it — but three things are
+non-negotiable, and skipping them is why hand-rolled attempts come out rough:
+
+1. **Execute `lib/charlib.py`** (Python + `cairosvg` + Ghostscript). Do not re-implement
+   the helpers "in the spirit of" the library — the geometry is battle-tested and the
+   helpers do ordered white-fill layering internally.
+2. **White fills, back-to-front.** Every solid shape is drawn with `fill="white"` over
+   what's behind it, in depth order, and figures get `matted()` halos. Outline-only
+   drawing produces transparent shapes whose strokes all cross each other.
+3. **Verify numerically** (see `reference/drawing-guide.md`): scene bbox ≥55% of page
+   height, nothing within 12px of the border, figures ≥180px. Every model bottom-crams
+   first drafts; arithmetic catches it when eyeballing doesn't.
+
+If your environment can't run Python, the honest move is to say so rather than
+approximate — the output difference is not subtle.
