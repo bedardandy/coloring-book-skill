@@ -30,6 +30,9 @@ For each kid collect/derive: name, age, hair style (one of `charlib.HAIR_STYLES`
 bob_bangs, bob [+headband], tousled, long_wavy, pigtails, curly, buzz), glasses y/n,
 freckles y/n, a personal motif (star/strawberry/truck/butterfly/dino/ball...), favorite
 things, relative height. Pets: species (dog/cat), coat (plain/spots/patch/stripes), collar.
+Record the OUTFIT in the trait dict and use it everywhere (`t["outfit"]`) — never
+override per-page, and when a cast recurs across books, copy trait dicts verbatim
+(silently changing a signature outfit or feature breaks recognition).
 Adults (grandparent etc.): long_wavy hair + glasses works well.
 
 If PHOTOS are provided: look at them ONLY to classify trait buckets (hair style/length,
@@ -68,9 +71,10 @@ weights. Keep pages deterministic; partial rebuild via `python make_book.py 03` 
 For everyday objects that have no helper (car, truck, tractor, train, boat, tree,
 barn, animals, playground gear...), do NOT invent complex geometry freehand — LLMs
 reliably botch object proportions. First check `charlib` for a helper
-(`car_side`, `pickup_truck`, `tractor`, `train_engine`, `bicycle`, `house`,
-`tree_round`, `tree_pine`, `horse`, `bird_side`, `swing_set`, plus `dog`,
-`cat_sitting`, `dino`, `couch`, `bed`, `armchair`); if none fits, follow the
+(60+ shapes: vehicles, buildings incl. `castle_small`/`treehouse`/`village_house`,
+animals incl. `dog_sit`/`dog_sleep`/`reindeer`/`lion`/`baby_goat`, furniture, food,
+costume props like `chef_hat`/`bib_apron`/`tiara`, scene props like `tent`/`campfire`/
+`ferris_wheel`/`lamppost`/`wardrobe` — grep charlib for `^def`); if none fits, follow the
 relative-proportion recipes in `reference/shape-cookbook.md` and build the object
 from primitives at your chosen scale. Wrap each placed object in `matted()` over any
 background. See `CREDITS.md` for the recipes' provenance.

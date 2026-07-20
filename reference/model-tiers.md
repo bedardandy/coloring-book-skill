@@ -56,3 +56,10 @@ In order of preference:
 3. **Escalate the build**: recommend the user re-run the book with a stronger model,
    stating specifically which pages/elements are below bar and why.
 Never ship a page you could not verify numerically + visually; say so instead.
+
+## When a reported defect "persists" after your fix
+Before iterating again, re-diagnose WHICH stroke the reviewer is actually seeing — it
+may not be the one you changed. (Case study: a "too-big mouth" survived two smile
+shrinks because the offending stroke was the beard's inner edge, not the mouth.) Render
+the isolated element large, identify every stroke in the flagged region, and only then
+fix. Two blind retries on the wrong stroke = escalate per the ladder above.

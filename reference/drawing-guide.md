@@ -74,3 +74,25 @@ roofs that don't overhang). Side-profile objects face right; mirror with `GM()`.
 ## Print
 - `build()` renders letter-size vector PDF (612x792pt) — never rasterize pages.
 - One page per builder function; BUILDERS list + argv substring filter = partial rebuilds.
+
+## Costumes, facial accessories & props on figures (lessons from user pushback)
+- **Never stroke across the face interior.** An accessory edge crossing the face gets
+  read AS a facial feature (a beard's inner arc reads as a giant grin no matter how
+  small the real mouth is). Beards hang UNDER the jaw (see charlib `face(beard=True)`);
+  glasses/masks are the only sanctioned face-crossing shapes.
+- **One silhouette + at most two accents per costume overlay.** A bib apron = one
+  outline + waist line + one low pocket. Stacking strap + bib + bow + pocket + tool on
+  a small chest reads as clutter every time.
+- **Props must match their iconic silhouette** (a chef toque = straight band + mushroom
+  puff overhanging it; wider than tall). If a prop needs a caption to identify it, redraw it.
+- **Face clearance is numeric:** no prop/held-item center within 1.3×r of any face
+  center (a gift held "up" drifts onto the face — the caption said hand, the render said face).
+
+## Foliage & structures in trees
+- Big canopies need TEXTURE: scallops along the outer rim + scattered inner leaf marks.
+  Bare overlapping circles read as balloons. Keep inner marks ASYMMETRIC — two marks at
+  the same height read as a pair of eyes.
+- A structure in a tree sits BELOW/BESIDE the foliage with visible support (fork of
+  branches, platform planks) — a house floating inside a leaf blob drowns.
+- Ladders/ropes attach beside the trunk, never overlapping it (rails over the trunk
+  crowd out its silhouette).

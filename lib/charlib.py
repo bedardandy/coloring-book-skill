@@ -1061,3 +1061,824 @@ def matted(inner, pad=9):
     # adding stroke attrs here would duplicate attributes on stroked elements
     mat = mat.replace('fill="black"', 'fill="white"')
     return mat + inner
+
+
+# ---------------------------------------------------------------- scene & prop library (harvested from production books, 2026-07)
+def dog_sit(t, long_nose=False, wink=False):
+    """Sitting dog facing right, origin at ground. ~150 tall."""
+    out = []
+    out.append(P("M -46 0 Q -62 -60 -28 -86 Q -4 -100 18 -84 Q 34 -70 32 -40 Q 30 -12 24 0 Z", 4.5, "white"))
+    out.append(P("M 6 -60 L 10 0 M 24 -58 L 28 0", 4.5))
+    out.append(P("M 4 0 L 16 0 M 22 0 L 34 0", 4))
+    out.append(P("M -46 -8 Q -68 -14 -66 -34 Q -56 -30 -48 -22", 4, "white"))  # tail
+    out.append(C(28, -110, 26, 4.5, "white"))                                  # head
+    if long_nose:
+        out.append(P("M 48 -106 Q 70 -104 68 -92 Q 58 -84 42 -90", 4, "white"))
+        out.append(DOT(65, -98, 3.5))
+    else:
+        out.append(P("M 48 -106 Q 62 -104 60 -94 Q 52 -88 42 -92", 4, "white"))
+        out.append(DOT(58, -100, 3.5))
+    if wink:
+        out.append(P("M 24 -118 Q 29 -114 34 -118", 3))
+    else:
+        out.append(DOT(30, -116, 3))
+    out.append(P("M 46 -90 Q 42 -84 36 -86", 3.5))
+    if t.get("floppy_ears", True):
+        out.append(P("M 14 -128 Q 0 -138 -4 -118 Q -4 -102 8 -98 Q 14 -110 16 -122", 4, "white"))
+    if t.get("coat") == "patch":
+        out.append(E(22, -118, 10, 12, 3))
+    if t.get("collar", True):
+        out.append(P("M 8 -94 Q 22 -86 38 -90", 3.5))
+        out.append(C(24, -84, 4.5, 3, "white"))
+    return "".join(out)
+
+
+def dog_sleep(t, long_nose=False, zzz=True):
+    """Dog lying down 'asleep', head on paws, origin at ground. Facing right."""
+    out = []
+    out.append(E(-10, -34, 62, 32, 4.5, "white"))                              # body
+    out.append(P("M -70 -22 Q -88 -30 -84 -48 Q -74 -42 -66 -34", 4, "white"))  # tail
+    out.append(C(52, -34, 24, 4.5, "white"))                                   # head low
+    if long_nose:
+        out.append(P("M 70 -30 Q 90 -28 88 -18 Q 78 -12 64 -16", 4, "white"))
+        out.append(DOT(85, -24, 3.2))
+    else:
+        out.append(P("M 70 -30 Q 82 -28 80 -18 Q 72 -14 62 -18", 4, "white"))
+        out.append(DOT(77, -24, 3.2))
+    out.append(P("M 44 -42 Q 49 -38 54 -42", 3))                               # closed eye
+    out.append(P("M 38 -54 Q 24 -62 22 -44 Q 24 -32 36 -30", 4, "white"))      # ear
+    out.append(P("M 30 -12 L 78 -12", 4))                                      # paws line
+    out.append(P("M 34 -12 Q 34 -4 42 -4 L 70 -4 Q 78 -4 78 -12", 4, "white"))
+    if t.get("coat") == "patch":
+        out.append(E(48, -44, 9, 10, 3))
+    if zzz:
+        out.append(TXT(96, -76, "z", 17) + TXT(110, -92, "z", 14))
+    return "".join(out)
+
+
+def sock(cx, cy, s=1.0, rot=0):
+    d = (f"M {-9*s} {-22*s} L {9*s} {-22*s} L {9*s} {2*s} Q {9*s} {12*s} {0} {14*s} "
+         f"Q {-14*s} {16*s} {-15*s} {6*s} Q {-15*s} {0} {-9*s} {-2*s} Z")
+    inner = P(f"M {-9*s} {-16*s} L {9*s} {-16*s}", 3)
+    return G(cx, cy, P(d, 3.5, "white") + inner, 1.0, rot)
+
+
+def cushion_fort(cx, gy):
+    out = []
+    for i, (dx, dy, w_, h_) in enumerate([(-70, 0, 90, 52), (20, 0, 90, 52), (-95, -52, 80, 48),
+                                          (45, -52, 80, 48), (-25, -100, 96, 50)]):
+        out.append(rrect(cx + dx, gy + dy - h_, w_, h_, 10, 4.5, "white"))
+        out.append(P(f"M {cx+dx+10} {gy+dy-h_/2} L {cx+dx+w_-10} {gy+dy-h_/2}", 2.5))
+    return "".join(out)
+
+
+def table(cx, gy, w=240, h=120):
+    out = [P(f"M {cx-w/2} {gy-h} L {cx+w/2} {gy-h} L {cx+w/2} {gy-h+16} L {cx-w/2} {gy-h+16} Z", 4.5, "white")]
+    out.append(LINE(cx - w / 2 + 18, gy - h + 16, cx - w / 2 + 18, gy, 4.5))
+    out.append(LINE(cx + w / 2 - 18, gy - h + 16, cx + w / 2 - 18, gy, 4.5))
+    return "".join(out)
+
+
+def food_bowl(cx, gy, label=""):
+    out = [P(f"M {cx-36} {gy-24} L {cx+36} {gy-24} L {cx+28} {gy} L {cx-28} {gy} Z", 4.5, "white")]
+    if label:
+        out.append(TXT(cx, gy - 7, label, 14))
+    return "".join(out)
+
+
+def dirt_hole(cx, gy):
+    out = [E(cx, gy, 46, 12, 4)]
+    for dx, dy in [(-60, -40), (-30, -66), (10, -74), (46, -60), (70, -30)]:
+        out.append(P(f"M {cx+dx} {gy+dy} Q {cx+dx+6} {gy+dy-10} {cx+dx+12} {gy+dy}", 3))
+    return "".join(out)
+
+
+def kibble(cx, cy, n=7):
+    import math as m
+    out = [P(f"M {cx-34} {cy} Q {cx} {cy-30} {cx+34} {cy} Z", 4, "white")]
+    for i in range(n):
+        a = m.pi * (0.15 + 0.7 * i / max(1, n - 1))
+        out.append(DOT(cx - 40 * m.cos(a) * (0.6 + 0.4 * (i % 2)), cy - 24 - 14 * m.sin(a) - (i % 3) * 8, 3.5))
+    return "".join(out)
+
+
+def tiara(cx, cy, w=44):
+    out = [P(f"M {cx-w/2} {cy} Q {cx} {cy-8} {cx+w/2} {cy}", 3.5)]
+    for dx in (-w * 0.3, 0, w * 0.3):
+        out.append(LINE(cx + dx, cy - 4, cx + dx, cy - 16, 3.5))
+        out.append(DOT(cx + dx, cy - 19, 3))
+    return "".join(out)
+
+
+def chef_hat(cx, cy, w=54):
+    """Classic toque: straight band + tall puff with three distinct bumps."""
+    bw = w * 0.64
+    out = []
+    out.append(P(f"M {cx-bw/2} {cy-2} "
+                 f"Q {cx-w*0.72} {cy-16} {cx-w*0.66} {cy-34} "
+                 f"Q {cx-w*0.62} {cy-54} {cx-w*0.30} {cy-50} "
+                 f"Q {cx-w*0.28} {cy-68} {cx} {cy-62} "
+                 f"Q {cx+w*0.28} {cy-68} {cx+w*0.30} {cy-50} "
+                 f"Q {cx+w*0.62} {cy-54} {cx+w*0.66} {cy-34} "
+                 f"Q {cx+w*0.72} {cy-16} {cx+bw/2} {cy-2} Z", 4, "white"))
+    # pleat lines on the puff
+    out.append(P(f"M {cx-w*0.20} {cy-6} L {cx-w*0.23} {cy-42}", 2.5))
+    out.append(P(f"M {cx} {cy-6} L {cx} {cy-48}", 2.5))
+    out.append(P(f"M {cx+w*0.20} {cy-6} L {cx+w*0.23} {cy-42}", 2.5))
+    # band with double line
+    out.append(rrect(cx - bw / 2, cy - 2, bw, 20, 4, 4, "white"))
+    out.append(LINE(cx - bw / 2 + 4, cy + 5, cx + bw / 2 - 4, cy + 5, 2.5))
+    return "".join(out)
+
+
+def bib_apron():
+    """Baker's bib apron overlay for a baker figure — one clean silhouette, draw AFTER his figure.
+    Kept deliberately simple: a busy chest (straps/bows/tools) reads as clutter."""
+    out = []
+    # single outline: narrow bib at the chest flaring into the skirt
+    out.append(P("M -11 -146 L 11 -146 L 13 -102 L 26 -96 L 29 -44 "
+                 "Q 0 -35 -29 -44 L -26 -96 L -13 -102 Z", 3.5, "white"))
+    # waist line
+    out.append(P("M -25 -95 L 25 -95", 2.5))
+    # one pocket, low on the skirt where there's room
+    out.append(rrect(-9, -80, 18, 15, 3, 2.5, "white"))
+    return "".join(out)
+
+
+def briefcase(cx, gy, s=1.0):
+    return (rrect(cx - 34 * s, gy - 48 * s, 68 * s, 48 * s, 8, 4, "white") +
+            P(f"M {cx-12*s} {gy-48*s} Q {cx-12*s} {gy-60*s} {cx} {gy-60*s} Q {cx+12*s} {gy-60*s} {cx+12*s} {gy-48*s}", 3.5) +
+            rrect(cx - 7 * s, gy - 32 * s, 14 * s, 10 * s, 2, 2.5, "white"))
+
+
+def cupcake(cx, gy, s=1.0, crowned=False):
+    out = [P(f"M {cx-16*s} {gy-18*s} L {cx+16*s} {gy-18*s} L {cx+11*s} {gy} L {cx-11*s} {gy} Z", 3.5, "white")]
+    out.append(LINE(cx - 8 * s, gy - 16 * s, cx - 6 * s, gy - 2 * s, 2) + LINE(cx + 8 * s, gy - 16 * s, cx + 6 * s, gy - 2 * s, 2))
+    out.append(P(f"M {cx-16*s} {gy-18*s} Q {cx-14*s} {gy-34*s} {cx} {gy-34*s} Q {cx+14*s} {gy-34*s} {cx+16*s} {gy-18*s}", 3.5, "white"))
+    out.append(P(f"M {cx-9*s} {gy-30*s} Q {cx} {gy-46*s} {cx+9*s} {gy-30*s}", 3, "white"))
+    if crowned:
+        out.append(P(f"M {cx-7*s} {gy-46*s} L {cx-7*s} {gy-54*s} L {cx-2*s} {gy-49*s} L {cx} {gy-56*s} L {cx+2*s} {gy-49*s} L {cx+7*s} {gy-54*s} L {cx+7*s} {gy-46*s} Z", 2.5, "white"))
+    else:
+        out.append(DOT(cx, gy - 48 * s, 3 * s))
+    return "".join(out)
+
+
+def bread_loaf(cx, gy, s=1.0):
+    return (P(f"M {cx-30*s} {gy} Q {cx-34*s} {gy-26*s} {cx} {gy-28*s} Q {cx+34*s} {gy-26*s} {cx+30*s} {gy} Z", 3.5, "white") +
+            P(f"M {cx-14*s} {gy-22*s} L {cx-8*s} {gy-14*s} M {cx-2*s} {gy-24*s} L {cx+4*s} {gy-16*s} M {cx+10*s} {gy-22*s} L {cx+16*s} {gy-14*s}", 2.5))
+
+
+def oven(cx, gy, w=190):
+    out = [rrect(cx - w / 2, gy - 200, w, 200, 8, 5, "white")]
+    out.append(rrect(cx - w / 2 + 22, gy - 150, w - 44, 100, 6, 4, "white"))
+    out.append(LINE(cx - w / 2 + 22, gy - 160, cx + w / 2 - 22, gy - 160, 3.5))
+    for i, dx in enumerate((-40, -13, 13, 40)):
+        out.append(C(cx + dx, gy - 180, 7, 3, "white"))
+    out.append(P(f"M {cx-26} {gy-118} Q {cx} {gy-132} {cx+26} {gy-118}", 3))  # bread inside!
+    return "".join(out)
+
+
+def mixing_bowl(cx, gy, s=1.0):
+    out = [P(f"M {cx-52*s} {gy-58*s} Q {cx-56*s} {gy} {cx} {gy} Q {cx+56*s} {gy} {cx+52*s} {gy-58*s} Z", 4.5, "white")]
+    out.append(P(f"M {cx-52*s} {gy-58*s} L {cx+52*s} {gy-58*s}", 3.5))
+    out.append(LINE(cx + 20 * s, gy - 58 * s, cx + 52 * s, gy - 108 * s, 4))  # spoon
+    out.append(E(cx + 56 * s, gy - 114 * s, 10 * s, 14 * s, 3.5, "white"))
+    return "".join(out)
+
+
+def display_case(cx, gy, w=260, h=170):
+    out = [rrect(cx - w / 2, gy - h, w, h, 6, 5, "white")]
+    out.append(LINE(cx - w / 2 + 10, gy - h * 0.52, cx + w / 2 - 10, gy - h * 0.52, 3.5))
+    for i, dx in enumerate((-w * 0.3, 0, w * 0.3)):
+        out.append(cupcake(cx + dx, gy - h * 0.58, 0.9, crowned=True))
+    out.append(bread_loaf(cx - w * 0.25, gy - 12, 1.0))
+    out.append(cupcake(cx + w * 0.22, gy - 12, 1.0))
+    return "".join(out)
+
+
+def easel(cx, gy):
+    out = [P(f"M {cx-52} {gy} L {cx} {gy-190} L {cx+52} {gy} M {cx} {gy-190} L {cx} {gy-30}", 4)]
+    out.append(rrect(cx - 70, gy - 180, 140, 110, 4, 4.5, "white"))
+    out.append(crown(cx - 24, gy - 110, 44, 26, 3))
+    out.append(heart(cx + 34, gy - 122, 12, 3))
+    out.append(P(f"M {cx-50} {gy-92} Q {cx-30} {gy-84} {cx-10} {gy-92}", 2.5))
+    return "".join(out)
+
+
+def desk(cx, gy, w=300):
+    out = [P(f"M {cx-w/2} {gy-120} L {cx+w/2} {gy-120} L {cx+w/2} {gy-104} L {cx-w/2} {gy-104} Z", 4.5, "white")]
+    out.append(LINE(cx - w / 2 + 16, gy - 104, cx - w / 2 + 16, gy, 4.5))
+    out.append(LINE(cx + w / 2 - 16, gy - 104, cx + w / 2 - 16, gy, 4.5))
+    # monitor
+    out.append(rrect(cx - 60, gy - 210, 120, 84, 6, 4.5, "white"))
+    out.append(P(f"M {cx-10} {gy-126} L {cx-6} {gy-108} L {cx+6} {gy-108} L {cx+10} {gy-126}", 3.5, "white"))
+    out.append(P(f"M {cx-40} {gy-170} Q {cx-20} {gy-186} {cx-8} {gy-168} M {cx+6} {gy-158} L {cx+40} {gy-158}", 2.5))
+    # keyboard + mug
+    out.append(rrect(cx - 44, gy - 132, 88, 12, 3, 3, "white"))
+    out.append(rrect(cx + 92, gy - 146, 26, 26, 4, 3.5, "white"))
+    out.append(P(f"M {cx+118} {gy-140} Q {cx+130} {gy-138} {cx+118} {gy-128}", 3))
+    return "".join(out)
+
+
+def office_chair(cx, gy):
+    return (rrect(cx - 26, gy - 118, 52, 60, 8, 4, "white") +
+            rrect(cx - 30, gy - 64, 60, 12, 4, 4, "white") +
+            LINE(cx, gy - 52, cx, gy - 22, 4) +
+            P(f"M {cx-28} {gy} L {cx+28} {gy} M {cx} {gy-22} L {cx-22} {gy} M {cx} {gy-22} L {cx+22} {gy}", 3.5))
+
+
+def sticky_notes(spots):
+    out = []
+    for x, y, r in spots:
+        out.append(f'<rect x="{x}" y="{y}" width="26" height="26" rx="2" fill="white" stroke="black" stroke-width="3" transform="rotate({r} {x+13} {y+13})"/>')
+        out.append(f'<line x1="{x+5}" y1="{y+10}" x2="{x+21}" y2="{y+10}" stroke="black" stroke-width="2" transform="rotate({r} {x+13} {y+13})"/>')
+    return "".join(out)
+
+
+def village_house(cx, gy, w=280):
+    """Two-story New England clapboard village house with a front porch."""
+    x0 = cx - w / 2
+    out = [rrect(x0 + w * 0.05, gy - w * 0.62, w * 0.9, w * 0.62, 4, 5, "white")]
+    out.append(P(f"M {x0} {gy-w*0.62} L {cx} {gy-w*0.95} L {x0+w} {gy-w*0.62} Z", 5, "white"))
+    out.append(rrect(cx + w * 0.16, gy - w * 0.92, w * 0.09, w * 0.16, 2, 4, "white"))  # chimney
+    # clapboard hints
+    out.append(P(f"M {x0+w*0.08} {gy-w*0.34} L {x0+w*0.92} {gy-w*0.34}", 2.5))
+    # upstairs windows
+    for wx in (cx - w * 0.26, cx + w * 0.26):
+        out.append(rrect(wx - 20, gy - w * 0.56, 40, 44, 3, 3.5, "white"))
+        out.append(LINE(wx, gy - w * 0.56, wx, gy - w * 0.56 + 44, 2.5))
+        out.append(LINE(wx - 20, gy - w * 0.56 + 22, wx + 20, gy - w * 0.56 + 22, 2.5))
+    # porch: roof + posts + steps
+    out.append(P(f"M {x0-6} {gy-w*0.30} L {x0+w+6} {gy-w*0.30} L {x0+w} {gy-w*0.24} L {x0} {gy-w*0.24} Z", 4, "white"))
+    for px in (x0 + w * 0.08, x0 + w * 0.36, x0 + w * 0.64, x0 + w * 0.92):
+        out.append(LINE(px, gy - w * 0.24, px, gy, 4))
+    out.append(rrect(cx - w * 0.09, gy - w * 0.20, w * 0.18, w * 0.20, 3, 4, "white"))  # door
+    out.append(DOT(cx + w * 0.05, gy - w * 0.10, 3.5))
+    out.append(P(f"M {cx-w*0.15} {gy} L {cx+w*0.15} {gy} L {cx+w*0.12} {gy+14} L {cx-w*0.12} {gy+14} Z", 3.5, "white"))
+    return "".join(out)
+
+
+def dress_rack(cx, gy):
+    """Wardrobe rack with three little dresses on hangers."""
+    out = [LINE(cx - 110, gy - 200, cx + 110, gy - 200, 4.5),
+           LINE(cx - 100, gy - 200, cx - 100, gy, 4.5), LINE(cx + 100, gy - 200, cx + 100, gy, 4.5),
+           P(f"M {cx-112} {gy} L {cx-88} {gy} M {cx+88} {gy} L {cx+112} {gy}", 4)]
+    for i, dx in enumerate((-60, 0, 60)):
+        hx = cx + dx
+        out.append(P(f"M {hx} {gy-200} L {hx} {gy-186}", 3))
+        out.append(P(f"M {hx-16} {gy-172} Q {hx} {gy-182} {hx+16} {gy-172} L {hx+26} {gy-108} "
+                     f"Q {hx} {gy-98} {hx-26} {gy-108} Z", 3.5, "white"))
+        if i == 0:
+            out.append(star(hx, gy - 138, 7, 2.5, "white"))
+        elif i == 1:
+            out.append(heart(hx, gy - 138, 6, 2.5))
+        else:
+            out.append(flower(hx, gy - 140, 0.6, 2.2))
+    return "".join(out)
+
+
+def castle_small(cx, gy, w=380):
+    """Story Land fairy-tale castle, compact."""
+    x0 = cx - w / 2
+    out = []
+    out.append(P(f"M {x0+w*0.18} {gy} L {x0+w*0.18} {gy-w*0.42} "
+                 + "".join(f"L {x0+w*(0.18+i*0.08)} {gy-w*(0.42 if i%2 else 0.38)} " for i in range(1, 9))
+                 + f"L {x0+w*0.82} {gy} Z", 5, "white"))
+    for tx in (x0 + w * 0.12, x0 + w * 0.88):
+        out.append(P(f"M {tx-w*0.09} {gy} L {tx-w*0.09} {gy-w*0.52} L {tx+w*0.09} {gy-w*0.52} L {tx+w*0.09} {gy} Z", 5, "white"))
+        out.append(P(f"M {tx-w*0.12} {gy-w*0.52} L {tx} {gy-w*0.72} L {tx+w*0.12} {gy-w*0.52} Z", 5, "white"))
+        out.append(LINE(tx, gy - w * 0.72, tx, gy - w * 0.80, 4))
+        out.append(P(f"M {tx} {gy-w*0.80} L {tx+w*0.07} {gy-w*0.775} L {tx} {gy-w*0.75} Z", 3.5, "white"))
+    out.append(P(f"M {cx-w*0.07} {gy} L {cx-w*0.07} {gy-w*0.20} Q {cx} {gy-w*0.28} {cx+w*0.07} {gy-w*0.20} L {cx+w*0.07} {gy} Z", 4))
+    for wx in (cx - w * 0.22, cx + w * 0.22):
+        out.append(P(f"M {wx-11} {gy-w*0.20} Q {wx-11} {gy-w*0.27} {wx} {gy-w*0.27} Q {wx+11} {gy-w*0.27} {wx+11} {gy-w*0.20} L {wx+11} {gy-w*0.12} L {wx-11} {gy-w*0.12} Z", 3.5))
+    return "".join(out)
+
+
+def pumpkin_coach(cx, gy, s=1.0):
+    """Cinderella pumpkin coach with wheels."""
+    out = []
+    out.append(E(cx, gy - 62 * s, 58 * s, 50 * s, 5, "white"))
+    for dx in (-30, 0, 30):
+        out.append(P(f"M {cx+dx*s} {gy-108*s} Q {cx+dx*1.5*s} {gy-62*s} {cx+dx*s} {gy-16*s}", 3.5))
+    out.append(P(f"M {cx-14*s} {gy-108*s} Q {cx} {gy-122*s} {cx+10*s} {gy-110*s} Q {cx+2*s} {gy-104*s} {cx-14*s} {gy-108*s} Z", 3.5, "white"))
+    out.append(P(f"M {cx-16*s} {gy-78*s} Q {cx-16*s} {gy-92*s} {cx} {gy-92*s} Q {cx+16*s} {gy-92*s} {cx+16*s} {gy-78*s} L {cx+16*s} {gy-48*s} L {cx-16*s} {gy-48*s} Z", 3.5))
+    out.append(C(cx - 40 * s, gy - 12 * s, 13 * s, 4, "white") + C(cx + 40 * s, gy - 12 * s, 13 * s, 4, "white"))
+    return "".join(out)
+
+
+def reindeer(cx, gy, s=1.0):
+    """Friendly reindeer: horse-pattern body + antlers + round nose."""
+    out = []
+    out.append(E(cx, gy - 52 * s, 46 * s, 28 * s, 4.5, "white"))
+    for lx in (-30, -12, 12, 30):
+        out.append(LINE(cx + lx * s, gy - 26 * s, cx + lx * s, gy, 4.5))
+        out.append(LINE(cx + (lx - 4) * s, gy, cx + (lx + 4) * s, gy, 4))
+    out.append(P(f"M {cx+34*s} {gy-70*s} Q {cx+44*s} {gy-86*s} {cx+58*s} {gy-88*s} L {cx+60*s} {gy-74*s} Q {cx+48*s} {gy-64*s} {cx+38*s} {gy-58*s} Z", 4.5, "white"))
+    out.append(C(cx + 62 * s, gy - 86 * s, 14 * s, 4.5, "white"))
+    out.append(C(cx + 74 * s, gy - 82 * s, 5 * s, 3.5, "white"))   # round nose!
+    out.append(DOT(cx + 60 * s, gy - 90 * s, 2.6))
+    out.append(P(f"M {cx+52*s} {gy-98*s} L {cx+44*s} {gy-116*s} M {cx+48*s} {gy-108*s} L {cx+40*s} {gy-112*s} M {cx+44*s} {gy-116*s} L {cx+46*s} {gy-124*s}", 3.5))
+    out.append(P(f"M {cx+62*s} {gy-98*s} L {cx+70*s} {gy-118*s} M {cx+66*s} {gy-108*s} L {cx+74*s} {gy-112*s} M {cx+70*s} {gy-118*s} L {cx+66*s} {gy-126*s}", 3.5))
+    out.append(P(f"M {cx-44*s} {gy-62*s} Q {cx-54*s} {gy-70*s} {cx-50*s} {gy-78*s}", 3.5))
+    return "".join(out)
+
+
+def candy_cane(cx, gy, h=120, sw=5):
+    out = [P(f"M {cx} {gy} L {cx} {gy-h+26} Q {cx} {gy-h} {cx+20} {gy-h} Q {cx+38} {gy-h} {cx+38} {gy-h+22}", sw, "white")]
+    for i in range(5):
+        y = gy - 14 - i * 20
+        out.append(P(f"M {cx-7} {y} L {cx+7} {y-11}", 4.5))
+    return "".join(out)
+
+
+def ferris_wheel(cx, cy, r=110):
+    out = [C(cx, cy, r, 4.5), C(cx, cy, 8, 4, "white")]
+    import math as m
+    for i in range(6):
+        a = i * m.pi / 3
+        gx, gy2 = cx + r * m.cos(a), cy + r * m.sin(a)
+        out.append(LINE(cx, cy, gx, gy2, 3))
+        out.append(P(f"M {gx-12} {gy2} Q {gx-12} {gy2+16} {gx} {gy2+16} Q {gx+12} {gy2+16} {gx+12} {gy2} Z", 3.5, "white"))
+    out.append(LINE(cx - r * 0.55, cy + r + 42, cx, cy, 4.5))
+    out.append(LINE(cx + r * 0.55, cy + r + 42, cx, cy, 4.5))
+    return "".join(out)
+
+
+def baby_goat():
+    """Baby goat (ported from the family's first book), origin at feet."""
+    out = []
+    out.append(P("M -50 -38 Q -56 -66 -30 -70 L 26 -70 Q 52 -68 50 -42 Q 48 -22 26 -20 L -30 -20 Q -50 -22 -50 -38 Z", 4.5, "white"))
+    for lx in (-38, -18, 12, 34):
+        out.append(P(f"M {lx} -20 L {lx} 0", 4.5))
+        out.append(P(f"M {lx-4} 0 L {lx+4} 0", 4))
+    out.append(P("M 42 -66 Q 40 -92 60 -96 Q 84 -98 88 -80 Q 90 -66 76 -60 Q 60 -54 48 -58 Q 42 -60 42 -66 Z", 4.5, "white"))
+    out.append(P("M 52 -92 Q 40 -104 32 -96 Q 40 -86 50 -88", 4, "white"))
+    out.append(P("M 74 -96 L 70 -112 M 82 -94 L 84 -110", 4))
+    out.append(DOT(76, -82, 3))
+    out.append(P("M 86 -70 Q 92 -68 90 -62", 3.5))
+    out.append(P("M 44 -58 Q 52 -50 60 -54", 3) + C(52, -47, 4, 2.5, "white"))
+    out.append(P("M -50 -50 Q -62 -58 -58 -68", 4))
+    return "".join(out)
+
+
+def wooden_sign(cx, gy, text, w=170):
+    out = [LINE(cx, gy, cx, gy - 96, 5)]
+    out.append(P(f"M {cx-w/2} {gy-96} L {cx+w/2-24} {gy-96} L {cx+w/2} {gy-78} L {cx+w/2-24} {gy-60} L {cx-w/2} {gy-60} Z", 4.5, "white"))
+    out.append(TXT(cx - 10, gy - 71, text, 21))
+    return "".join(out)
+
+
+def tent(cx, gy, w=210, sw=5):
+    """Chunky A-frame tent, base on the ground line; door + pole flag + pegs."""
+    x0 = cx - w / 2
+    h = 0.82 * w
+    ap = gy - h
+    out = [P(f"M {x0} {gy} L {cx} {ap} L {x0+w} {gy} Z", sw, "white")]     # main triangle
+    dw = w * 0.15
+    # arched door
+    out.append(P(f"M {cx-dw} {gy} L {cx-dw} {gy-h*0.48} "
+                 f"Q {cx} {gy-h*0.60} {cx+dw} {gy-h*0.48} L {cx+dw} {gy}", sw))
+    out.append(LINE(cx, gy - h * 0.55, cx, gy, 3.5))                       # center seam
+    # a seam line up each roof slope
+    out.append(LINE(cx - w * 0.24, gy, cx - w * 0.10, ap + h * 0.30, 2.5))
+    out.append(LINE(cx + w * 0.24, gy, cx + w * 0.10, ap + h * 0.30, 2.5))
+    # flag on a short pole at the apex
+    out.append(LINE(cx, ap, cx, ap - 28, 4))
+    out.append(P(f"M {cx} {ap-28} L {cx+24} {ap-20} L {cx} {ap-12} Z", 3.5, "white"))
+    # ground pegs
+    out.append(P(f"M {x0} {gy} L {x0-13} {gy+3}", 3.5) +
+               P(f"M {x0+w} {gy} L {x0+w+13} {gy+3}", 3.5))
+    return "".join(out)
+
+
+def campfire(cx, gy, s=1.0, sw=5):
+    """Fire ring (rocks) + two crossed logs + flame tongues. gy = ground line."""
+    out = []
+    rx = 78 * s
+    # ring of rocks along a shallow front arc
+    for i in range(6):
+        t = i / 5.0
+        sx = cx - rx + 2 * rx * t
+        sy = gy - 2 * s + 9 * s * math.sin(math.pi * t)
+        out.append(E(sx, sy, 14 * s, 9 * s, 3.5, "white"))
+    # two crossed logs sitting in the ring
+    for sgn in (-1, 1):
+        g = (f'<g transform="rotate({sgn*20} {cx} {gy-8*s})">')
+        g += rrect(cx - 48 * s, gy - 16 * s, 96 * s, 15 * s, 7, sw - 0.5, "white")
+        g += C(cx + sgn * 42 * s, gy - 8.5 * s, 5.5 * s, 3, "white")       # end grain
+        g += "</g>"
+        out.append(g)
+
+    def flame(fx, by, fw, fh):
+        return P(f"M {fx} {by} "
+                 f"C {fx-fw*0.6} {by-fh*0.35} {fx-fw*0.35} {by-fh*0.75} {fx} {by-fh} "
+                 f"C {fx+fw*0.35} {by-fh*0.75} {fx+fw*0.6} {by-fh*0.35} {fx} {by} Z",
+                 sw - 0.5, "white")
+    fb = gy - 18 * s
+    out.append(flame(cx, fb, 62 * s, 96 * s))
+    out.append(flame(cx - 24 * s, fb, 36 * s, 56 * s))
+    out.append(flame(cx + 24 * s, fb, 36 * s, 56 * s))
+    out.append(flame(cx, fb - 8 * s, 30 * s, 50 * s))                     # inner flame
+    return "".join(out)
+
+
+def log_seat(cx, gy, w=130, s=1.0, sw=5):
+    """A log to sit on: horizontal cylinder, end-grain rings at the left cap."""
+    h = 30 * s
+    out = [rrect(cx - w / 2, gy - h, w, h, h / 2, sw, "white")]
+    out.append(E(cx - w / 2, gy - h / 2, 9 * s, h / 2, sw - 0.5, "white"))  # end cap
+    out.append(C(cx - w / 2, gy - h / 2, 4 * s, 2.5, "white"))              # inner ring
+    out.append(LINE(cx - w / 2 + 16, gy - h + 7, cx + w / 2 - 8, gy - h + 7, 2.5))
+    return "".join(out)
+
+
+def marsh_stick(x1, y1, x2, y2, s=1.0, sw=4):
+    """Roasting stick from a hand (x1,y1) to a marshmallow at (x2,y2)."""
+    return (LINE(x1, y1, x2, y2, sw) +
+            rrect(x2 - 11 * s, y2 - 12 * s, 22 * s, 20 * s, 7, sw - 0.5, "white"))
+
+
+def smore(cx, gy, s=1.0, sw=4):
+    """Graham stack: graham, chocolate, marshmallow, graham."""
+    w = 46 * s
+    out = [rrect(cx - w / 2, gy - 12 * s, w, 12 * s, 3, sw, "white")]          # bottom graham
+    out.append(rrect(cx - w / 2 + 3 * s, gy - 22 * s, w - 6 * s, 10 * s, 2, sw - 1.5, "white"))  # chocolate
+    out.append(LINE(cx, gy - 22 * s, cx, gy - 12 * s, 2))                       # choc score
+    out.append(P(f"M {cx-w/2+3*s} {gy-22*s} Q {cx-w/2+3*s} {gy-40*s} {cx} {gy-40*s} "
+                 f"Q {cx+w/2-3*s} {gy-40*s} {cx+w/2-3*s} {gy-22*s} Z", sw - 0.5, "white"))  # marshmallow
+    out.append(rrect(cx - w / 2 + 4 * s, gy - 52 * s, w - 8 * s, 12 * s, 3, sw, "white"))    # top graham
+    out.append(DOT(cx - 9 * s, gy - 6 * s, 2) + DOT(cx + 9 * s, gy - 6 * s, 2))
+    return "".join(out)
+
+
+def pine_cone(cx, cy, s=1.0, sw=3):
+    """Little pine cone: egg body with chevron scale rows."""
+    out = [E(cx, cy, 10 * s, 14 * s, sw, "white")]
+    for i in range(4):
+        yy = cy - 8 * s + i * 6 * s
+        ww = (9 - i * 1.1) * s
+        out.append(P(f"M {cx-ww} {yy} L {cx} {yy+4*s} L {cx+ww} {yy}", 2))
+    return "".join(out)
+
+
+def mushroom(cx, gy, s=1.0, sw=4):
+    """Toadstool: stem + domed spotted cap."""
+    out = [rrect(cx - 7 * s, gy - 22 * s, 14 * s, 22 * s, 5, sw - 0.5, "white")]  # stem
+    out.append(P(f"M {cx-22*s} {gy-20*s} Q {cx} {gy-44*s} {cx+22*s} {gy-20*s} "
+                 f"Q {cx} {gy-27*s} {cx-22*s} {gy-20*s} Z", sw, "white"))         # cap
+    out.append(DOT(cx - 9 * s, gy - 28 * s, 3) + DOT(cx + 8 * s, gy - 30 * s, 3) +
+               DOT(cx + 1 * s, gy - 24 * s, 2.5))
+    return "".join(out)
+
+
+def basket(cx, gy, w=94, s=1.0, sw=5):
+    """Woven basket (for pine cones): tapered body, rim, handle, weave lines."""
+    tw, bw = w, w * 0.72
+    out = [P(f"M {cx-tw/2} {gy-46*s} L {cx-bw/2} {gy} L {cx+bw/2} {gy} L {cx+tw/2} {gy-46*s} Z", sw, "white")]
+    out.append(rrect(cx - tw / 2 - 4, gy - 54 * s, tw + 8, 10 * s, 4, sw - 0.5, "white"))   # rim
+    for t in (0.3, 0.5, 0.7):
+        out.append(LINE(cx - tw / 2 + tw * t, gy - 44 * s, cx - bw / 2 + bw * t, gy, 2.5))
+    out.append(LINE(cx - tw * 0.42, gy - 30 * s, cx + tw * 0.42, gy - 30 * s, 2.5) +
+               LINE(cx - tw * 0.36, gy - 15 * s, cx + tw * 0.36, gy - 15 * s, 2.5))
+    out.append(P(f"M {cx-tw/2+6} {gy-54*s} Q {cx} {gy-96*s} {cx+tw/2-6} {gy-54*s}", sw - 1))  # handle
+    return "".join(out)
+
+
+def fairy_door(cx, gy, s=1.0, sw=4):
+    """Tiny arched fairy door + round window, drawn on a tree trunk base."""
+    dw, dh = 28 * s, 46 * s
+    out = [P(f"M {cx-dw/2} {gy} L {cx-dw/2} {gy-dh*0.58} "
+             f"Q {cx} {gy-dh} {cx+dw/2} {gy-dh*0.58} L {cx+dw/2} {gy} Z", sw, "white")]
+    out.append(LINE(cx, gy, cx, gy - dh * 0.8, 2.5))                       # plank line
+    out.append(DOT(cx + 8 * s, gy - dh * 0.32, 3))                         # knob
+    out.append(C(cx, gy - dh - 15 * s, 9 * s, sw - 1, "white"))            # round window
+    out.append(LINE(cx - 9 * s, gy - dh - 15 * s, cx + 9 * s, gy - dh - 15 * s, 2) +
+               LINE(cx, gy - dh - 24 * s, cx, gy - dh - 6 * s, 2))
+    return "".join(out)
+
+
+def firefly(cx, cy, s=1.0):
+    """Firefly: bright dot + glow ring + tiny sparkle."""
+    return DOT(cx, cy, 3.5 * s) + C(cx, cy, 9 * s, 2.2, "none") + sparkle(cx, cy, 5 * s, 2)
+
+
+def wardrobe(cx, gy, w=240, h=400, doors=True, sw=5):
+    """Tall wardrobe cabinet with open double doors + a row of hanging coats."""
+    x0 = cx - w / 2
+    top = gy - h
+    out = []
+    # little feet
+    out.append(LINE(x0 + 18, gy, x0 + 18, gy - 14, sw))
+    out.append(LINE(x0 + w - 18, gy, x0 + w - 18, gy - 14, sw))
+    # carcass
+    out.append(rrect(x0, top, w, h - 14, 10, sw, "white"))
+    # cornice on top
+    out.append(rrect(x0 - 12, top - 22, w + 24, 24, 6, sw, "white"))
+    # interior opening
+    inx, iny = x0 + 22, top + 26
+    inw, inh = w - 44, h - 14 - 52
+    out.append(rrect(inx, iny, inw, inh, 6, 4, "white"))
+    # hanging rod + three coats
+    rody = iny + 18
+    out.append(LINE(inx + 8, rody, inx + inw - 8, rody, 3))
+    coat_h = inh - 44
+    for dx in (0.24, 0.5, 0.76):
+        hx = inx + inw * dx
+        out.append(LINE(hx, rody - 7, hx, rody, 2.5))               # hanger stem
+        out.append(P(f"M {hx-24} {rody+8} Q {hx} {rody-2} {hx+24} {rody+8} "
+                     f"L {hx+29} {iny+coat_h} L {hx-29} {iny+coat_h} Z", 3.5, "white"))
+        out.append(LINE(hx, rody + 6, hx, iny + coat_h, 2.5))       # coat seam
+    if doors:
+        dy = top + 24
+        dh = h - 14 - 34
+        # left door swung open (hinge at the cabinet, free edge out-left)
+        out.append(P(f"M {x0} {dy} L {x0-48} {dy-10} L {x0-48} {dy+dh+10} L {x0} {dy+dh} Z", sw, "white"))
+        out.append(rrect(x0 - 40, dy + 8, 30, dh - 16, 4, 3, "white"))   # panel inset
+        out.append(DOT(x0 - 44, top + h / 2, 4))                          # knob
+        # right door swung open
+        out.append(P(f"M {x0+w} {dy} L {x0+w+48} {dy-10} L {x0+w+48} {dy+dh+10} L {x0+w} {dy+dh} Z", sw, "white"))
+        out.append(rrect(x0 + w + 10, dy + 8, 30, dh - 16, 4, 3, "white"))
+        out.append(DOT(x0 + w + 44, top + h / 2, 4))
+    return "".join(out)
+
+
+def lamppost(cx, gy, h=340, sw=5):
+    """Iconic Narnia lamppost: base + fluted post + lantern box + glow ticks."""
+    postop = gy - h
+    out = []
+    # base
+    out.append(P(f"M {cx-24} {gy} L {cx+24} {gy} L {cx+14} {gy-22} L {cx-14} {gy-22} Z", sw, "white"))
+    # fluted post (tall thin body + a centre flute line)
+    out.append(rrect(cx - 9, postop, 18, gy - 22 - postop, 4, sw, "white"))
+    out.append(LINE(cx, postop + 12, cx, gy - 32, 2.5))
+    # knob under the lantern
+    out.append(E(cx, postop, 16, 7, sw, "white"))
+    # lantern box
+    lw, lh = 30, 48
+    lby = postop - 2
+    lty = lby - lh
+    out.append(P(f"M {cx-lw} {lby} L {cx+lw} {lby} L {cx+lw-7} {lty} L {cx-lw+7} {lty} Z", sw, "white"))
+    # little roof + finial
+    out.append(P(f"M {cx-lw+3} {lty} L {cx} {lty-26} L {cx+lw-3} {lty} Z", sw, "white"))
+    out.append(DOT(cx, lty - 30, 3.5))
+    # window panes
+    out.append(LINE(cx, lby, cx, lty, 3))
+    out.append(LINE(cx - lw * 0.6, (lby + lty) / 2, cx + lw * 0.6, (lby + lty) / 2, 3))
+    # warm glow ticks (skip the straight-down one so it stays off the post)
+    lcx, lcy = cx, (lby + lty) / 2
+    for i in range(8):
+        if i == 2:
+            continue
+        a = i * math.pi / 4
+        out.append(LINE(lcx + (lw + 12) * math.cos(a), lcy + (lw + 12) * math.sin(a),
+                        lcx + (lw + 26) * math.cos(a), lcy + (lw + 26) * math.sin(a), 3))
+    return "".join(out)
+
+
+def lion(cx, gy, s=1.0):
+    """Aslan: a BIG warm friendly lion. Rounded body, sitting; a great mane of
+    soft petal spikes around a gentle round face. Nothing fierce. Origin feet."""
+    out = []
+    # rounded body
+    out.append(E(cx, gy - 72 * s, 92 * s, 68 * s, 5, "white"))
+    # two front legs / paws
+    for sx in (-1, 1):
+        pxx = cx + sx * 46 * s
+        out.append(P(f"M {pxx-16*s} {gy-72*s} L {pxx-16*s} {gy-6*s} Q {pxx-16*s} {gy} {pxx-8*s} {gy} "
+                     f"L {pxx+8*s} {gy} Q {pxx+16*s} {gy} {pxx+16*s} {gy-6*s} L {pxx+16*s} {gy-64*s} Z", 5, "white"))
+        out.append(LINE(pxx - 6 * s, gy - 8 * s, pxx - 6 * s, gy, 3) +
+                   LINE(pxx + 6 * s, gy - 8 * s, pxx + 6 * s, gy, 3))
+    # tail with soft tuft
+    out.append(P(f"M {cx+86*s} {gy-84*s} Q {cx+132*s} {gy-74*s} {cx+120*s} {gy-22*s}", 4.5))
+    out.append(P(f"M {cx+120*s} {gy-22*s} q {-11*s} {13*s} {-22*s} {2*s} q {13*s} {2*s} {9*s} {-16*s} Z", 4, "white"))
+    # mane: soft petal spikes ringing the face
+    fcx, fcy, fr = cx, gy - 182 * s, 46 * s
+    mane_r = fr + 5 * s
+    petals = 14
+    for i in range(petals):
+        a = i * 2 * math.pi / petals
+        tx, ty = fcx + (mane_r + 27 * s) * math.cos(a), fcy + (mane_r + 27 * s) * math.sin(a)
+        bx1, by1 = fcx + mane_r * math.cos(a + 0.30), fcy + mane_r * math.sin(a + 0.30)
+        bx2, by2 = fcx + mane_r * math.cos(a - 0.30), fcy + mane_r * math.sin(a - 0.30)
+        out.append(P(f"M {bx1:.1f} {by1:.1f} Q {tx:.1f} {ty:.1f} {bx2:.1f} {by2:.1f}", 4.5, "white"))
+    # face circle caps the petal bases
+    out.append(C(fcx, fcy, fr, 5, "white"))
+    # ears peeking through the mane
+    for sx in (-1, 1):
+        out.append(C(fcx + sx * 33 * s, fcy - 30 * s, 11 * s, 4, "white"))
+    # gentle face
+    out.append(DOT(fcx - 16 * s, fcy - 4 * s, 3.5) + DOT(fcx + 16 * s, fcy - 4 * s, 3.5))
+    out.append(E(fcx, fcy + 16 * s, 22 * s, 15 * s, 4, "white"))                   # muzzle
+    out.append(P(f"M {fcx-7*s} {fcy+8*s} L {fcx+7*s} {fcy+8*s} L {fcx} {fcy+15*s} Z", 3.5, "black"))
+    out.append(P(f"M {fcx} {fcy+15*s} Q {fcx-6*s} {fcy+24*s} {fcx-12*s} {fcy+22*s}", 3))
+    out.append(P(f"M {fcx} {fcy+15*s} Q {fcx+6*s} {fcy+24*s} {fcx+12*s} {fcy+22*s}", 3))
+    out.append(DOT(fcx - 15 * s, fcy + 16 * s, 2) + DOT(fcx + 15 * s, fcy + 16 * s, 2))  # whisker dots
+    return "".join(out)
+
+
+def snowman(cx, gy, s=1.0, sw=5):
+    """Three-ball snowman: carrot nose, twig arms, top hat. Cheerful."""
+    out = []
+    rb, rm, rh = 46 * s, 34 * s, 24 * s
+    yb = gy - rb
+    ym = yb - rb - rm + 16 * s
+    yh = ym - rm - rh + 14 * s
+    out.append(C(cx, yb, rb, sw, "white"))
+    out.append(C(cx, ym, rm, sw, "white"))
+    out.append(C(cx, yh, rh, sw, "white"))
+    # face
+    out.append(DOT(cx - 8 * s, yh - 4 * s, 3) + DOT(cx + 8 * s, yh - 4 * s, 3))
+    out.append(P(f"M {cx} {yh-1*s} L {cx+18*s} {yh+2*s} L {cx} {yh+5*s} Z", 3, "white"))   # carrot nose
+    out.append(P(f"M {cx-9*s} {yh+9*s} Q {cx} {yh+15*s} {cx+9*s} {yh+9*s}", 2.5))          # smile
+    # buttons
+    out.append(DOT(cx, ym - 8 * s, 3) + DOT(cx, ym + 8 * s, 3) + DOT(cx, ym + 24 * s, 3))
+    # twig arms
+    out.append(P(f"M {cx-rm+4*s} {ym-2*s} L {cx-rm-28*s} {ym-16*s} "
+                 f"M {cx-rm-14*s} {ym-9*s} L {cx-rm-20*s} {ym-26*s}", 3.5))
+    out.append(P(f"M {cx+rm-4*s} {ym-2*s} L {cx+rm+28*s} {ym-16*s} "
+                 f"M {cx+rm+14*s} {ym-9*s} L {cx+rm+20*s} {ym-26*s}", 3.5))
+    # top hat
+    out.append(rrect(cx - rh, yh - rh - 4 * s, 2 * rh, 8 * s, 2, sw, "white"))            # brim
+    out.append(rrect(cx - rh * 0.62, yh - rh - 30 * s, rh * 1.24, 28 * s, 3, sw, "white"))  # crown
+    return "".join(out)
+
+
+def snowflake(cx, cy, r=16, sw=3):
+    """Six-arm snowflake sparkle with little branch ticks."""
+    out = []
+    for i in range(6):
+        a = i * math.pi / 3
+        x2, y2 = cx + r * math.cos(a), cy + r * math.sin(a)
+        out.append(LINE(cx, cy, x2, y2, sw))
+        bx, by = cx + r * 0.6 * math.cos(a), cy + r * 0.6 * math.sin(a)
+        for da in (-0.6, 0.6):
+            out.append(LINE(bx, by, bx + r * 0.32 * math.cos(a + da),
+                            by + r * 0.32 * math.sin(a + da), max(2, sw - 0.5)))
+    return "".join(out)
+
+
+def teapot(cx, gy, s=1.0, sw=4):
+    """Cozy round teapot with spout, handle, lid, and a little steam curl."""
+    out = []
+    by = gy - 30 * s
+    out.append(E(cx, by, 40 * s, 30 * s, sw, "white"))
+    out.append(LINE(cx - 30 * s, gy - 2 * s, cx + 30 * s, gy - 2 * s, sw))       # flat base
+    # spout (left)
+    out.append(P(f"M {cx-34*s} {by-6*s} Q {cx-58*s} {by-8*s} {cx-62*s} {by-30*s} "
+                 f"Q {cx-52*s} {by-24*s} {cx-46*s} {by-24*s} Q {cx-40*s} {by-10*s} {cx-30*s} {by-12*s} Z", sw, "white"))
+    # handle (right)
+    out.append(P(f"M {cx+34*s} {by-10*s} Q {cx+60*s} {by-14*s} {cx+56*s} {by+10*s} "
+                 f"Q {cx+52*s} {by+18*s} {cx+38*s} {by+16*s}", sw))
+    # lid + knob
+    out.append(P(f"M {cx-22*s} {by-26*s} Q {cx} {by-40*s} {cx+22*s} {by-26*s}", sw, "white"))
+    out.append(C(cx, by - 40 * s, 6 * s, sw, "white"))
+    # steam
+    out.append(P(f"M {cx-4*s} {by-48*s} q {9*s} {-9*s} {0} {-18*s} q {-9*s} {-9*s} {0} {-18*s}", 2.5))
+    return "".join(out)
+
+
+def treehouse(cx, g, h=440, ladder=True):
+    """Tree house ON branches BELOW a defined leaf canopy: trunk forks into two
+    main branches that carry the platform; the canopy sits above the roof as a
+    lobed leaf mass with scallops + inner leaf marks. Base tangent to ground g."""
+    u = h / 440.0
+    out = []
+    # trunk up to the fork
+    out.append(rrect(cx - 26 * u, g - 310 * u, 52 * u, 310 * u, 10, 5, "white"))
+    out.append(P(f"M {cx - 8 * u} {g - 260 * u} Q {cx} {g - 200 * u} {cx + 6 * u} {g - 140 * u}", 3))  # bark
+    # two main branches forking out to carry the platform
+    out.append(P(f"M {cx - 20 * u} {g - 300 * u} Q {cx - 70 * u} {g - 330 * u} {cx - 98 * u} {g - 366 * u}", 5))
+    out.append(P(f"M {cx + 20 * u} {g - 300 * u} Q {cx + 70 * u} {g - 330 * u} {cx + 98 * u} {g - 366 * u}", 5))
+    out.append(P(f"M {cx - 62 * u} {g - 326 * u} Q {cx - 80 * u} {g - 342 * u} {cx - 76 * u} {g - 358 * u}", 3.5))
+    out.append(P(f"M {cx + 62 * u} {g - 326 * u} Q {cx + 80 * u} {g - 342 * u} {cx + 76 * u} {g - 358 * u}", 3.5))
+    # platform plank resting on the branches
+    out.append(rrect(cx - 112 * u, g - 376 * u, 224 * u, 14 * u, 4, 5, "white"))
+    # house box on the platform, BELOW the leaves
+    out.append(rrect(cx - 80 * u, g - 478 * u, 160 * u, 102 * u, 6, 5, "white"))
+    # roof
+    out.append(P(f"M {cx - 96 * u} {g - 478 * u} L {cx} {g - 544 * u} "
+                 f"L {cx + 96 * u} {g - 478 * u} Z", 5, "white"))
+    # round window with cross + door
+    wx, wy = cx + 40 * u, g - 430 * u
+    out.append(C(wx, wy, 20 * u, 4.5, "white"))
+    out.append(LINE(wx - 20 * u, wy, wx + 20 * u, wy, 3) + LINE(wx, wy - 20 * u, wx, wy + 20 * u, 3))
+    out.append(rrect(cx - 58 * u, g - 434 * u, 44 * u, 58 * u, 6, 4.5, "white"))
+    out.append(DOT(cx - 22 * u, g - 404 * u, 3.5))
+    # canopy ABOVE the roof: full five-lobe leaf mass (wide base, domed top)
+    out.append(C(cx - 96 * u, g - 548 * u, 64 * u, 5, "white"))
+    out.append(C(cx + 96 * u, g - 548 * u, 64 * u, 5, "white"))
+    out.append(C(cx - 54 * u, g - 636 * u, 58 * u, 5, "white"))
+    out.append(C(cx + 54 * u, g - 636 * u, 58 * u, 5, "white"))
+    out.append(C(cx, g - 598 * u, 92 * u, 5, "white"))
+    # leaf scallops along the outer rim of the whole canopy
+    for sx, sy in [(-140, 570), (-118, 634), (-72, 682), (-16, 700), (44, 696),
+                   (98, 664), (138, 606), (150, 548)]:
+        out.append(P(f"M {cx + (sx - 11) * u} {g - sy * u} Q {cx + sx * u} {g - (sy + 14) * u} "
+                     f"{cx + (sx + 11) * u} {g - sy * u}", 3))
+    # asymmetric inner leaf marks (paired marks at equal height read as eyes)
+    for lx, ly in [(-62, 566), (28, 545), (-12, 612), (64, 592), (-46, 648),
+                   (36, 660), (2, 558), (-88, 540)]:
+        out.append(P(f"M {cx + (lx - 8) * u} {g - ly * u} Q {cx + lx * u} {g - (ly + 11) * u} "
+                     f"{cx + (lx + 8) * u} {g - ly * u}", 2.5))
+    if ladder:
+        # rope ladder hangs BESIDE the trunk (rails over the trunk crowd it out)
+        lx1, lx2 = cx + 36 * u, cx + 78 * u
+        top, bot = g - 362 * u, g - 30 * u
+        out.append(LINE(lx1, top, lx1, bot, 4.5))
+        out.append(LINE(lx2, top, lx2, bot, 4.5))
+        for i in range(7):
+            ry = top + (bot - top) * (i + 0.5) / 7
+            out.append(LINE(lx1, ry, lx2, ry, 4))
+    return "".join(out)
+
+
+def open_book(cx, cy, s=1.0, mermaid=True):
+    """Open book: back cover + two page arcs + spine, with a tiny mermaid + sparkle."""
+    out = []
+    out.append(P(f"M {cx - 96 * s} {cy + 2 * s} Q {cx} {cy + 24 * s} {cx + 96 * s} {cy + 2 * s} "
+                 f"L {cx + 96 * s} {cy + 52 * s} Q {cx} {cy + 74 * s} {cx - 96 * s} {cy + 52 * s} Z", 5, "white"))
+    out.append(P(f"M {cx} {cy} Q {cx - 48 * s} {cy - 14 * s} {cx - 86 * s} {cy - 2 * s} "
+                 f"L {cx - 86 * s} {cy + 42 * s} Q {cx - 48 * s} {cy + 30 * s} {cx} {cy + 44 * s} Z", 4, "white"))
+    out.append(P(f"M {cx} {cy} Q {cx + 48 * s} {cy - 14 * s} {cx + 86 * s} {cy - 2 * s} "
+                 f"L {cx + 86 * s} {cy + 42 * s} Q {cx + 48 * s} {cy + 30 * s} {cx} {cy + 44 * s} Z", 4, "white"))
+    out.append(LINE(cx, cy, cx, cy + 44 * s, 3.5))
+    out.append(P(f"M {cx - 74 * s} {cy + 6 * s} Q {cx - 42 * s} {cy - 2 * s} {cx - 12 * s} {cy + 8 * s}", 2.5))
+    if mermaid:
+        out.append(tiny_mermaid(cx + 46 * s, cy + 18 * s, 0.95 * s))
+        out.append(sparkle(cx + 74 * s, cy - 2 * s, 6) + star(cx - 44 * s, cy + 24 * s, 6, 2.5, "white"))
+    return "".join(out)
+
+
+def tiny_mermaid(cx, cy, s=1.0):
+    """Very small mermaid drawn ON a book page: round head + a curl of tail."""
+    out = [C(cx, cy - 14 * s, 6 * s, 2.5, "white"),
+           DOT(cx - 2 * s, cy - 15 * s, 1.4 * s) + DOT(cx + 2 * s, cy - 15 * s, 1.4 * s)]
+    out.append(P(f"M {cx - 5 * s} {cy - 8 * s} Q {cx - 3 * s} {cy + 8 * s} {cx - 9 * s} {cy + 16 * s} "
+                 f"Q {cx} {cy + 11 * s} {cx + 9 * s} {cy + 16 * s} "
+                 f"Q {cx + 3 * s} {cy + 2 * s} {cx + 5 * s} {cy - 8 * s} Z", 2.5, "white"))
+    return "".join(out)
+
+
+def wind_swirl(cx, cy, s=1.0, turns=2.4):
+    """Spiral path of wind."""
+    pts = []
+    steps = 40
+    for i in range(steps + 1):
+        t = i / steps
+        ang = t * turns * 2 * math.pi
+        r = 8 * s + t * 46 * s
+        pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
+    d = f"M {pts[0][0]:.1f} {pts[0][1]:.1f} " + " ".join(f"L {x:.1f} {y:.1f}" for x, y in pts[1:])
+    return P(d, 4)
+
+
+def pearl_shell(cx, cy, s=1.0):
+    """Open scallop shell cradling a pearl."""
+    hinge_y = cy + 10 * s
+    d = (f"M {cx} {hinge_y} L {cx - 48 * s} {cy - 18 * s} "
+         f"Q {cx - 40 * s} {cy - 40 * s} {cx - 24 * s} {cy - 32 * s} "
+         f"Q {cx - 12 * s} {cy - 48 * s} {cx} {cy - 38 * s} "
+         f"Q {cx + 12 * s} {cy - 48 * s} {cx + 24 * s} {cy - 32 * s} "
+         f"Q {cx + 40 * s} {cy - 40 * s} {cx + 48 * s} {cy - 18 * s} L {cx} {hinge_y} Z")
+    out = [P(d, 4, "white")]
+    for dx in (-32, -16, 0, 16, 32):
+        out.append(LINE(cx, hinge_y, cx + dx * s, cy - 30 * s, 2.5))
+    out.append(C(cx, cy - 12 * s, 10 * s, 3.5, "white"))    # pearl
+    out.append(C(cx - 3 * s, cy - 15 * s, 2.6 * s, 2, "white"))  # shine
+    return "".join(out)
+
+
+def small_shell(cx, cy, s=1.0):
+    """Tiny fan clam on the seabed."""
+    return (P(f"M {cx - 16 * s} {cy} Q {cx} {cy - 22 * s} {cx + 16 * s} {cy} Z", 3.5, "white") +
+            LINE(cx - 7 * s, cy - 12 * s, cx - 7 * s, cy, 3) +
+            LINE(cx + 7 * s, cy - 12 * s, cx + 7 * s, cy, 3) +
+            LINE(cx, cy - 15 * s, cx, cy, 3))
+
+
+def waves(y, x0=60, x1=790, amp=14):
+    """Wavy sea-surface line + a couple of ripple marks below it."""
+    span = x1 - x0
+    d = f"M {x0} {y} "
+    n = 8
+    for i in range(n):
+        xa = x0 + span * (i + 0.5) / n
+        xb = x0 + span * (i + 1) / n
+        yy = y - amp if i % 2 == 0 else y + amp
+        d += f"Q {xa:.0f} {yy:.0f} {xb:.0f} {y} "
+    return P(d, 5)
+
+
+def closed_book(cx, cy, s=1.0):
+    """Closed mermaid book lying flat-ish: cover + spine + a shell/star on front."""
+    out = [rrect(cx - 60 * s, cy - 44 * s, 120 * s, 88 * s, 6, 5, "white")]
+    out.append(LINE(cx - 52 * s, cy - 44 * s, cx - 52 * s, cy + 44 * s, 3.5))  # spine strip
+    out.append(mermaid_tail_icon() and G(cx + 14 * s, cy - 26 * s, mermaid_tail_icon(), 0.34 * s))
+    out.append(star(cx - 22 * s, cy - 10 * s, 10 * s, 3, "white"))
+    out.append(sparkle(cx + 40 * s, cy + 24 * s, 7))
+    return "".join(out)
+
+
+def leaf(cx, cy, ang=0, s=1.0):
+    return G(cx, cy, P("M 0 0 Q 12 -10 24 0 Q 12 10 0 0 Z", 3, "white") + LINE(4, 0, 20, 0, 2), s, ang)
