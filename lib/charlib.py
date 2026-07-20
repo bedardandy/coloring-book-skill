@@ -445,7 +445,9 @@ def build(builders, outdir, only=None, pdf_name="coloring-book.pdf"):
         p = os.path.join(pages_dir, name)
         open(p + ".svg", "w").write(svg)
         cairosvg.svg2png(url=p + ".svg", write_to=p + ".png", output_width=680)
-        cairosvg.svg2pdf(url=p + ".svg", write_to=p + ".pdf", output_width=612, output_height=792)
+        # cairosvg output_width is in px @96dpi; PDF units are pt (72dpi).
+        # 816x1056px -> 612x792pt = true US letter.
+        cairosvg.svg2pdf(url=p + ".svg", write_to=p + ".pdf", output_width=816, output_height=1056)
         print("built", name)
     if not only:
         allp = [os.path.join(pages_dir, n + ".pdf") for n, _ in builders]
