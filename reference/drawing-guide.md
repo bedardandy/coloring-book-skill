@@ -23,6 +23,9 @@ charlib default SW=5 suits the 3-6 middle. Detail strokes 2.5-3.5.
 6b. **Text in any banner/box**: DejaVu Sans runs ≈ 0.55 × font-size per character (bold ≈ 0.62).
    Container width must be ≥ text width + 2×18px padding — compute it, don't eyeball it
    (a 29-char name banner at 24px needs ≥ 420px, not 340).
+6c. **Text in organic shapes (hearts, bursts, clouds)**: measure the shape's interior
+   width AT THE TEXT'S y, not its widest point — a heart narrows fast above and below
+   its lobes. Proven combo for back covers: heart s≈210 with "The End!" at ≤52px bold.
 7. Background objects (sun, clouds, bunting) collide with tower/flag/head tops — check the
    sky lane before placing. Sun rays extend r+32 beyond the disc.
 8. Anchor everything to a ground line or tuft — floating animals/objects get flagged by kids
