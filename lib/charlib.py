@@ -1928,3 +1928,503 @@ def qa_page(svg_path, min_region_mm2=9.0, min_stroke_pt=0.5, dpi=150):
         "min_stroke_pt": round(min_w_pt, 2) if min_w_pt else None,
         "print_safe": (min_w_pt or 0) >= min_stroke_pt,
     }
+
+
+# --- research-sourced object helpers (2026-07)
+# Built to reference/shape-cookbook.md "Priority skeleton sources". Proportions
+# were lifted from the cited Phosphor / Twemoji skeletons (bounding relationships
+# only) and redrawn from charlib primitives. Per drawing-guide "Publisher-grade
+# craft": TWO-TIER stroke hierarchy — outer/silhouette contours sw~5, interior
+# detail sw~3-3.5. Side profiles face RIGHT (mirror with GM()); wheels/feet/base
+# sit TANGENT to ground_y; flying things (rocket/airplane/planet/anchor) take
+# (cx, cy). These are the first helpers built under the two-tier rule.
+
+
+def excavator(cx, ground_y, w=260, sw=5):
+    """Tracked excavator facing right: crawler track on the ground, cab box at the
+    rear, boom+stick arm reaching forward-down to a toothed digging bucket at g.
+    Proportioned from phosphor-icons/core bulldozer.svg (track = lower ~25%)."""
+    x0 = cx - w / 2
+    g = ground_y
+    out = []
+    th = 0.15 * w                          # crawler-track height
+    # crawler track: capsule tangent to ground + front/rear idler wheels + rail
+    out.append(rrect(x0 + 0.02 * w, g - th, 0.72 * w, th, th / 2, sw, "white"))
+    out.append(C(x0 + 0.12 * w, g - th / 2, th * 0.30, 3, "white"))
+    out.append(C(x0 + 0.62 * w, g - th / 2, th * 0.30, 3, "white"))
+    out.append(LINE(x0 + 0.11 * w, g - th + 4, x0 + 0.63 * w, g - th + 4, 3))
+    # cab body sitting on the track (rear half) + window
+    cbx, cby = x0 + 0.06 * w, g - 0.50 * w
+    out.append(rrect(cbx, cby, 0.40 * w, 0.35 * w, 0.06 * w, sw, "white"))
+    out.append(rrect(cbx + 0.05 * w, cby + 0.05 * w, 0.15 * w, 0.13 * w, 4, 3, "white"))
+    # boom + stick: pivot at cab front-top -> raised elbow -> down to the wrist
+    pvx, pvy = x0 + 0.44 * w, g - 0.44 * w
+    elx, ely = x0 + 0.74 * w, g - 0.58 * w
+    wrx, wry = x0 + 0.86 * w, g - 0.22 * w
+    out.append(P(f"M {pvx} {pvy} L {elx} {ely}", sw))
+    out.append(P(f"M {elx} {ely} L {wrx} {wry}", sw))
+    # bucket: scoop with the mouth toward the ground
+    out.append(P(f"M {wrx - 0.02 * w} {wry} L {x0 + 0.98 * w} {wry + 0.02 * w} "
+                 f"L {x0 + 0.96 * w} {g - 0.02 * w} L {x0 + 0.80 * w} {g} "
+                 f"Q {x0 + 0.76 * w} {wry + 0.05 * w} {wrx - 0.02 * w} {wry} Z", sw, "white"))
+    for tt in (0.82, 0.87, 0.92):
+        out.append(LINE(x0 + tt * w, g, x0 + tt * w, g - 0.035 * w, 3))
+    return "".join(out)
+
+
+def rocket(cx, cy, h=210, sw=5):
+    """Rocket standing vertical (nose up), centered at (cx, cy). Bullet body,
+    porthole, two flared base fins, a little exhaust flame. Proportioned from
+    Twemoji 1f680 (body ~0.55 of length, fins flare at the base, flame below)."""
+    bw = 0.24 * h
+    top = cy - 0.50 * h
+    bot = cy + 0.30 * h
+    out = []
+    # body: pointed nose curving into straight sides, rounded base
+    out.append(P(f"M {cx} {top} "
+                 f"C {cx + bw} {cy - 0.30 * h} {cx + bw} {cy - 0.10 * h} {cx + bw} {cy + 0.10 * h} "
+                 f"Q {cx + bw} {bot} {cx} {bot} "
+                 f"Q {cx - bw} {bot} {cx - bw} {cy + 0.10 * h} "
+                 f"C {cx - bw} {cy - 0.10 * h} {cx - bw} {cy - 0.30 * h} {cx} {top} Z", sw, "white"))
+    # porthole high, straight body band BELOW it (a curved collar above the
+    # porthole reads as a furrowed brow over an eye — face illusion)
+    out.append(C(cx, cy - 0.12 * h, 0.085 * h, 3.5, "white"))
+    out.append(C(cx, cy - 0.12 * h, 0.042 * h, 2.5, "white"))
+    out.append(LINE(cx - bw * 0.92, cy + 0.04 * h, cx + bw * 0.92, cy + 0.04 * h, 3))
+    # two base fins flaring out
+    out.append(P(f"M {cx - bw} {cy + 0.10 * h} L {cx - bw - 0.14 * h} {bot + 0.05 * h} "
+                 f"L {cx - bw * 0.5} {bot} Z", sw, "white"))
+    out.append(P(f"M {cx + bw} {cy + 0.10 * h} L {cx + bw + 0.14 * h} {bot + 0.05 * h} "
+                 f"L {cx + bw * 0.5} {bot} Z", sw, "white"))
+    # exhaust flame
+    out.append(P(f"M {cx - bw * 0.6} {bot} Q {cx - bw * 0.3} {bot + 0.10 * h} {cx} {bot + 0.18 * h} "
+                 f"Q {cx + bw * 0.3} {bot + 0.10 * h} {cx + bw * 0.6} {bot} Z", 3.5, "white"))
+    return "".join(out)
+
+
+def elephant(cx, ground_y, w=250, sw=5):
+    """Side-view elephant facing right, feet on ground_y: round body, head at the
+    front with a modest ear ON the head's rear, thick trunk curling forward-down
+    toward the ground, tusk, stumpy legs. Proportioned from Twemoji 1f418."""
+    x0 = cx - w / 2
+    g = ground_y
+    out = []
+    # tail off the rear
+    out.append(P(f"M {x0 + 0.08 * w} {g - 0.48 * w} Q {x0 - 0.03 * w} {g - 0.38 * w} "
+                 f"{x0 + 0.01 * w} {g - 0.22 * w}", 3.5))
+    # 4 stumpy legs with toenail lines
+    for lx in (0.16, 0.34, 0.55, 0.72):
+        px = x0 + lx * w
+        out.append(rrect(px - 0.055 * w, g - 0.28 * w, 0.11 * w, 0.28 * w, 0.03 * w, sw, "white"))
+        out.append(LINE(px - 0.045 * w, g - 0.05 * w, px + 0.045 * w, g - 0.05 * w, 3))
+    # body
+    out.append(E(x0 + 0.40 * w, g - 0.52 * w, 0.38 * w, 0.30 * w, sw, "white"))
+    # head (front, overlapping body)
+    out.append(C(x0 + 0.76 * w, g - 0.62 * w, 0.185 * w, sw, "white"))
+    # THICK trunk from the head front, curling down toward the ground
+    out.append(P(f"M {x0 + 0.90 * w} {g - 0.64 * w} "
+                 f"Q {x0 + 1.02 * w} {g - 0.52 * w} {x0 + 0.99 * w} {g - 0.34 * w} "
+                 f"Q {x0 + 0.96 * w} {g - 0.16 * w} {x0 + 0.86 * w} {g - 0.08 * w} "
+                 f"Q {x0 + 0.82 * w} {g - 0.14 * w} {x0 + 0.88 * w} {g - 0.22 * w} "
+                 f"Q {x0 + 0.93 * w} {g - 0.36 * w} {x0 + 0.89 * w} {g - 0.50 * w} "
+                 f"Q {x0 + 0.86 * w} {g - 0.58 * w} {x0 + 0.83 * w} {g - 0.60 * w} Z", sw, "white"))
+    out.append(P(f"M {x0 + 0.93 * w} {g - 0.44 * w} L {x0 + 0.98 * w} {g - 0.43 * w}", 3))  # trunk wrinkle
+    # modest ear on the head's rear half (not covering the face)
+    out.append(P(f"M {x0 + 0.70 * w} {g - 0.76 * w} Q {x0 + 0.54 * w} {g - 0.80 * w} "
+                 f"{x0 + 0.53 * w} {g - 0.62 * w} Q {x0 + 0.54 * w} {g - 0.47 * w} "
+                 f"{x0 + 0.68 * w} {g - 0.50 * w} Z", sw - 0.5, "white"))
+    # tusk + eye
+    out.append(P(f"M {x0 + 0.84 * w} {g - 0.50 * w} Q {x0 + 0.92 * w} {g - 0.46 * w} "
+                 f"{x0 + 0.95 * w} {g - 0.51 * w}", 3.5))
+    out.append(DOT(x0 + 0.80 * w, g - 0.66 * w, 0.016 * w))
+    return "".join(out)
+
+
+def _emergency_body(cx, ground_y, w, sw):
+    """Shared boxy emergency-vehicle body facing right: box on two wheels, a
+    slanted cab windshield at the front, a cab/box seam, headlight. Toppers
+    (ladder / light bar / cross) are added by the caller. Twemoji 1f691/2/3."""
+    x0 = cx - w / 2
+    g = ground_y
+    r = 0.11 * w
+    out = []
+    out.append(rrect(x0 + 0.02 * w, g - 0.44 * w, 0.96 * w, 0.31 * w, 0.05 * w, sw, "white"))
+    out.append(P(f"M {x0 + 0.74 * w} {g - 0.42 * w} L {x0 + 0.94 * w} {g - 0.40 * w} "
+                 f"L {x0 + 0.94 * w} {g - 0.28 * w} L {x0 + 0.74 * w} {g - 0.28 * w} Z", 3, "white"))
+    out.append(LINE(x0 + 0.72 * w, g - 0.44 * w, x0 + 0.72 * w, g - 0.13 * w, 3))
+    out.append(_wheel(x0 + 0.24 * w, g, r, sw - 0.5))
+    out.append(_wheel(x0 + 0.78 * w, g, r, sw - 0.5))
+    out.append(DOT(x0 + 0.96 * w, g - 0.24 * w, 3.5))
+    return "".join(out)
+
+
+def _light_bar(cx, roof_y, w, sw=4):
+    """Roof emergency light bar: low rrect + two dome lights."""
+    bw = 0.22 * w
+    out = [rrect(cx - bw / 2, roof_y - 0.05 * w, bw, 0.05 * w, 3, sw - 0.5, "white")]
+    out.append(C(cx - bw * 0.26, roof_y - 0.075 * w, 0.028 * w, 3, "white"))
+    out.append(C(cx + bw * 0.26, roof_y - 0.075 * w, 0.028 * w, 3, "white"))
+    return "".join(out)
+
+
+def fire_truck(cx, ground_y, w=280, sw=5):
+    """Fire engine: shared emergency body + an extending ladder on the roof and a
+    hose reel on the side. Proportioned from Twemoji 1f692."""
+    x0 = cx - w / 2
+    g = ground_y
+    out = [_emergency_body(cx, g, w, sw)]
+    roof = g - 0.44 * w
+    lx1, ly1 = x0 + 0.06 * w, roof - 0.04 * w
+    lx2, ly2 = x0 + 0.60 * w, roof - 0.16 * w
+    out.append(LINE(lx1, ly1, lx2, ly2, 4))
+    out.append(LINE(lx1, ly1 - 0.05 * w, lx2, ly2 - 0.05 * w, 4))
+    for t in (0.15, 0.35, 0.55, 0.75, 0.95):
+        rx1 = lx1 + (lx2 - lx1) * t
+        ry1 = ly1 + (ly2 - ly1) * t
+        out.append(LINE(rx1, ry1, rx1, ry1 - 0.05 * w, 2.5))
+    out.append(C(x0 + 0.36 * w, g - 0.26 * w, 0.05 * w, 3, "white"))
+    out.append(C(x0 + 0.36 * w, g - 0.26 * w, 0.02 * w, 2.5, "white"))
+    return "".join(out)
+
+
+def ambulance(cx, ground_y, w=280, sw=5):
+    """Ambulance: shared emergency body + a plus-cross panel on the side and a roof
+    light bar. Proportioned from Twemoji 1f691."""
+    x0 = cx - w / 2
+    g = ground_y
+    out = [_emergency_body(cx, g, w, sw)]
+    ecx, ecy, a = x0 + 0.34 * w, g - 0.28 * w, 0.055 * w
+    out.append(P(f"M {ecx - a / 3} {ecy - a} L {ecx + a / 3} {ecy - a} L {ecx + a / 3} {ecy - a / 3} "
+                 f"L {ecx + a} {ecy - a / 3} L {ecx + a} {ecy + a / 3} L {ecx + a / 3} {ecy + a / 3} "
+                 f"L {ecx + a / 3} {ecy + a} L {ecx - a / 3} {ecy + a} L {ecx - a / 3} {ecy + a / 3} "
+                 f"L {ecx - a} {ecy + a / 3} L {ecx - a} {ecy - a / 3} L {ecx - a / 3} {ecy - a / 3} Z", 3, "white"))
+    out.append(_light_bar(x0 + 0.5 * w, g - 0.44 * w, w))
+    return "".join(out)
+
+
+def police_car(cx, ground_y, w=280, sw=5):
+    """Police vehicle: shared emergency body + a roof light bar and a star badge on
+    the door. Proportioned from Twemoji 1f693."""
+    x0 = cx - w / 2
+    g = ground_y
+    out = [_emergency_body(cx, g, w, sw)]
+    out.append(_light_bar(x0 + 0.5 * w, g - 0.44 * w, w))
+    out.append(star(x0 + 0.34 * w, g - 0.28 * w, 0.06 * w, 3, "white"))
+    return "".join(out)
+
+
+def rainbow(cx, ground_y, w=320, sw=5):
+    """Rainbow: nested semicircle arcs with both feet tangent to ground_y, a small
+    cloud anchoring each foot. Two-tier: outer + inner arcs heavier. Twemoji 1f308."""
+    g = ground_y
+    out = []
+    R = 0.5 * w
+    band = 0.055 * w
+    n = 5
+    for i in range(n):
+        rr = R - i * band
+        s = sw if (i == 0 or i == n - 1) else 3.2
+        out.append(P(f"M {cx - rr} {g} A {rr} {rr} 0 0 1 {cx + rr} {g}", s))
+    inr = R - (n - 1) * band
+    out.append(cloud(cx - (R + inr) / 2, g - 0.01 * w, 0.05 * w))
+    out.append(cloud(cx + (R + inr) / 2, g - 0.01 * w, 0.05 * w))
+    return "".join(out)
+
+
+def present(cx, ground_y, w=150, sw=5):
+    """Wrapped gift on the ground: box, wider lid, cross ribbon, two-loop bow.
+    Proportioned from Twemoji 1f381."""
+    x0 = cx - w / 2
+    g = ground_y
+    bh = 0.68 * w
+    top = g - bh
+    out = []
+    out.append(rrect(x0 + 0.06 * w, top + 0.14 * w, 0.88 * w, bh - 0.14 * w, 0.03 * w, sw, "white"))
+    out.append(rrect(x0 + 0.02 * w, top, 0.96 * w, 0.16 * w, 0.03 * w, sw, "white"))
+    out.append(LINE(cx, top + 0.16 * w, cx, g, 3.5))
+    out.append(LINE(x0 + 0.06 * w, top + 0.14 * w, x0 + 0.94 * w, top + 0.14 * w, 3.5))
+    out.append(P(f"M {cx} {top} Q {cx - 0.24 * w} {top - 0.14 * w} {cx - 0.02 * w} {top - 0.005 * w}", 3.5, "white"))
+    out.append(P(f"M {cx} {top} Q {cx + 0.24 * w} {top - 0.14 * w} {cx + 0.02 * w} {top - 0.005 * w}", 3.5, "white"))
+    out.append(C(cx, top, 0.035 * w, 3, "white"))
+    return "".join(out)
+
+
+def pumpkin(cx, ground_y, w=190, sw=5):
+    """Ribbed pumpkin on the ground: fat body of overlapping lobes, stem, curl
+    tendril. Proportioned from Twemoji 1f383 (ribbed body + short stem)."""
+    g = ground_y
+    cyb = g - 0.40 * w
+    out = []
+    out.append(E(cx, cyb, 0.50 * w, 0.40 * w, sw, "white"))
+    out.append(E(cx - 0.22 * w, cyb, 0.28 * w, 0.40 * w, 3.2, "white"))
+    out.append(E(cx + 0.22 * w, cyb, 0.28 * w, 0.40 * w, 3.2, "white"))
+    out.append(E(cx, cyb, 0.14 * w, 0.40 * w, 3.2, "white"))
+    out.append(P(f"M {cx - 0.05 * w} {g - 0.78 * w} L {cx - 0.05 * w} {g - 0.90 * w} "
+                 f"Q {cx + 0.03 * w} {g - 0.94 * w} {cx + 0.06 * w} {g - 0.86 * w} "
+                 f"L {cx + 0.05 * w} {g - 0.80 * w}", sw, "white"))
+    out.append(P(f"M {cx + 0.06 * w} {g - 0.86 * w} Q {cx + 0.20 * w} {g - 0.92 * w} "
+                 f"{cx + 0.18 * w} {g - 0.78 * w} Q {cx + 0.16 * w} {g - 0.70 * w} "
+                 f"{cx + 0.24 * w} {g - 0.72 * w}", 3))
+    return "".join(out)
+
+
+def airplane(cx, cy, w=260, sw=5):
+    """Side-view airplane facing right, flying (no ground). Torpedo fuselage, tail
+    fin at the rear, a swept wing, porthole row, nose cockpit. Twemoji 2708."""
+    x0 = cx - w / 2
+    out = []
+    fh = 0.15 * w
+    out.append(P(f"M {x0 + 0.04 * w} {cy - 0.02 * w} "
+                 f"Q {x0 + 0.20 * w} {cy - fh} {x0 + 0.78 * w} {cy - fh} "
+                 f"Q {x0 + 0.98 * w} {cy - fh} {x0 + w} {cy} "
+                 f"Q {x0 + 0.98 * w} {cy + fh} {x0 + 0.78 * w} {cy + fh} "
+                 f"Q {x0 + 0.20 * w} {cy + fh} {x0 + 0.04 * w} {cy + 0.02 * w} "
+                 f"Q {x0 - 0.02 * w} {cy} {x0 + 0.04 * w} {cy - 0.02 * w} Z", sw, "white"))
+    # tail fin at the rear
+    out.append(P(f"M {x0 + 0.06 * w} {cy - fh * 0.6} L {x0 + 0.02 * w} {cy - 0.28 * w} "
+                 f"L {x0 + 0.20 * w} {cy - fh} Z", sw, "white"))
+    # swept wing (near wing) down-back from the belly
+    out.append(P(f"M {x0 + 0.52 * w} {cy + fh * 0.5} L {x0 + 0.30 * w} {cy + 0.26 * w} "
+                 f"L {x0 + 0.50 * w} {cy + 0.26 * w} L {x0 + 0.64 * w} {cy + fh} Z", sw, "white"))
+    # cockpit window near the nose
+    out.append(P(f"M {x0 + 0.84 * w} {cy - fh * 0.5} Q {x0 + 0.92 * w} {cy - fh * 0.5} "
+                 f"{x0 + 0.93 * w} {cy} L {x0 + 0.84 * w} {cy} Z", 3, "white"))
+    # porthole row
+    for i in range(5):
+        out.append(DOT(x0 + (0.34 + i * 0.09) * w, cy - fh * 0.25, 3))
+    return "".join(out)
+
+
+def giraffe(cx, ground_y, w=200, sw=4.5):
+    """Side-view giraffe facing right, feet on ground_y: small body on long legs, a
+    very long neck rising forward, small head with ossicones + ear, mane, tufted
+    tail, spot pattern. Proportioned from Twemoji 1f992 (neck ~0.3 of height)."""
+    x0 = cx - w / 2
+    g = ground_y
+    out = []
+    # tufted tail
+    out.append(P(f"M {x0 + 0.08 * w} {g - 0.58 * w} Q {x0 - 0.02 * w} {g - 0.40 * w} "
+                 f"{x0 + 0.02 * w} {g - 0.24 * w}", 3.5))
+    out.append(DOT(x0 + 0.02 * w, g - 0.22 * w, 4))
+    # 4 long legs with hoof ticks
+    for lx in (0.16, 0.30, 0.50, 0.62):
+        px = x0 + lx * w
+        out.append(P(f"M {px} {g - 0.55 * w} L {px} {g}", sw))
+        out.append(P(f"M {px - 0.03 * w} {g} L {px + 0.03 * w} {g}", sw))
+    # body
+    out.append(E(x0 + 0.36 * w, g - 0.62 * w, 0.30 * w, 0.16 * w, sw, "white"))
+    # long neck: broad tapered quad rising up-forward
+    out.append(P(f"M {x0 + 0.54 * w} {g - 0.66 * w} L {x0 + 0.74 * w} {g - 1.36 * w} "
+                 f"L {x0 + 0.88 * w} {g - 1.34 * w} L {x0 + 0.66 * w} {g - 0.60 * w} Z", sw, "white"))
+    # head muzzle at the neck top
+    hx, hy = x0 + 0.86 * w, g - 1.42 * w
+    out.append(E(hx, hy, 0.11 * w, 0.075 * w, sw, "white"))
+    # ossicones (two knobbed stalks)
+    for dx in (-0.02, 0.05):
+        out.append(LINE(hx + dx * w, hy - 0.05 * w, hx + dx * w + 0.01 * w, hy - 0.11 * w, 3.5))
+        out.append(DOT(hx + dx * w + 0.01 * w, hy - 0.12 * w, 3.5))
+    # ear
+    out.append(P(f"M {hx - 0.10 * w} {hy - 0.02 * w} L {hx - 0.19 * w} {hy - 0.05 * w} "
+                 f"L {hx - 0.11 * w} {hy + 0.04 * w} Z", 3, "white"))
+    # mane down the back of the neck
+    out.append(P(f"M {x0 + 0.80 * w} {g - 1.32 * w} Q {x0 + 0.72 * w} {g - 1.06 * w} "
+                 f"{x0 + 0.66 * w} {g - 0.84 * w} Q {x0 + 0.62 * w} {g - 0.72 * w} "
+                 f"{x0 + 0.58 * w} {g - 0.62 * w}", 3))
+    # spots
+    for sx, sy in [(0.28, 0.64), (0.42, 0.60), (0.34, 0.70), (0.70, 1.08), (0.66, 0.88)]:
+        out.append(C(x0 + sx * w, g - sy * w, 0.03 * w, 2.5, "white"))
+    out.append(DOT(hx + 0.04 * w, hy - 0.01 * w, 3))     # eye
+    out.append(DOT(hx + 0.10 * w, hy + 0.01 * w, 2.4))   # nostril
+    return "".join(out)
+
+
+def penguin(cx, ground_y, w=130, sw=5):
+    """Front-view standing penguin, feet on ground_y: egg body, white belly patch,
+    beak, eyes, two side flippers, two feet. Proportioned from Twemoji 1f427."""
+    g = ground_y
+    out = []
+    cyb = g - 0.52 * w
+    # feet
+    out.append(P(f"M {cx - 0.16 * w} {g} L {cx - 0.02 * w} {g - 0.06 * w} L {cx - 0.02 * w} {g} Z", 3.5, "white"))
+    out.append(P(f"M {cx + 0.16 * w} {g} L {cx + 0.02 * w} {g - 0.06 * w} L {cx + 0.02 * w} {g} Z", 3.5, "white"))
+    # body egg
+    out.append(E(cx, cyb, 0.42 * w, 0.53 * w, sw, "white"))
+    # flippers
+    out.append(P(f"M {cx - 0.40 * w} {cyb - 0.10 * w} Q {cx - 0.56 * w} {cyb + 0.10 * w} "
+                 f"{cx - 0.34 * w} {cyb + 0.30 * w}", sw, "white"))
+    out.append(P(f"M {cx + 0.40 * w} {cyb - 0.10 * w} Q {cx + 0.56 * w} {cyb + 0.10 * w} "
+                 f"{cx + 0.34 * w} {cyb + 0.30 * w}", sw, "white"))
+    # belly patch (white U from the shoulders down)
+    out.append(P(f"M {cx - 0.26 * w} {cyb - 0.28 * w} Q {cx - 0.34 * w} {cyb + 0.20 * w} "
+                 f"{cx} {cyb + 0.44 * w} Q {cx + 0.34 * w} {cyb + 0.20 * w} "
+                 f"{cx + 0.26 * w} {cyb - 0.28 * w}", 3.2))
+    # eyes + beak
+    out.append(DOT(cx - 0.11 * w, g - 0.86 * w, 4))
+    out.append(DOT(cx + 0.11 * w, g - 0.86 * w, 4))
+    out.append(P(f"M {cx - 0.06 * w} {g - 0.78 * w} L {cx + 0.06 * w} {g - 0.78 * w} "
+                 f"L {cx} {g - 0.70 * w} Z", 3, "white"))
+    return "".join(out)
+
+
+def planet_ringed(cx, cy, r=90, sw=5):
+    """Ringed planet floating at (cx, cy): disc with a ring passing behind (top)
+    and in front (bottom), plus a surface band and craters. Twemoji 1fa90."""
+    rx, ry = 1.75 * r, 0.5 * r
+    out = []
+    # back half of the ring (behind the disc)
+    out.append(P(f"M {cx - rx} {cy} A {rx} {ry} 0 0 1 {cx + rx} {cy}", sw))
+    # disc (white fill knocks out the back arc where it crosses)
+    out.append(C(cx, cy, r, sw, "white"))
+    # surface band + craters
+    out.append(P(f"M {cx - r * 0.9} {cy - r * 0.2} Q {cx} {cy - r * 0.05} {cx + r * 0.9} {cy - r * 0.2}", 3))
+    out.append(C(cx - r * 0.3, cy + r * 0.3, r * 0.14, 3, "white"))
+    out.append(C(cx + r * 0.4, cy - r * 0.42, r * 0.09, 3, "white"))
+    # front half of the ring (in front of the disc)
+    out.append(P(f"M {cx - rx} {cy} A {rx} {ry} 0 0 0 {cx + rx} {cy}", sw))
+    return "".join(out)
+
+
+def balloon_bunch(cx, cy, s=1.0, sw=4):
+    """Three offset balloons with tied strings converging to a knot below, plus a
+    curly tail. (cx, cy) ~ cluster center. Reuses balloon ellipse+knot geometry."""
+    out = []
+    tie = (cx, cy + 70 * s)
+    for dx, dy in [(-34 * s, -6 * s), (34 * s, 2 * s), (0 * s, -46 * s)]:
+        bx, by = cx + dx, cy + dy
+        out.append(E(bx, by, 22 * s, 28 * s, sw, "white"))
+        ky = by + 28 * s
+        out.append(P(f"M {bx - 4 * s} {ky} L {bx + 4 * s} {ky} L {bx} {ky + 6 * s} Z", 3, "white"))
+        midx = (bx + tie[0]) / 2 + dx * 0.12
+        out.append(P(f"M {bx} {ky + 6 * s} Q {midx} {(ky + tie[1]) / 2} {tie[0]} {tie[1]}", 3))
+    out.append(P(f"M {tie[0]} {tie[1]} Q {cx + 8 * s} {tie[1] + 20 * s} {cx - 4 * s} {tie[1] + 34 * s}", 3))
+    return "".join(out)
+
+
+def pig(cx, ground_y, w=200, sw=5):
+    """Side-view pig facing right, feet on ground_y: fat body, round head with a
+    forward snout (two nostrils), floppy ear, curly tail, short legs.
+    Proportioned from Twemoji 1f437 (big centered snout, ears on top)."""
+    x0 = cx - w / 2
+    g = ground_y
+    out = []
+    # curly tail
+    out.append(P(f"M {x0 + 0.06 * w} {g - 0.46 * w} Q {x0 - 0.06 * w} {g - 0.52 * w} "
+                 f"{x0 - 0.02 * w} {g - 0.42 * w} Q {x0 + 0.02 * w} {g - 0.34 * w} "
+                 f"{x0 - 0.04 * w} {g - 0.34 * w}", 3.5))
+    # 4 short legs with trotter ticks
+    for lx in (0.16, 0.32, 0.54, 0.68):
+        px = x0 + lx * w
+        out.append(P(f"M {px} {g - 0.22 * w} L {px} {g}", sw))
+        out.append(P(f"M {px - 0.03 * w} {g} L {px + 0.03 * w} {g}", 3))
+    # body
+    out.append(E(x0 + 0.40 * w, g - 0.42 * w, 0.42 * w, 0.28 * w, sw, "white"))
+    # head at the front (overlaps body)
+    out.append(C(x0 + 0.74 * w, g - 0.44 * w, 0.20 * w, sw, "white"))
+    # floppy ear
+    out.append(P(f"M {x0 + 0.66 * w} {g - 0.60 * w} L {x0 + 0.62 * w} {g - 0.74 * w} "
+                 f"L {x0 + 0.76 * w} {g - 0.62 * w} Z", 3.5, "white"))
+    # snout oval on the head front + two nostrils
+    out.append(E(x0 + 0.90 * w, g - 0.42 * w, 0.09 * w, 0.07 * w, sw, "white"))
+    out.append(DOT(x0 + 0.89 * w, g - 0.42 * w, 2.6) + DOT(x0 + 0.92 * w, g - 0.42 * w, 2.6))
+    # eye
+    out.append(DOT(x0 + 0.78 * w, g - 0.50 * w, 3.5))
+    return "".join(out)
+
+
+def anchor(cx, cy, h=190, sw=5):
+    """Ship's anchor hanging at (cx, cy): top ring, crossbar stock, shank, and two
+    curved arms with fluke barbs at the bottom. Proportioned from Twemoji 2693."""
+    top = cy - 0.5 * h
+    bot = cy + 0.44 * h
+    out = []
+    out.append(C(cx, top + 0.07 * h, 0.075 * h, sw, "white"))
+    out.append(LINE(cx, top + 0.14 * h, cx, bot, sw))
+    out.append(LINE(cx - 0.16 * h, top + 0.26 * h, cx + 0.16 * h, top + 0.26 * h, sw))
+    out.append(P(f"M {cx} {bot - 0.04 * h} Q {cx - 0.30 * h} {bot} {cx - 0.34 * h} {bot - 0.20 * h}", sw))
+    out.append(P(f"M {cx} {bot - 0.04 * h} Q {cx + 0.30 * h} {bot} {cx + 0.34 * h} {bot - 0.20 * h}", sw))
+    out.append(P(f"M {cx - 0.34 * h} {bot - 0.20 * h} L {cx - 0.42 * h} {bot - 0.16 * h} "
+                 f"L {cx - 0.30 * h} {bot - 0.10 * h}", sw, "white"))
+    out.append(P(f"M {cx + 0.34 * h} {bot - 0.20 * h} L {cx + 0.42 * h} {bot - 0.16 * h} "
+                 f"L {cx + 0.30 * h} {bot - 0.10 * h}", sw, "white"))
+    return "".join(out)
+
+
+def octopus(cx, ground_y, w=210, sw=5):
+    """Octopus on the seabed facing forward: bulbous mantle, big eyes + smile, and
+    eight arms — a scalloped skirt of arm-bases, the outer two curling to the
+    floor with sucker dots. Proportioned from Twemoji 1f419."""
+    g = ground_y
+    out = []
+    mcx, mcy, mr = cx, g - 0.60 * w, 0.34 * w
+    base = mcy + 0.22 * w
+    # mantle dome with a scalloped bottom (8 arm bumps)
+    n = 8
+    d = (f"M {cx - mr} {base} "
+         f"Q {cx - mr * 1.06} {mcy - mr * 1.15} {cx} {mcy - mr * 1.15} "
+         f"Q {cx + mr * 1.06} {mcy - mr * 1.15} {cx + mr} {base} ")
+    for i in range(n):
+        t = 1 - (i + 1) / n
+        bx = cx - mr + 2 * mr * t
+        d += f"Q {bx + mr / n} {base + 0.05 * w} {bx} {base} "
+    d += "Z"
+    out.append(P(d, sw, "white"))
+    # the two outer arms curl down to the floor
+    out.append(P(f"M {cx - mr} {base} Q {cx - 0.52 * w} {g - 0.12 * w} {cx - 0.34 * w} {g - 0.02 * w} "
+                 f"Q {cx - 0.24 * w} {g + 0.02 * w} {cx - 0.20 * w} {g - 0.08 * w}", sw - 1))
+    out.append(P(f"M {cx + mr} {base} Q {cx + 0.52 * w} {g - 0.12 * w} {cx + 0.34 * w} {g - 0.02 * w} "
+                 f"Q {cx + 0.24 * w} {g + 0.02 * w} {cx + 0.20 * w} {g - 0.08 * w}", sw - 1))
+    # eyes + smile
+    out.append(C(cx - 0.14 * w, mcy, 0.07 * w, 3.2, "white") + C(cx + 0.14 * w, mcy, 0.07 * w, 3.2, "white"))
+    out.append(DOT(cx - 0.14 * w, mcy, 3.5) + DOT(cx + 0.14 * w, mcy, 3.5))
+    out.append(P(f"M {cx - 0.08 * w} {mcy + 0.14 * w} Q {cx} {mcy + 0.20 * w} {cx + 0.08 * w} {mcy + 0.14 * w}", 3))
+    # sucker dots on the curling arms
+    out.append(DOT(cx - 0.30 * w, g - 0.06 * w, 2.4) + DOT(cx + 0.30 * w, g - 0.06 * w, 2.4))
+    return "".join(out)
+
+
+def whale_spout(cx, ground_y, w=240, sw=5):
+    """Side-view whale facing right at the waterline (ground_y = water): rounded
+    body, up-curled tail flukes at the rear, pectoral fin, eye + smile, and a
+    spray spout from the blowhole. Proportioned from Twemoji 1f433."""
+    x0 = cx - w / 2
+    g = ground_y
+    out = []
+    # body: rounded wedge, belly on the water, snout at the front
+    out.append(P(f"M {x0 + 0.10 * w} {g - 0.10 * w} "
+                 f"Q {x0 + 0.02 * w} {g - 0.40 * w} {x0 + 0.30 * w} {g - 0.44 * w} "
+                 f"Q {x0 + 0.70 * w} {g - 0.48 * w} {x0 + 0.92 * w} {g - 0.30 * w} "
+                 f"Q {x0 + 1.0 * w} {g - 0.20 * w} {x0 + 0.90 * w} {g - 0.10 * w} "
+                 f"Q {x0 + 0.5 * w} {g} {x0 + 0.10 * w} {g - 0.10 * w} Z", sw, "white"))
+    # tail flukes up at the rear
+    out.append(P(f"M {x0 + 0.12 * w} {g - 0.30 * w} Q {x0} {g - 0.44 * w} {x0 - 0.04 * w} {g - 0.58 * w} "
+                 f"Q {x0 + 0.08 * w} {g - 0.50 * w} {x0 + 0.12 * w} {g - 0.40 * w} "
+                 f"Q {x0 + 0.16 * w} {g - 0.50 * w} {x0 + 0.22 * w} {g - 0.54 * w} "
+                 f"Q {x0 + 0.18 * w} {g - 0.40 * w} {x0 + 0.16 * w} {g - 0.30 * w} Z", sw, "white"))
+    # pectoral fin
+    out.append(P(f"M {x0 + 0.52 * w} {g - 0.16 * w} Q {x0 + 0.58 * w} {g - 0.02 * w} "
+                 f"{x0 + 0.44 * w} {g - 0.04 * w} Z", 3.5, "white"))
+    # eye + smile
+    out.append(DOT(x0 + 0.82 * w, g - 0.30 * w, 3.5))
+    out.append(P(f"M {x0 + 0.82 * w} {g - 0.20 * w} Q {x0 + 0.90 * w} {g - 0.16 * w} {x0 + 0.94 * w} {g - 0.22 * w}", 3))
+    # spout spray from the blowhole
+    bx = x0 + 0.66 * w
+    out.append(P(f"M {bx} {g - 0.44 * w} Q {bx - 0.06 * w} {g - 0.64 * w} {bx - 0.02 * w} {g - 0.74 * w}", 3))
+    out.append(P(f"M {bx} {g - 0.44 * w} Q {bx + 0.02 * w} {g - 0.66 * w} {bx + 0.02 * w} {g - 0.76 * w}", 3))
+    out.append(P(f"M {bx} {g - 0.44 * w} Q {bx + 0.08 * w} {g - 0.64 * w} {bx + 0.10 * w} {g - 0.72 * w}", 3))
+    return "".join(out)
+
+
+def shield(cx, cy, w=150, sw=5):
+    """Heraldic shield centered at (cx, cy): flat-shouldered top narrowing to a
+    point at the bottom, with a top rim line and a star boss. Twemoji 1f6e1."""
+    h = 1.25 * w
+    top = cy - 0.5 * h
+    bot = cy + 0.5 * h
+    out = []
+    out.append(P(f"M {cx - 0.5 * w} {top} L {cx + 0.5 * w} {top} "
+                 f"L {cx + 0.5 * w} {top + 0.42 * h} "
+                 f"Q {cx + 0.5 * w} {bot - 0.12 * h} {cx} {bot} "
+                 f"Q {cx - 0.5 * w} {bot - 0.12 * h} {cx - 0.5 * w} {top + 0.42 * h} Z", sw, "white"))
+    out.append(LINE(cx - 0.42 * w, top + 0.10 * h, cx + 0.42 * w, top + 0.10 * h, 3))
+    out.append(star(cx, cy - 0.02 * h, 0.22 * w, 3.5, "white"))
+    return "".join(out)
