@@ -426,9 +426,21 @@ def page(title, body, num=None, caption=None):
         parts.append(P(f"M {W/2-260} 122 Q {W/2} 138 {W/2+260} 122", 4))
     parts.append(body)
     if caption:
-        parts.append(TXT(W / 2, H - 62, caption, 26, weight="normal"))
+        # wrap long captions — a single line overflows the border past ~55 chars
+        words, lines, cur = caption.split(), [], ""
+        for w_ in words:
+            if len(cur) + len(w_) + 1 <= 56:
+                cur = (cur + " " + w_).strip()
+            else:
+                lines.append(cur); cur = w_
+        if cur:
+            lines.append(cur)
+        start = (H - 48) - (len(lines) - 1) * 27
+        for i, ln in enumerate(lines):
+            parts.append(TXT(W / 2, start + i * 27, ln, 24 if len(lines) == 1 else 22,
+                             weight="normal"))
     if num:
-        parts.append(TXT(W / 2, H - 40 if not caption else H - 34, str(num), 20, weight="normal"))
+        parts.append(TXT(70, H - 42, str(num), 20, weight="normal"))
     return f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">' + "".join(parts) + "</svg>"
 
 
@@ -904,7 +916,9 @@ def bicycle(cx, ground_y, s=200, sw=5):
 
 
 def tree_round(cx, ground_y, h=260, sw=5):
-    """Lollipop tree: stubby trunk + fat round canopy, base tangent to ground_y."""
+    """Lollipop tree: stubby trunk + fat round canopy, base tangent to ground_y.
+    If you add your own leaf/texture marks: keep them ASYMMETRIC and unpaired —
+    two arcs at the same height inside a canopy read as a pair of closed eyes."""
     g = ground_y
     tw = 0.18 * h
     out = [rrect(cx - tw / 2, g - 0.28 * h, tw, 0.28 * h, 6, sw, "white")]
@@ -1051,7 +1065,11 @@ def matted(inner, pad=9):
     whitened and thickened by `pad`) followed by `inner` itself. Draw background
     (rug, path, fence, furniture) first, then wrap each foreground figure/object
     in matted() — background lines get knocked out wherever they approach it,
-    so tangent-line illusions can't happen. Nested G()/GM() transforms are kept."""
+    so tangent-line illusions can't happen. Nested G()/GM() transforms are kept.
+    CLUSTERS: with 3+ overlapping matted objects, later mats can fully erase an
+    earlier neighbor (a dog's halo can swallow a mound). Draw tight clusters as
+    ONE matted group, or keep ~2x pad clearance — and verify with tile crops:
+    full-page thumbnails hide mat-swallowing."""
     import re
     mat = inner
     mat = re.sub(r'stroke-width="([0-9.]+)"',
@@ -1147,7 +1165,11 @@ def food_bowl(cx, gy, label=""):
 
 
 def dirt_hole(cx, gy):
+    """Dug hole with flying dirt. Rim clods keep it reading as a HOLE, not a puddle."""
     out = [E(cx, gy, 46, 12, 4)]
+    out.append(P(f"M {cx-52} {gy-4} Q {cx-44} {gy-14} {cx-34} {gy-8}", 3))
+    out.append(P(f"M {cx+36} {gy-8} Q {cx+46} {gy-15} {cx+54} {gy-5}", 3))
+    out.append(DOT(cx - 40, gy - 16, 2.5) + DOT(cx + 44, gy - 18, 2.5))
     for dx, dy in [(-60, -40), (-30, -66), (10, -74), (46, -60), (70, -30)]:
         out.append(P(f"M {cx+dx} {gy+dy} Q {cx+dx+6} {gy+dy-10} {cx+dx+12} {gy+dy}", 3))
     return "".join(out)

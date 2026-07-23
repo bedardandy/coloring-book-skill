@@ -1,7 +1,8 @@
-# Model-tier guidance — calibrated by a 3-tier benchmark (2026-07-19)
+# Model-tier guidance — calibrated by two benchmarks (2026-07-19, 2026-07-23)
 
 The identical 3-page task (helper scene / cookbook-recipe objects / custom kneeling pose)
-was run on Haiku 4.5, Sonnet 5, and Opus 4.8. Findings below are observed, not assumed.
+was run on Haiku 4.5, Sonnet 5, and Opus 4.8, then re-run on all three plus three
+non-Claude models (GPT-5.6 variants via codex CLI). Findings below are observed, not assumed.
 
 ## Universal finding (every tier, every first draft)
 **All models bottom-cram their first draft**: figures small on the ground line, 60% dead
@@ -11,6 +12,14 @@ sky fillers distributed; main figures ≥180px tall. Then verify NUMERICALLY aft
 - scene bounding box spans ≥55% of page height (y from ≤450 to ≥900)
 - every element ≥12px inside the border rect (compute extremes, don't eyeball)
 - main figures ≥180px tall; faces ≥ r28 (trait features crowd below that)
+
+**Do not game the span check.** In the 6-model re-run, models at EVERY tier — including
+the strongest — satisfied the bbox arithmetic with a corner sun and a high cloud while
+the actual scene sat in the bottom third (one model's own report admitted doing this
+knowingly). The check passes only when CONNECTED scene mass (structures/trees/figures)
+reaches y≈450; isolated sky tokens are excluded from the span by definition. Coverage
+numbers you report must be computed from rendered bounding boxes of that connected
+cluster — never estimated, and never quoted from your plan instead of the render.
 
 ## Tier profiles & operating modes
 
@@ -50,12 +59,32 @@ If the SAME defect survives two fix attempts, or a custom pose/object still does
 after two tries — STOP iterating (more rounds at the same capability rarely converge).
 In order of preference:
 1. **Compromise**: swap to a stock pose / helper object / simpler staging that removes
-   the failing element entirely. A simple page that reads beats an ambitious page that doesn't.
+   the failing element entirely. A simple page that reads beats an ambitious page that
+   doesn't. Proven compromises for hard poses: implied kneel (bell skirt + knee bumps),
+   and **occlusion staging** — place the figure BEHIND an object (garden bed, fence,
+   table) so the hard lower body is simply hidden; two models independently derived
+   this and it reads cleanly.
 2. **Delegate the element**: spawn a stronger-model subagent to draw just the failing
-   helper/figure and return the SVG fragment.
+   helper/figure and return the SVG fragment. If no Agent tool is available in your
+   run, this rung still applies — as a RECOMMENDATION: name the failing element in
+   your report and suggest a stronger-model pass. Don't silently skip from rung 1 to 3.
 3. **Escalate the build**: recommend the user re-run the book with a stronger model,
    stating specifically which pages/elements are below bar and why.
 Never ship a page you could not verify numerically + visually; say so instead.
+
+## Non-Claude agents (observed: GPT-5.6 sol/terra/luna via codex CLI)
+All three completed the task and honestly self-reported earlier environment failures —
+the skill's fail-loud instructions transfer. Calibration notes:
+- Composition instructions transferred WELL (one variant produced the best-composed
+  pages of the whole 6-model run). Treat capable non-Claude models as Sonnet-class
+  (standard mode) unless they demonstrate otherwise.
+- Guide rules that live only in prose get missed: one variant drew custom canopy
+  texture with two same-height paired arcs — the documented "reads as a pair of
+  closed eyes" gotcha — because it never connected the foliage section to its own
+  custom marks. When you write custom texture/marks on ANY helper shape, re-check
+  the drawing-guide section for that shape family first.
+- `qa_page()` and `render_tiles()` were used unprompted by one variant and caught
+  real defects — wire them into your build loop regardless of model family.
 
 ## When a reported defect "persists" after your fix
 Before iterating again, re-diagnose WHICH stroke the reviewer is actually seeing — it

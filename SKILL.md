@@ -85,7 +85,9 @@ tile QA: `render_tiles(svg, qa_dir, name)` per page and review the overlapping t
 sonnet subagent reviewers if the Agent tool is available, one per page, prompt them for:
 unintended overlapping lines, tangent-line/figure-ground illusions where background
 contours touch figures, floating/disconnected parts, out-of-proportion elements,
-ambiguous shapes, eerie/off-putting facial expressions, elements cut off;
+ambiguous shapes, eerie/off-putting facial expressions, elements cut off, objects
+partially ERASED by a neighbor's matting halo (check the planned element list against
+what's visible), text/captions crossing the border rect;
 severity-tagged findings). Apply fixes, re-render, and
 re-verify the pages that had HIGH findings. 1-2 fix rounds is normal.
 

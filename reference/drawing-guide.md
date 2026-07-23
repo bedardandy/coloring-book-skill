@@ -26,6 +26,9 @@ charlib default SW=5 suits the 3-6 middle. Detail strokes 2.5-3.5.
 6c. **Text in organic shapes (hearts, bursts, clouds)**: measure the shape's interior
    width AT THE TEXT'S y, not its widest point — a heart narrows fast above and below
    its lobes. Proven combo for back covers: heart s≈210 with "The End!" at ≤52px bold.
+6d. **Captions must wrap.** A 15-25-word story caption on ONE line overflows the border
+   (this bit two of six benchmark models). `charlib.page()` wraps captions automatically
+   at ~56 chars; if you render caption text yourself, wrap at ~55 chars per line.
 7. Background objects (sun, clouds, bunting) collide with tower/flag/head tops — check the
    sky lane before placing. Sun rays extend r+32 beyond the disc.
 8. Anchor everything to a ground line or tuft — floating animals/objects get flagged by kids
@@ -45,6 +48,11 @@ Two defenses, use both:
 2. Even with matting, don't run a closed background shape (full rug ellipse) through a
    crowd — prefer partial arcs behind groups, and keep ≥14px designed clearance between
    unrelated contours.
+3. **Dense matted clusters (3+ overlapping matted objects) can swallow a neighbor** —
+   a later object's white halo can fully erase an earlier small one (a dog's mat ate a
+   dirt mound; another run's dog mat ate half an excavator). Draw a tight cluster as ONE
+   `matted()` group, or keep ~2x-pad clearance between separately-matted objects. Verify
+   with `render_tiles()` crops — full-page thumbnails hide mat-swallowing.
 
 ## Friendly faces (anti-eerie rules)
 The eerie combo is: eyebrows close above dot eyes (reads scheming) + a wide flat smile
@@ -62,12 +70,21 @@ call a `charlib` helper if one exists (`car_side`, `bicycle`, `tractor`,
 in `reference/shape-cookbook.md`. Never guess raw coordinates for object geometry —
 that is exactly where line-art goes wrong (floating wheels, unequal bike wheels,
 roofs that don't overhang). Side-profile objects face right; mirror with `GM()`.
+To stage two side-view figures face-to-face (kid meets goat, dogs nose-to-nose):
+keep the LEFT one stock (it faces right) and `GM()` the RIGHT one — otherwise both
+face the same way and the interaction reads rump-first.
 
 ## Composition
 - **Numeric layout check (run it, don't eyeball)**: scene bbox spans ≥55% of page height
   (top ≤450, bottom ≥900); every element ≥12px inside the border; main figures ≥180px
   tall; faces r≥28 or trait features crowd. Every model bottom-crams first drafts —
   plan the vertical layout BEFORE drawing (see reference/model-tiers.md).
+- **The span metric is a FLOOR, not the goal — and sky tokens don't count.** A corner
+  sun + a high cloud makes the bbox arithmetic pass while the page still reads
+  unfinished (three of six benchmark models did exactly this, one knowingly). Compute
+  the span from CONNECTED scene mass — structures, trees, figures that touch the
+  ground composition — not from isolated sun/cloud/bird tokens. If the connected mass
+  doesn't reach y≈450, add a midground anchor (tree, building, hill), don't sprinkle sky.
 - Whole-page layout: title y≈100, scene y≈150-950, caption y≈1038, page number bottom.
 - Fill the middle band — a fence at the top and kids at the bottom with 300px of empty
   space between reads as unfinished; add a barn/tree/path/mid-ground element.
