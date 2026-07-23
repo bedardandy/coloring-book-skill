@@ -213,3 +213,28 @@ extend them) and objects with no helper yet.
 - Keep chair legs and table legs ≥0.05W apart so strokes don't merge into a slab.
 </content>
 </invoke>
+
+## Priority skeleton sources for future helpers (surveyed 2026-07)
+
+When adding new objects, these permissively-licensed assets were measured as clean
+skeletons (low path counts, no transform soup). Use as PROPORTION REFERENCE and
+redraw in charlib idiom — do not paste path data. Twemoji: use the maintained
+`jdecked/twemoji` repo (main branch), NOT the archived `twitter/twemoji` (stale,
+serves wrong content for some glyphs, lacks post-2022 assets).
+
+Top gaps worth building, best-first (source · elements):
+1. excavator — phosphor-icons/core raw/regular/bulldozer.svg (MIT, 6 stroke elements,
+   already in our visual style; also crane.svg)
+2. rocket — jdecked/twemoji 1f680.svg (6)   3. elephant — 1f418.svg (3)
+4. fire truck — 1f692.svg (~10; police 1f693 / ambulance 1f691 share the body kit)
+5. rainbow — 1f308.svg (6 arcs)             6. present — 1f381.svg (5)
+7. pumpkin — 1f383.svg (3)                  8. airplane — 2708.svg (5)
+9. giraffe — 1f992.svg (~5)                 10. penguin — 1f427.svg (5)
+11. ringed planet — 1fa90.svg (3)           12. balloon (dup for bunch) — 1f388.svg (4)
+13. pig — 1f437.svg (5)                     14. anchor — 2693.svg (2)
+15. octopus — 1f419.svg (7)
+Also clean: school bus, helicopter, shooting star, telescope, egg, sheep, chicken,
+cow, monkey, kite, whale-with-spout (1f433, 6), shield (1f6e1, 3), parrot, frog.
+NO clean permissive skeleton exists for: dragon, unicorn, fairy, pirate ship,
+treasure chest, seahorse, submarine, dump truck, astronaut, owl — hand-draw from
+primitives or use dense emoji as pose reference only.

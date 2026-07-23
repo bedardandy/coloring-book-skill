@@ -99,3 +99,31 @@ roofs that don't overhang). Side-profile objects face right; mirror with `GM()`.
   branches, platform planks) — a house floating inside a leaf blob drowns.
 - Ladders/ropes attach beside the trunk, never overlapping it (rails over the trunk
   crowd out its silhouette).
+
+## Publisher-grade craft (researched 2026-07, sources in repo history)
+- **Two-tier line hierarchy**: outer/silhouette contours 1.3-2.0x the interior detail
+  stroke (e.g. outer 5-6 / interior 4 for ages 3-5; outer 4 / interior 3 for 5-7).
+  The weight contrast is what tells a child "boundary" vs "detail".
+- **Split the age band**: 3-5 → stroke 4-6, ~6-10 elements, subject 40-60% of page;
+  5-7 → stroke 3-4, ~12-16 elements, full scenes with subjects 30-50% each.
+- **Region floor**: no enclosed area a child would try to color smaller than ~3x3mm
+  at print size (a crayon tip is 2-4mm). Slivers frustrate; verify with
+  `charlib.qa_page(svg)` — it labels enclosed regions and counts slivers, plus
+  asserts minimum stroke ≥0.5pt print safety (ours run 1.4-1.8pt).
+- **Parallel-line gap floor**: two near-parallel lines closer than ~3-4mm create an
+  uncolorable sliver — the matting system prevents touching, not close-passing.
+- **Density pacing**: alternate calm and busy pages across the book (element count
+  above/below the book's mean); never 3+ consecutive busy pages.
+- **One focal subject per page**; background elements are skippable context — the
+  page must read "finished" if a kid colors only the subject.
+
+## Print-on-demand (if the book will be printed/bound commercially)
+- Trim 8.5x11 (8.5x8.5 square trending for youngest band). Bleed 0.125" only when
+  art touches the edge. Outer margin 0.5" (professional standard, not the 0.375 legal
+  minimum). Spine-side: keep identity-critical art (faces, hands, text) 0.6-0.75"
+  from the gutter — bound pages curve.
+- 300+ DPI equivalent, grayscale, flattened single PDF. Page count = multiple of 4.
+- Single-sided layout convention (markers bleed through); title page recto +
+  copyright verso is the standard minimum front matter.
+- Top review complaints to design against: thin lines, too-small regions, art near
+  the spine, theme-mismatched pages, duplicated pages.

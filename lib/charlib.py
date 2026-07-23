@@ -1882,3 +1882,49 @@ def closed_book(cx, cy, s=1.0):
 
 def leaf(cx, cy, ang=0, s=1.0):
     return G(cx, cy, P("M 0 0 Q 12 -10 24 0 Q 12 10 0 0 Z", 3, "white") + LINE(4, 0, 20, 0, 2), s, ang)
+
+
+# ---------------------------------------------------------------- colorability QA
+def qa_page(svg_path, min_region_mm2=9.0, min_stroke_pt=0.5, dpi=150):
+    """Publisher-grade page checks (research-backed, 2026-07):
+    1. COLORABILITY: rasterize, threshold ink, label enclosed white regions;
+       flag slivers smaller than a crayon tip (~3x3mm) that frustrate kids.
+    2. PRINT SAFETY: thinnest stroke must stay >= min_stroke_pt at print size.
+    Returns a dict report. Calibration on production pages: a clean simple
+    page scores ~10-20 slivers (eyes/cheeks/micro-details, fine); a crowded
+    group scene ~40-60. Investigate outliers vs these baselines, and any
+    sliver a child would plausibly TRY to color (region of a garment, sky
+    pocket, object interior) rather than intentional micro-detail.
+    """
+    import cairosvg, io, re as _re
+    import numpy as np
+    from scipy import ndimage
+    from PIL import Image
+    png = cairosvg.svg2png(url=svg_path, output_width=int(8.5 * dpi))
+    img = np.array(Image.open(io.BytesIO(png)).convert("L"))
+    # crop to the ART BAND (skip title and caption text — letter counters like
+    # the holes in 'a'/'o' would otherwise register as hundreds of "slivers")
+    hh = img.shape[0]
+    img = img[int(hh * 0.145):int(hh * 0.90), :]
+    ink = img < 128
+    # label white regions enclosed by ink (8-connectivity for white, so
+    # diagonal ink corners still separate regions the way flood fill sees them)
+    labels, n = ndimage.label(~ink)
+    px_per_mm = dpi / 25.4
+    min_px = min_region_mm2 * px_per_mm * px_per_mm
+    sizes = ndimage.sum(~ink, labels, range(1, n + 1))
+    # region 1 is (usually) the page background — exclude the largest region
+    order = sizes.argsort()[::-1]
+    slivers = [int(s) for s in sizes[order[1:]] if s < min_px]
+    # print safety: min stroke-width attr in the SVG, converted to points
+    svg = open(svg_path).read()
+    widths = [float(w) for w in _re.findall(r'stroke-width="([0-9.]+)"', svg)]
+    # page units are px on an 850-wide canvas printed at 612pt letter width
+    min_w_pt = (min(widths) * 612.0 / 850.0) if widths else None
+    return {
+        "regions": int(n),
+        "sliver_count": len(slivers),
+        "sliver_px_sizes": slivers[:10],
+        "min_stroke_pt": round(min_w_pt, 2) if min_w_pt else None,
+        "print_safe": (min_w_pt or 0) >= min_stroke_pt,
+    }

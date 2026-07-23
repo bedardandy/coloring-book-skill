@@ -21,3 +21,11 @@ any shipped recipe. Avoided entirely: OpenClipart, Streamline, and any CC-BY-SA
 source (OpenMoji, OpenMoji-derived) to prevent share-alike contamination, plus
 personal-use-only galleries (supercoloring, wikiHow).
 </content>
+
+## 2026-07 quality-research additions
+- Twemoji (CC-BY 4.0): proportion references for future object helpers come from the
+  maintained fork `jdecked/twemoji` (the archived `twitter/twemoji` serves stale
+  content). Attribution: "Includes proportions referenced from Twemoji (CC-BY 4.0)."
+- Phosphor Icons (MIT): bulldozer/crane stroke skeletons.
+- Craft-rule research (line hierarchy, region floors, print specs) synthesized from
+  public publisher/print guidance; methods and facts, no copied expression.
