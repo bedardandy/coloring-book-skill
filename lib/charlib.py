@@ -1338,7 +1338,7 @@ def dress_rack(cx, gy):
 
 
 def castle_small(cx, gy, w=380):
-    """Story Land fairy-tale castle, compact."""
+    """Fairy-tale castle, compact: keep + two cone-roofed towers with flags."""
     x0 = cx - w / 2
     out = []
     out.append(P(f"M {x0+w*0.18} {gy} L {x0+w*0.18} {gy-w*0.42} "
@@ -1356,7 +1356,7 @@ def castle_small(cx, gy, w=380):
 
 
 def pumpkin_coach(cx, gy, s=1.0):
-    """Cinderella pumpkin coach with wheels."""
+    """Fairy-tale pumpkin coach with wheels."""
     out = []
     out.append(E(cx, gy - 62 * s, 58 * s, 50 * s, 5, "white"))
     for dx in (-30, 0, 30):
@@ -1604,7 +1604,7 @@ def wardrobe(cx, gy, w=240, h=400, doors=True, sw=5):
 
 
 def lamppost(cx, gy, h=340, sw=5):
-    """Iconic Narnia lamppost: base + fluted post + lantern box + glow ticks."""
+    """Victorian lamppost: base + fluted post + lantern box + glow ticks."""
     postop = gy - h
     out = []
     # base
@@ -1637,7 +1637,7 @@ def lamppost(cx, gy, h=340, sw=5):
 
 
 def lion(cx, gy, s=1.0):
-    """Aslan: a BIG warm friendly lion. Rounded body, sitting; a great mane of
+    """A BIG warm friendly lion. Rounded body, sitting; a great mane of
     soft petal spikes around a gentle round face. Nothing fierce. Origin feet."""
     out = []
     # rounded body

@@ -16,11 +16,13 @@ recipes are our own prose expression of public techniques.
 | **E. G. Lutz**, *Drawing Made Easy* (1921) & *What to Draw and How to Draw It* (1913) | Public domain | Construction phrasing / "shape-recipe" method for vehicles, houses, and the horse (four-posts-under-a-barrel legs, arched neck). |
 | **Google QuickDraw** (quickdraw.withgoogle.com) | CC-BY 4.0 | Reference ONLY, for part-relationships and proportions (which parts touch, relative sizes). No stroke data bundled or redistributed. |
 
-Twemoji (CC-BY 4.0) and Phosphor (MIT) were surveyed but not used as sources for
-any shipped recipe. Avoided entirely: OpenClipart, Streamline, and any CC-BY-SA
-source (OpenMoji, OpenMoji-derived) to prevent share-alike contamination, plus
-personal-use-only galleries (supercoloring, wikiHow).
-</content>
+| **Twemoji** (github.com/jdecked/twemoji) | CC-BY 4.0 | Proportion reference for the 2026-07 helper batch: rocket, elephant, fire/police/ambulance, rainbow, present, pumpkin, airplane, giraffe, penguin, ringed planet, balloon, pig, anchor, octopus, whale, shield. Ratios only; no path data copied. Attribution: "Includes proportions referenced from Twemoji (CC-BY 4.0)." (CC-BY 4.0 is one-way compatible with GPLv3-family licensing per Creative Commons.) |
+| **Phosphor Icons** (github.com/phosphor-icons/core) | MIT | Stroke skeleton reference for the excavator (bulldozer.svg). |
+
+Avoided entirely: OpenClipart (quality/provenance lottery), Streamline (terms
+forbid asset-library bundling), any CC-BY-SA source (OpenMoji and derivatives —
+share-alike contamination risk), and personal-use-only galleries (supercoloring,
+wikiHow).
 
 ## 2026-07 quality-research additions
 - Twemoji (CC-BY 4.0): proportion references for future object helpers come from the
