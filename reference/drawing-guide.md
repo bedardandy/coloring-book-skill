@@ -12,6 +12,10 @@ charlib default SW=5 suits the 3-6 middle. Detail strokes 2.5-3.5.
 1. **Heads are drawn LAST** in figure helpers with white fill — any raised hand, prop, or
    line within ~1.3*r of the head center gets silently covered. Keep grip-hands and props
    offset well outside the hair silhouette (hands at |x| ≥ 1.5*r from head center).
+   **Wide hairstyles are worse**: pigtails reach |x|≈1.7*r and long_wavy ≈1.45*r, which
+   swallows the stock `wave`/`up` hand circles entirely (hidden hands / "third pigtail
+   puff" reads). For pigtails or long_wavy characters use `kid_stand` poses
+   `wave_high`/`cheer`, whose hands sit outside every hair silhouette.
 2. **Never mirror with a negative uniform scale** (`G(..., scale=-1)` renders upside-down).
    Use `GM()` (flips x only).
 3. **Hand circles must overlap their arm-line ends** — a 2px gap reads as a floating bubble.

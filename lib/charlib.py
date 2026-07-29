@@ -298,8 +298,10 @@ def face_traits(cx, cy, r, t, extras=True):
 # ---------------------------------------------------------------- kid figures
 def kid_stand(t, pose="wave", outfit=None, accessories=()):
     """Standing kid, origin at feet center, ~250 tall * t.get('height',1.0).
-    pose: wave | up | down | hold  — outfit: dress | tee
-    accessories: subset of {crown, wand}. Scale externally with G()."""
+    pose: wave | up | down | hold | wave_high | cheer  — outfit: dress | tee
+    accessories: subset of {crown, wand}. Scale externally with G().
+    NOTE: wide hairstyles (pigtails |x|~63, long_wavy |x|~54) swallow the stock
+    wave/up hands (heads draw last) — use wave_high/cheer for those characters."""
     out = []
     outfit = outfit or t.get("outfit", "tee")
     head_y = -196 if outfit == "dress" else -188
@@ -340,6 +342,16 @@ def kid_stand(t, pose="wave", outfit=None, accessories=()):
         out.append(C(-47, -96, 8, 4, "white"))
         out.append(P(f"M {rsx} {rsy} Q 44 -128 46 -102", 5))
         out.append(C(47, -96, 8, 4, "white"))
+    elif pose == "wave_high":  # right hand high beside the head, clear of wide hair
+        out.append(P(f"M {lsx} {lsy} Q -44 -128 -46 -102", 5))
+        out.append(C(-47, -96, 8, 4, "white"))
+        out.append(P(f"M {rsx} {rsy} Q 54 -172 66 -204", 5))
+        out.append(C(72, -212, 8, 4, "white"))
+    elif pose == "cheer":  # both arms up-and-out wide, clear of wide hair
+        out.append(P(f"M {lsx} {lsy} Q -55 -172 -73 -202", 5))
+        out.append(C(-79, -210, 8, 4, "white"))
+        out.append(P(f"M {rsx} {rsy} Q 55 -172 73 -202", 5))
+        out.append(C(79, -210, 8, 4, "white"))
     if "wand" in accessories:
         out.append(wand(58, -190 if pose == "wave" else -100, 55, 55, 4, 15))
     out.append(face_traits(0, head_y, 37, t))
@@ -1415,10 +1427,13 @@ def candy_cane(cx, gy, h=120, sw=5):
 
 
 def ferris_wheel(cx, cy, r=110):
+    # gondolas are phase-shifted 30deg off the spokes' 0deg start so none sits
+    # on the two support-leg lines (legs run hub-to-ground through the lower
+    # rim; a gondola at 60deg/120deg gets visually "skewered" by the leg)
     out = [C(cx, cy, r, 4.5), C(cx, cy, 8, 4, "white")]
     import math as m
     for i in range(6):
-        a = i * m.pi / 3
+        a = m.pi / 6 + i * m.pi / 3
         gx, gy2 = cx + r * m.cos(a), cy + r * m.sin(a)
         out.append(LINE(cx, cy, gx, gy2, 3))
         out.append(P(f"M {gx-12} {gy2} Q {gx-12} {gy2+16} {gx} {gy2+16} Q {gx+12} {gy2+16} {gx+12} {gy2} Z", 3.5, "white"))
