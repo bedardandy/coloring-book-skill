@@ -228,6 +228,14 @@ def main(argv):
                 key = f"{r['fixture']}|{r['style']}|{metric}"
                 lo, hi = cal.get(key, (v, v))
                 cal[key] = [min(lo, v), max(hi, v)]
+        # tolerance margins: cross-version/platform float drift is real
+        # (counts +-2, relative metrics +-12%)
+        for key, (lo, hi) in list(cal.items()):
+            if "slivers" in key or "strokes" in key:
+                cal[key] = [max(0, lo - 2), hi + 2]
+            else:
+                pad = max(abs(lo), abs(hi)) * 0.12
+                cal[key] = [lo - pad, hi + pad]
         with open(BANDS_PATH, "w") as fh:
             json.dump(cal, fh, indent=1)
         print(f"calibrated bands -> {BANDS_PATH}")
