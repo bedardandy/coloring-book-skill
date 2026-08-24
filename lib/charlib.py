@@ -2643,8 +2643,8 @@ def giraffe(cx, ground_y, w=200, sw=4.5):
     out.append(P(f"M {x0 + 0.54 * w} {g - 0.66 * w} L {x0 + 0.74 * w} {g - 1.36 * w} "
                  f"L {x0 + 0.88 * w} {g - 1.34 * w} L {x0 + 0.66 * w} {g - 0.60 * w} Z", sw, "white"))
     # head muzzle at the neck top
-    hx, hy = x0 + 0.86 * w, g - 1.42 * w
-    out.append(E(hx, hy, 0.11 * w, 0.075 * w, sw, "white"))
+    hx, hy = x0 + 0.86 * w, g - 1.385 * w
+    out.append(E(hx, hy, 0.115 * w, 0.085 * w, sw, "white"))
     # ossicones (two knobbed stalks)
     for dx in (-0.02, 0.05):
         out.append(LINE(hx + dx * w, hy - 0.05 * w, hx + dx * w + 0.01 * w, hy - 0.11 * w, 3.5))
@@ -2837,11 +2837,14 @@ def whale_spout(cx, ground_y, w=240, sw=5):
     # eye + smile
     out.append(DOT(x0 + 0.82 * w, g - 0.30 * w, 3.5))
     out.append(P(f"M {x0 + 0.82 * w} {g - 0.20 * w} Q {x0 + 0.90 * w} {g - 0.16 * w} {x0 + 0.94 * w} {g - 0.22 * w}", 3))
-    # spout spray from the blowhole
-    bx = x0 + 0.66 * w
-    out.append(P(f"M {bx} {g - 0.44 * w} Q {bx - 0.06 * w} {g - 0.64 * w} {bx - 0.02 * w} {g - 0.74 * w}", 3))
-    out.append(P(f"M {bx} {g - 0.44 * w} Q {bx + 0.02 * w} {g - 0.66 * w} {bx + 0.02 * w} {g - 0.76 * w}", 3))
-    out.append(P(f"M {bx} {g - 0.44 * w} Q {bx + 0.08 * w} {g - 0.64 * w} {bx + 0.10 * w} {g - 0.72 * w}", 3))
+    # spout: fountain of outward-curving arcs with droplet dots
+    bx, by = x0 + 0.66 * w, g - 0.42 * w
+    for dx, tip in ((-1, -0.11), (0, 0.0), (1, 0.11)):
+        out.append(P(f"M {_f(bx)} {_f(by)} Q {_f(bx + dx * 0.10 * w)} {_f(by - 0.58 * w)} "
+                     f"{_f(bx + tip * w)} {_f(by - 0.68 * w)}", 3.5))
+        out.append(C(bx + tip * w, by - 0.72 * w, 3.5, 2.5, "white"))
+    out.append(C(bx - 0.055 * w, by - 0.50 * w, 2.5, 2, "white"))
+    out.append(C(bx + 0.065 * w, by - 0.53 * w, 2.5, 2, "white"))
     return "".join(out)
 
 
@@ -3335,14 +3338,19 @@ def train_car(cx, ground_y, w=180, kind="box", sw=5):
 
 # ---------------------------------------------------------------- space pack
 def star_field(x0, y0, x1, y1, n=14, sw=2.5):
-    """Deterministic star/sparkle scatter (golden-ratio hops — never random).
-    Sky decoration; tagged data-sky so the validator ignores it for span."""
+    """Deterministic star/sparkle scatter on a jittered grid — uniform
+    coverage without the diagonal streak a single golden-ratio sequence
+    produces. Sky decoration; tagged data-sky for the span check."""
     out = []
+    cols = max(2, int(round(math.sqrt(n * (x1 - x0) / max(1, y1 - y0)))))
+    rows = (n + cols - 1) // cols
+    cw, ch = (x1 - x0) / cols, (y1 - y0) / rows
     for i in range(n):
-        fx = (i * 0.61803398875) % 1.0
-        fy = (i * 0.37777777) % 1.0
-        px = x0 + (x1 - x0) * fx
-        py = y0 + (y1 - y0) * fy
+        r_, c_ = divmod(i, cols)
+        jx = ((i * 0.61803398875) % 1.0 - 0.5) * cw * 0.55
+        jy = ((i * 0.37777777) % 1.0 - 0.5) * ch * 0.55
+        px = x0 + cw * (c_ + 0.5) + jx
+        py = y0 + ch * (r_ + 0.5) + jy
         if i % 3 == 0:
             out.append(star(px, py, 9 + (i % 3) * 3, sw, "white")
                        .replace("<polygon ", '<polygon data-sky="1" ', 1))

@@ -26,10 +26,13 @@ BEACH_GROUND = 900          # beach shoreline (sand ground)
 SPACE_GROUND = 930          # lunar surface line
 
 
-def scene_meadow(*, sun_at=(130, 225), hills=True, flowers=5):
-    """Sunny meadow. Ground: SCENE_GROUND. Sky lane stays clear above y=300
-    on the right for a title; flowers dot the foreground band."""
+def scene_meadow(*, sun_at=(130, 225), hills=True, flowers=5, sky_fill=True):
+    """Sunny meadow. Ground: SCENE_GROUND. Mid-sky clouds fill the band
+    between title and scene (opt out with sky_fill=False); flowers dot the
+    foreground band."""
     out = [sun(*sun_at, r=42), cloud(660, 235, 28), sparkle(560, 250, 8)]
+    if sky_fill:
+        out += [cloud(230, 330, 20), sparkle(700, 330, 7)]
     if hills:
         out.append(hill(300, SCENE_GROUND, w=470, h=95))
         out.append(hill(645, SCENE_GROUND, w=320, h=70))
@@ -47,12 +50,14 @@ def scene_meadow(*, sun_at=(130, 225), hills=True, flowers=5):
     return "".join(out)
 
 
-def scene_street(*, lampposts=True):
+def scene_street(*, lampposts=True, sky_fill=True):
     """City street. Vehicle/figure ground: STREET_GROUND (road near edge)."""
     street_y = SCENE_GROUND - 120
     out = [sun(120, 225, r=40), cloud(650, 235, 26),
            skyline(street_y - 8, 60, W - 60), road(50, W - 50, street_y),
            LINE(50, street_y + ROAD_H, W - 50, street_y + ROAD_H, 4)]
+    if sky_fill:
+        out += [cloud(300, 320, 22), sparkle(500, 300, 7)]
     if lampposts:
         out.append(G(115, street_y + ROAD_H, lamppost(0, 0, h=250), 0.9))
         out.append(G(W - 115, street_y + ROAD_H, lamppost(0, 0, h=250), 0.9))
@@ -98,10 +103,12 @@ def scene_space(*, planet=True, ufo_target=None):
     return "".join(out)
 
 
-def scene_farm(*, pond_too=True):
+def scene_farm(*, pond_too=True, sky_fill=True):
     """Farmyard: barn + ranch fence + grass. Ground: SCENE_GROUND."""
     out = [sun(130, 225, r=40), cloud(620, 235, 26),
            hill(560, SCENE_GROUND, w=460, h=70)]
+    if sky_fill:
+        out += [sparkle(300, 330, 7), cloud(450, 320, 20)]
     out.append(G(200, SCENE_GROUND, barn(0, 0, w=230), 1.0))
     out.append(fence_ranch(360, 620, SCENE_GROUND, posts=5))
     if pond_too:
