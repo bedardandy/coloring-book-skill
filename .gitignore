@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# per-page build intermediates (PNGs + final PDF are the shipped artifacts)
+examples/*/pages/*.svg
+examples/*/pages/*.pdf
+
+# tooling
+.DS_Store

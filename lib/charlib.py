@@ -14,47 +14,217 @@ CRITICAL GOTCHAS (learned the hard way):
   use GM() which flips x only.
 - Keep raised-hand circles OVERLAPPING their arm-line ends (no gaps).
 - Web/rope/leash lines must END AT a hand circle, offset well clear of the head.
+
+VALIDATION HOOKS (consumed by lib/validate.py — see reference/drawing-guide.md):
+- Semantic metadata travels in the SVG itself as data-* attributes:
+  data-face="cx,cy,r" (head circles), data-sky="1" (sun/cloud/sparkle),
+  data-ground="y" (wheels tangent to a declared ground line),
+  data-hand="1" (hand circles), data-el="figure" (character groups),
+  data-mat="1" (invisible knockout-mat copies), data-chrome="1"
+  (title/caption/page-number furniture). validate_svg() expands the nested
+  G()/GM() transforms to world space and runs exact arithmetic layout checks
+  on these — run it on every page before shipping (see lib/validate.py).
 """
 import math
+import re
+from xml.sax.saxutils import escape as _xml_escape
 
 W, H = 850, 1100
-SW = 5
+SW = 5           # main silhouette stroke (age-tuned; see drawing-guide.md)
+DETAIL_SW = 3.25  # interior detail stroke (two-tier hierarchy)
+
+
+def _f(v):
+    """Compact fixed-point coordinate formatting: no float noise, no trailing .0."""
+    s = f"{round(float(v), 1):.1f}"
+    return s[:-2] if s.endswith(".0") else s
 
 
 # ---------------------------------------------------------------- primitives
 def P(d, sw=SW, fill="none"):
-    return (f'<path d="{d}" fill="{fill}" stroke="black" stroke-width="{sw}" '
+    return (f'<path d="{_norm_d(d)}" fill="{fill}" stroke="black" stroke-width="{_f(sw)}" '
             f'stroke-linecap="round" stroke-linejoin="round"/>')
 
 
-def C(cx, cy, r, sw=SW, fill="none"):
-    return f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="{fill}" stroke="black" stroke-width="{sw}"/>'
+_NUM_RE = re.compile(r"-?\d+\.\d{3,}")
+
+
+def _norm_d(d):
+    """Collapse float noise inside path data (123.45000000000002 -> 123.5)."""
+    return _NUM_RE.sub(lambda m: f"{round(float(m.group(0)), 1):g}", d)
+
+
+def _serialize(svg):
+    """Last-hop cleanup applied by page()/spage(): rounds any remaining long
+    floats (raw f-string geometry in helpers) so emitted files stay compact
+    and byte-diffable."""
+    return _NUM_RE.sub(lambda m: f"{round(float(m.group(0)), 1):g}", svg)
+
+
+def C(cx, cy, r, sw=SW, fill="none", **meta):
+    return f'<circle cx="{_f(cx)}" cy="{_f(cy)}" r="{_f(r)}"{_meta(meta)} fill="{fill}" stroke="black" stroke-width="{_f(sw)}"/>'
 
 
 def DOT(cx, cy, r=3.5):
-    return f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r}" fill="black"/>'
+    return f'<circle cx="{_f(cx)}" cy="{_f(cy)}" r="{_f(r)}" fill="black"/>'
 
 
 def E(cx, cy, rx, ry, sw=SW, fill="none"):
-    return f'<ellipse cx="{cx:.1f}" cy="{cy:.1f}" rx="{rx:.1f}" ry="{ry:.1f}" fill="{fill}" stroke="black" stroke-width="{sw}"/>'
+    return f'<ellipse cx="{_f(cx)}" cy="{_f(cy)}" rx="{_f(rx)}" ry="{_f(ry)}" fill="{fill}" stroke="black" stroke-width="{_f(sw)}"/>'
 
 
 def LINE(x1, y1, x2, y2, sw=SW):
-    return f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="black" stroke-width="{sw}" stroke-linecap="round"/>'
+    return (f'<line x1="{_f(x1)}" y1="{_f(y1)}" x2="{_f(x2)}" y2="{_f(y2)}" '
+            f'stroke="black" stroke-width="{_f(sw)}" stroke-linecap="round"/>')
 
 
 def TXT(x, y, s, size=40, anchor="middle", weight="bold"):
-    return (f'<text x="{x}" y="{y}" font-family="DejaVu Sans" font-size="{size}" '
-            f'font-weight="{weight}" text-anchor="{anchor}" fill="black">{s}</text>')
+    return (f'<text x="{_f(x)}" y="{_f(y)}" font-family="DejaVu Sans" font-size="{_f(size)}" '
+            f'font-weight="{weight}" text-anchor="{anchor}" fill="black">{_xml_escape(s)}</text>')
+
+
+def _meta(meta):
+    """Render data-* metadata kwargs (validation hooks) as attributes."""
+    out = ""
+    for k, v in meta.items():
+        out += f' data-{k.replace("_", "-")}="{v}"'
+    return out
 
 
 def G(x, y, inner, scale=1.0, rot=0):
-    return f'<g transform="translate({x},{y}) rotate({rot}) scale({scale})">{inner}</g>'
+    return f'<g transform="translate({_f(x)},{_f(y)}) rotate({_f(rot)}) scale({_f(scale)})">{inner}</g>'
 
 
 def GM(x, y, inner, scale=1.0):
     """Mirror horizontally (flip left-right) WITHOUT turning upside-down."""
-    return f'<g transform="translate({x},{y}) scale(-{scale},{scale})">{inner}</g>'
+    return f'<g transform="translate({_f(x)},{_f(y)}) scale(-{_f(scale)},{_f(scale)})">{inner}</g>'
+
+
+# ---------------------------------------------------------------- curve engine & line vocabulary
+# Organic shapes built from these are G1-continuous by construction — no more
+# hand-tuned Q-chains with tangent kinks at the joints. Catmull-Rom through
+# every point, converted to cubic Béziers (the standard /6 formulation).
+
+def _cr_to_bez(pts, closed):
+    """Catmull-Rom -> cubic Bézier segments. pts: [(x, y), ...]."""
+    n = len(pts)
+    if n < 2:
+        return []
+    def get(i):
+        if closed:
+            return pts[i % n]
+        return pts[max(0, min(n - 1, i))]
+    segs = []
+    rng = range(n) if closed else range(n - 1)
+    for i in rng:
+        p0, p1, p2, p3 = get(i - 1), get(i), get(i + 1), get(i + 2)
+        c1 = (p1[0] + (p2[0] - p0[0]) / 6.0, p1[1] + (p2[1] - p0[1]) / 6.0)
+        c2 = (p2[0] - (p3[0] - p1[0]) / 6.0, p2[1] - (p3[1] - p1[1]) / 6.0)
+        segs.append((p1, c1, c2, p2))
+    return segs
+
+
+def smooth_path(pts, sw=SW, fill="none", closed=False):
+    """Smooth open/closed curve THROUGH pts (Catmull-Rom quality, G1 joints).
+    Closed shapes should pass fill="white" so overlaps knock out cleanly.
+      smooth_path([(-40,0),(0,-60),(40,0)], closed=True, fill="white")"""
+    if len(pts) < 2:
+        return ""
+    d = f"M {_f(pts[0][0])} {_f(pts[0][1])} "
+    for p1, c1, c2, p2 in _cr_to_bez([(float(x), float(y)) for x, y in pts], closed):
+        d += (f"C {_f(c1[0])} {_f(c1[1])} {_f(c2[0])} {_f(c2[1])} "
+              f"{_f(p2[0])} {_f(p2[1])} ")
+    if closed:
+        d += "Z"
+    return P(d, sw, fill)
+
+
+def wavy_line(x0, x1, y, waves=3, amp=8, sw=3.5):
+    """Sine-ish wave from x0 to x1 centred on y."""
+    n = max(1, int(waves))
+    pts = []
+    steps = n * 8
+    for i in range(steps + 1):
+        t = i / steps
+        pts.append((x0 + (x1 - x0) * t,
+                    y + amp * math.sin(t * n * 2 * math.pi)))
+    return smooth_path(pts, sw)
+
+
+def zigzag_line(x0, x1, y, teeth=6, amp=10, sw=3.5):
+    """Sharp zigzag from x0 to x1 centred on y."""
+    n = max(1, int(teeth))
+    pts = [(x0, y)]
+    step = (x1 - x0) / n
+    for i in range(n):
+        pts.append((x0 + step * (i + 0.5), y - amp))
+        pts.append((x0 + step * (i + 1), y))
+    return P("M " + " L ".join(f"{_f(a)} {_f(b)}" for a, b in pts), sw)
+
+
+def scallop_edge(x0, x1, y, bumps=6, r=9, sw=3.5, flip=False):
+    """Decorative scallop hem/border along a horizontal line (dress hems,
+    rug edges, cloud bottoms). flip=True bows the bumps downward."""
+    sgn = 1 if flip else -1
+    n = max(1, int(bumps))
+    step = (x1 - x0) / n
+    d = f"M {_f(x0)} {_f(y)} "
+    for i in range(n):
+        mx = x0 + step * (i + 0.5)
+        d += f"Q {_f(mx)} {_f(y + sgn * 2 * r)} {_f(x0 + step * (i + 1))} {_f(y)} "
+    return P(d, sw)
+
+
+def stitch_dash(x1, y1, x2, y2, sw=3, dash="10 8"):
+    """Hand-stitch dashed line (blankets, quilts, paths)."""
+    return (f'<line x1="{_f(x1)}" y1="{_f(y1)}" x2="{_f(x2)}" y2="{_f(y2)}" '
+            f'stroke="black" stroke-width="{_f(sw)}" stroke-linecap="round" '
+            f'stroke-dasharray="{dash}"/>')
+
+
+def hatch_region(cx, cy, rx, ry, spacing=9, sw=2.5, ang=0):
+    """Parallel hatch marks filling an ellipse region (shading, soil, wood).
+    Chords of the ellipse — no clipPath needed, renders identically everywhere."""
+    out = []
+    ca, sa = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+    # hatch lines run perpendicular to (ca,sa); sample offsets across it
+    lim = max(rx, ry)
+    off = -lim
+    while off <= lim:
+        # chord endpoints: solve ellipse ∩ line {P: P·n = off}
+        # param: P = t*u + off*n ; |P^-1·(c)|=1 -> quadratic in t
+        nx_, ny_ = ca, sa
+        ux_, uy_ = -sa, ca
+        A = (ux_ / rx) ** 2 + (uy_ / ry) ** 2
+        B = 2 * off * (nx_ * ux_ / rx ** 2 + ny_ * uy_ / ry ** 2)
+        Cq = (off * nx_ / rx) ** 2 + (off * ny_ / ry) ** 2 - 1
+        disc = B * B - 4 * A * Cq
+        if disc > 0:
+            sq = math.sqrt(disc)
+            t0, t1 = (-B - sq) / (2 * A), (-B + sq) / (2 * A)
+            p1 = (cx + off * nx_ + t0 * ux_, cy + off * ny_ + t0 * uy_)
+            p2 = (cx + off * nx_ + t1 * ux_, cy + off * ny_ + t1 * uy_)
+            out.append(LINE(p1[0], p1[1], p2[0], p2[1], sw))
+        off += spacing
+    return "".join(out)
+
+
+def echo(inner_pts_or_d, grow=7, sw=3, closed=True):
+    """Double-contour 'aura' line around a CONVEX motif (hearts, stars,
+    balloons, eggs): draws an outer parallel copy ~`grow`px outside, then
+    returns nothing but that outer copy — draw your normal shape on top.
+    Pass the same point list you give smooth_path. Convex-only: concave
+    silhouettes self-intersect when offset."""
+    if isinstance(inner_pts_or_d, str):
+        raise ValueError("echo() takes a point list; path-offsetting strings "
+                         "is not supported")
+    pts = [(float(x), float(y)) for x, y in inner_pts_or_d]
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    grown = [(cx + (x - cx) * 1.06 + (grow * 0.55 if x >= cx else -grow * 0.55),
+              cy + (y - cy) * 1.06 + (grow * 0.55 if y >= cy else -grow * 0.55))
+             for x, y in pts]
+    return smooth_path(grown, sw, closed=closed)
 
 
 # ---------------------------------------------------------------- motifs
@@ -68,7 +238,8 @@ def star(cx, cy, r, sw=SW, fill="none"):
 
 
 def sparkle(cx, cy, r=10, sw=3.5):
-    return LINE(cx - r, cy, cx + r, cy, sw) + LINE(cx, cy - r, cx, cy + r, sw)
+    return LINE(cx - r, cy, cx + r, cy, sw).replace("<line ", '<line data-sky="1" ', 1) + \
+           LINE(cx, cy - r, cx, cy + r, sw).replace("<line ", '<line data-sky="1" ', 1)
 
 
 def heart(cx, cy, s, sw=SW, fill="none"):
@@ -82,11 +253,11 @@ def cloud(cx, cy, s, sw=SW):
          f"Q {cx - s * 0.6} {cy - s * 1.5} {cx + s * 0.1} {cy - s * 1.1} "
          f"Q {cx + s * 0.7} {cy - s * 1.6} {cx + s * 1.1} {cy - s * 0.8} "
          f"Q {cx + s * 1.7} {cy - s * 0.8} {cx + s * 1.5} {cy} Z")
-    return P(d, sw, "white")
+    return P(d, sw, "white").replace("<path ", '<path data-sky="1" ', 1)
 
 
 def sun(cx, cy, r=42, sw=SW):
-    s = C(cx, cy, r, sw, "white")
+    s = C(cx, cy, r, sw, "white", sky="1")
     for i in range(8):
         a = i * math.pi / 4
         s += LINE(cx + (r + 12) * math.cos(a), cy + (r + 12) * math.sin(a),
@@ -181,7 +352,7 @@ def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
     Friendliness defaults (anti-eerie): brows OFF (brows close to dot eyes read
     as scheming), smile is a narrow deep U, mouth="open" gives an unambiguous
     happy D-mouth, cheeks adds small colorable blush circles."""
-    s = C(cx, cy, r, SW, "white")
+    s = C(cx, cy, r, SW, "white", face=f"{_f(cx)},{_f(cy)},{_f(r)}")
     ey, ex = cy + r * 0.08, r * 0.38
     hairsvg = ""
     if hair == "tousled":
@@ -296,10 +467,52 @@ def face_traits(cx, cy, r, t, extras=True):
 
 
 # ---------------------------------------------------------------- kid figures
-def kid_stand(t, pose="wave", outfit=None, accessories=()):
-    """Standing kid, origin at feet center, ~250 tall * t.get('height',1.0).
-    pose: wave | up | down | hold  — outfit: dress | tee
-    accessories: subset of {crown, wand}. Scale externally with G()."""
+def limb(s, e, wpt, w0=6.5, w1=4.0, sw=5, hand_r=0):
+    """Tapered limb outline through shoulder s -> elbow e -> wrist wpt
+    (half-width w0 at shoulder, w1 at wrist, miter-joined elbow, rounded
+    caps). White-filled closed smooth_path — reads as a solid arm/leg, not a
+    wire. hand_r>0 adds a data-tagged hand circle centred on the wrist so
+    held props keep their anchor coordinates."""
+    def _n(vx, vy):
+        L = math.hypot(vx, vy) or 1.0
+        return vx / L, vy / L
+    d1x, d1y = _n(e[0] - s[0], e[1] - s[1])
+    d2x, d2y = _n(wpt[0] - e[0], wpt[1] - e[1])
+    n1x, n1y = -d1y, d1x
+    n2x, n2y = -d2y, d2x
+    wm = (w0 + w1) / 2.0
+    dot = n1x * n2x + n1y * n2y
+    mx, my = _n(n1x + n2x, n1y + n2y)
+    mw = min(wm / max(0.4, dot), w0 * 1.8)
+    left = [(s[0] + n1x * w0, s[1] + n1y * w0),
+            (e[0] + mx * mw, e[1] + my * mw),
+            (wpt[0] + n2x * w1, wpt[1] + n2y * w1)]
+    right = [(wpt[0] - n2x * w1, wpt[1] - n2y * w1),
+             (e[0] - mx * mw, e[1] - my * mw),
+             (s[0] - n1x * w0, s[1] - n1y * w0)]
+    cap_s = (s[0] - d1x * w0 * 0.9, s[1] - d1y * w0 * 0.9)
+    cap_w = (wpt[0] + d2x * w1 * 1.15, wpt[1] + d2y * w1 * 1.15)
+    out = smooth_path([cap_s] + left + [cap_w] + right, sw, closed=True,
+                      fill="white")
+    if hand_r:
+        out += C(wpt[0], wpt[1], hand_r, max(3.5, sw - 1), "white", hand="1")
+    return out
+
+
+def _arm(sh, wrist, sw=5, hand_r=8, bulge=13, lift=4):
+    """Two-segment arm from shoulder to an EXACT wrist target (the classic
+    pose hand positions); elbow bows outward away from the torso."""
+    sx, sy = sh
+    wx, wy = wrist
+    side = 1.0 if wx >= sx else -1.0
+    e = ((sx + wx) / 2 + side * bulge, (sy + wy) / 2 - lift)
+    return limb(sh, e, (wx, wy), sw=sw, hand_r=hand_r)
+
+
+def _legacy_kid_stand(t, pose="wave", outfit=None, accessories=()):
+    """Pre-smoothing kid figure kept for reference renders and conservative
+    mode (set charlib.USE_LEGACY_FIGURES = True to bind the canonical names
+    back to these)."""
     out = []
     outfit = outfit or t.get("outfit", "tee")
     head_y = -196 if outfit == "dress" else -188
@@ -322,30 +535,109 @@ def kid_stand(t, pose="wave", outfit=None, accessories=()):
     rsx, rsy = sh[1]
     if pose == "wave":
         out.append(P(f"M {lsx} {lsy} Q -48 -128 -52 -100", 5))
-        out.append(C(-54, -94, 8, 4, "white"))
+        out.append(C(-54, -94, 8, 4, "white", hand="1"))
         out.append(P(f"M {rsx} {rsy} Q 44 -156 52 -180", 5))
-        out.append(C(55, -186, 8, 4, "white"))
+        out.append(C(55, -186, 8, 4, "white", hand="1"))
     elif pose == "up":
         out.append(P(f"M {lsx} {lsy} Q -52 -172 -62 -200", 5))
-        out.append(C(-64, -207, 8, 4, "white"))
+        out.append(C(-64, -207, 8, 4, "white", hand="1"))
         out.append(P(f"M {rsx} {rsy} Q 52 -172 62 -200", 5))
-        out.append(C(64, -207, 8, 4, "white"))
+        out.append(C(64, -207, 8, 4, "white", hand="1"))
     elif pose == "down":
         out.append(P(f"M {lsx} {lsy} Q -44 -120 -46 -92", 5))
-        out.append(C(-48, -86, 8, 4, "white"))
+        out.append(C(-48, -86, 8, 4, "white", hand="1"))
         out.append(P(f"M {rsx} {rsy} Q 44 -120 46 -92", 5))
-        out.append(C(48, -86, 8, 4, "white"))
+        out.append(C(48, -86, 8, 4, "white", hand="1"))
     elif pose == "hold":  # both arms forward (for basket/toy/leash)
         out.append(P(f"M {lsx} {lsy} Q -44 -128 -46 -102", 5))
-        out.append(C(-47, -96, 8, 4, "white"))
+        out.append(C(-47, -96, 8, 4, "white", hand="1"))
         out.append(P(f"M {rsx} {rsy} Q 44 -128 46 -102", 5))
-        out.append(C(47, -96, 8, 4, "white"))
+        out.append(C(47, -96, 8, 4, "white", hand="1"))
     if "wand" in accessories:
         out.append(wand(58, -190 if pose == "wave" else -100, 55, 55, 4, 15))
     out.append(face_traits(0, head_y, 37, t))
     if "crown" in accessories:
         out.append(crown(0, head_y - 42, 58, 34, 4))
-    return "".join(out)
+    return '<g data-el="figure">' + "".join(out) + "</g>"
+
+
+def kid_stand(t, pose="wave", outfit=None, accessories=()):
+    """(Public dispatcher — binds to the smooth rebuild unless
+    use_legacy_figures(True) was called.)"""
+    return _smooth_kid_stand(t, pose, outfit, accessories)
+
+
+# wrist targets per pose — IDENTICAL to legacy so props/composition anchors
+# keep working (hold_teddy-style redraws depend on these spots)
+_KID_POSES = {
+    "wave": ((-54, -94), (55, -186)),
+    "up": ((-64, -207), (64, -207)),
+    "down": ((-48, -86), (48, -86)),
+    "hold": ((-47, -96), (47, -96)),
+    "hold_r": ((30, -100), (44, -106)),   # both arms to the RIGHT
+    "hold_l": ((-30, -100), (-44, -106)),  # both arms to the LEFT
+}
+
+
+def _kid_top(t, outfit=None, legs=True):
+    """Shared kid torso (+ optional standing legs). Returns
+    (out_list, shoulders, head_y) so pose variants reuse the exact
+    battle-tested body geometry."""
+    out = []
+    outfit = outfit or t.get("outfit", "tee")
+    head_y = -196 if outfit == "dress" else -188
+    if outfit == "dress":
+        out.append(P("M -18 -160 L 18 -160 L 30 -108 L 62 -18 "
+                     "Q 48 -28 38 -14 Q 28 -26 16 -12 Q 4 -26 -8 -12 Q -20 -26 -30 -14 Q -42 -28 -55 -16 "
+                     "L -28 -108 Z", 5, "white"))
+        out.append(P("M -26 -100 L 26 -100", 4))
+        out.append(DOT(-20, -58, 3) + DOT(4, -42, 3) + DOT(24, -62, 3) + DOT(0, -78, 3))
+        if legs:
+            out.append(P("M -18 -14 L -18 0 Q -18 6 -10 6 L -6 6", 4.5))
+            out.append(P("M 18 -14 L 18 0 Q 18 6 26 6 L 30 6", 4.5))
+        sh = (-20, -150), (20, -150)
+    else:
+        if legs:
+            out.append(P("M -12 -70 L -12 -8 Q -12 0 -4 0 L 4 0", 5))
+            out.append(P("M 14 -70 L 14 -8 Q 14 0 22 0 L 30 0", 5))
+        out.append(P("M -18 -152 L 18 -152 L 26 -70 L -26 -70 Z", 5, "white"))
+        out.append(P("M -22 -96 L 22 -96", 4))
+        sh = (-18, -142), (18, -142)
+    return out, sh, head_y
+
+
+def _smooth_kid_stand(t, pose="wave", outfit=None, accessories=()):
+    """Standing kid, origin at feet center, ~250 tall * t.get('height',1.0).
+    pose: wave | up | down | hold | hold_r | hold_l  — outfit: dress | tee
+    accessories: subset of {crown, wand, cap, scarf, cape}. Scale externally
+    with G(). Smooth rebuild: arms are tapered two-segment outlines through
+    the exact wrist targets (solid limbs, no wire arcs); head/hair/faces and
+    all prop anchors unchanged. hold_r/hold_l aim BOTH arms to one side for
+    hand-holding pairs (see kids_holding_hands)."""
+    out, sh, head_y = _kid_top(t, outfit, legs=True)
+    lw, rw = _KID_POSES[pose]
+    out.append(_arm(sh[0], lw))
+    out.append(_arm(sh[1], rw))
+    if "cape" in accessories:                       # behind everything
+        out.insert(0, P("M -16 -158 Q -52 -110 -40 -34 Q -20 -46 -14 -70 Z", 4.5, "white"))
+    if "scarf" in accessories:
+        ny = -158 if (outfit or t.get("outfit", "tee")) == "dress" else -150
+        out.append(P(f"M -16 {_f(ny)} Q 0 {_f(ny + 8)} 16 {_f(ny)} "
+                     f"L 14 {_f(ny + 9)} Q 0 {_f(ny + 16)} -14 {_f(ny + 9)} Z", 3.5, "white"))
+        out.append(P(f"M 10 {_f(ny + 8)} L 20 {_f(ny + 34)} L 8 {_f(ny + 32)} Z", 3, "white"))
+    if "wand" in accessories:
+        out.append(wand(58, -190 if pose == "wave" else -100, 55, 55, 4, 15))
+    out.append(face_traits(0, head_y, 37, t))
+    if "cap" in accessories:
+        out.append(P(f"M -30 {_f(head_y - 14)} Q -26 {_f(head_y - 48)} 0 {_f(head_y - 50)} "
+                     f"Q 26 {_f(head_y - 48)} 30 {_f(head_y - 14)} Q 0 {_f(head_y - 26)} "
+                     f"-30 {_f(head_y - 14)} Z", 3.5, "white"))
+        out.append(P(f"M 26 {_f(head_y - 22)} Q 52 {_f(head_y - 20)} 54 {_f(head_y - 10)} "
+                     f"Q 38 {_f(head_y - 8)} 24 {_f(head_y - 12)} Z", 3.5, "white"))
+        out.append(C(0, head_y - 50, 4, 2.5, "white"))
+    if "crown" in accessories:
+        out.append(crown(0, head_y - 42, 58, 34, 4))
+    return '<g data-el="figure">' + "".join(out) + "</g>"
 
 
 def kid_sitting(t):
@@ -360,13 +652,12 @@ def kid_sitting(t):
     out.append(DOT(-20, -26, 3) + DOT(18, -28, 2.6) + DOT(24, -22, 2.6))
     out.append(C(-28, -18, 5.5, 3.5, "white") + C(28, -18, 5.5, 3.5, "white"))
     out.append(face_traits(0, -112, 34, t))
-    return "".join(out)
+    return '<g data-el="figure">' + "".join(out) + "</g>"
 
 
 # ---------------------------------------------------------------- animals
-def dog(t=None, pose="stand"):
-    """Side-view dog facing right, origin at feet. ~150 tall.
-    traits: coat: plain|spots|patch ; collar: True ; floppy_ears: True"""
+def _legacy_dog(t=None, pose="stand"):
+    """Pre-smoothing dog kept for reference renders / conservative mode."""
     t = t or {}
     out = []
     # body
@@ -395,14 +686,59 @@ def dog(t=None, pose="stand"):
     if t.get("collar", True):
         out.append(P("M 38 -88 Q 52 -80 68 -84", 3.5))
         out.append(C(54, -78, 4.5, 3, "white"))
-    return "".join(out)
+    return '<g data-el="figure">' + "".join(out) + "</g>"
+
+
+def _smooth_dog(t=None, pose="stand"):
+    """Side-view dog facing right, origin at feet. ~150 tall.
+    traits: coat: plain|spots|patch ; collar: True ; floppy_ears: True
+    Smooth rebuild: one G1-continuous back/belly silhouette instead of a
+    Q-chain with kinks; head/ears/coat/collar and all anchors unchanged."""
+    t = t or {}
+    out = []
+    # body: single smooth closed silhouette (rump -> back -> chest -> belly)
+    out.append(smooth_path(
+        [(-62, -46), (-67, -72), (-46, -87), (-12, -90), (24, -87),
+         (48, -76), (62, -54), (62, -34), (44, -25), (8, -23),
+         (-28, -23), (-52, -29)],
+        4.5, closed=True, fill="white"))
+    # legs
+    for lx in (-48, -24, 14, 42):
+        out.append(P(f"M {lx} -24 L {lx} 0", 4.5))
+        out.append(P(f"M {lx-5} 0 L {lx+6} 0", 4))
+    # tail up-curl (smooth open curve)
+    out.append(smooth_path([(-58, -60), (-76, -70), (-80, -92), (-68, -86),
+                            (-63, -76)], 4.5))
+    # head
+    out.append(C(58, -104, 26, 4.5, "white"))
+    out.append(P("M 78 -100 Q 92 -98 90 -88 Q 82 -82 72 -86", 4, "white"))  # muzzle
+    out.append(DOT(88, -94, 3.5))  # nose
+    out.append(DOT(60, -110, 3))   # eye
+    out.append(P("M 76 -84 Q 72 -78 66 -80", 3.5))  # mouth
+    if t.get("floppy_ears", True):
+        out.append(P("M 44 -122 Q 30 -132 26 -112 Q 26 -96 38 -92 Q 44 -104 46 -116", 4, "white"))
+    else:
+        out.append(P("M 44 -124 L 38 -142 L 52 -132 Z", 4, "white"))
+    coat = t.get("coat", "plain")
+    if coat == "spots":
+        out.append(E(-20, -60, 12, 9, 3) + E(16, -50, 9, 7, 3) + E(2, -74, 7, 6, 3))
+    elif coat == "patch":
+        out.append(E(52, -112, 10, 12, 3))
+    if t.get("collar", True):
+        out.append(P("M 38 -88 Q 52 -80 68 -84", 3.5))
+        out.append(C(54, -78, 4.5, 3, "white"))
+    return '<g data-el="figure">' + "".join(out) + "</g>"
 
 
 def cat_sitting(t=None):
-    """Sitting cat facing right, origin at feet. ~120 tall."""
+    """Sitting cat facing right, origin at feet. ~120 tall.
+    Smooth rebuild: body is one G1-continuous silhouette."""
     t = t or {}
     out = []
-    out.append(P("M -30 0 Q -44 -40 -20 -68 Q -6 -80 10 -68 Q 30 -44 26 0 Z", 4.5, "white"))
+    out.append(smooth_path(
+        [(-30, 0), (-41, -30), (-32, -58), (-12, -74), (8, -66),
+         (24, -40), (27, -12), (26, 0)],
+        4.5, closed=True, fill="white"))
     out.append(P("M -30 0 L 26 0", 4.5))
     out.append(P("M 26 -6 Q 48 -10 46 -30 Q 40 -28 36 -20", 4))  # tail
     out.append(C(-4, -88, 22, 4.5, "white"))
@@ -414,16 +750,17 @@ def cat_sitting(t=None):
     out.append(LINE(18, -84, 28, -86, 2.5) + LINE(18, -80, 28, -78, 2.5))
     if t.get("coat") == "stripes":
         out.append(P("M -18 -56 Q -10 -60 -2 -56 M -14 -42 Q -6 -46 2 -42", 3))
-    return "".join(out)
+    return '<g data-el="figure">' + "".join(out) + "</g>"
 
 
 # ---------------------------------------------------------------- page/pdf
 def page(title, body, num=None, caption=None):
-    parts = [f'<rect x="0" y="0" width="{W}" height="{H}" fill="white"/>',
-             f'<rect x="28" y="28" width="{W-56}" height="{H-56}" rx="26" fill="none" stroke="black" stroke-width="6"/>']
+    parts = [f'<rect data-chrome="1" x="0" y="0" width="{W}" height="{H}" fill="white"/>',
+             f'<rect data-chrome="1" x="28" y="28" width="{W-56}" height="{H-56}" rx="26" fill="none" stroke="black" stroke-width="6"/>']
+    chrome = []
     if title:
-        parts.append(TXT(W / 2, 100, title, 42))
-        parts.append(P(f"M {W/2-260} 122 Q {W/2} 138 {W/2+260} 122", 4))
+        chrome.append(TXT(W / 2, 100, title, 42))
+        chrome.append(P(f"M {W/2-260} 122 Q {W/2} 138 {W/2+260} 122", 4))
     parts.append(body)
     if caption:
         # wrap long captions — a single line overflows the border past ~55 chars
@@ -437,52 +774,66 @@ def page(title, body, num=None, caption=None):
             lines.append(cur)
         start = (H - 48) - (len(lines) - 1) * 27
         for i, ln in enumerate(lines):
-            parts.append(TXT(W / 2, start + i * 27, ln, 24 if len(lines) == 1 else 22,
-                             weight="normal"))
+            chrome.append(TXT(W / 2, start + i * 27, ln, 24 if len(lines) == 1 else 22,
+                              weight="normal"))
     if num:
-        parts.append(TXT(70, H - 42, str(num), 20, weight="normal"))
-    return f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">' + "".join(parts) + "</svg>"
+        chrome.append(TXT(70, H - 42, str(num), 20, weight="normal"))
+    if chrome:
+        parts.append('<g data-chrome="1">' + "".join(chrome) + "</g>")
+    return _serialize(f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">' + "".join(parts) + "</svg>")
 
 
 def build(builders, outdir, only=None, pdf_name="coloring-book.pdf"):
     """builders: list of (name, fn) -> svg string. Writes svg/png/pdf per page,
-    merges to PDF with ghostscript. `only`: substring filter for partial rebuild."""
+    merges to PDF with ghostscript. `only`: substring filter for partial
+    rebuild (returns the built page names instead of the PDF path)."""
     import cairosvg, os, subprocess
     pages_dir = os.path.join(outdir, "pages")
     os.makedirs(pages_dir, exist_ok=True)
+    built = []
     for name, fn in builders:
         if only and not any(o in name for o in only):
             continue
         svg = fn()
         p = os.path.join(pages_dir, name)
-        open(p + ".svg", "w").write(svg)
+        with open(p + ".svg", "w") as fh:
+            fh.write(svg)
+        built.append(name)
         cairosvg.svg2png(url=p + ".svg", write_to=p + ".png", output_width=680)
         # cairosvg output_width is in px @96dpi; PDF units are pt (72dpi).
         # 816x1056px -> 612x792pt = true US letter.
         cairosvg.svg2pdf(url=p + ".svg", write_to=p + ".pdf", output_width=816, output_height=1056)
         print("built", name)
-    if not only:
-        allp = [os.path.join(pages_dir, n + ".pdf") for n, _ in builders]
-        out = os.path.join(outdir, pdf_name)
-        subprocess.run(["gs", "-dBATCH", "-dNOPAUSE", "-q", "-sDEVICE=pdfwrite",
-                        f"-sOutputFile={out}"] + allp, check=True)
-        print("PDF:", out)
-        return out
+    if only:
+        return built
+    allp = [os.path.join(pages_dir, n + ".pdf") for n, _ in builders]
+    out = os.path.join(outdir, pdf_name)
+    subprocess.run(["gs", "-dBATCH", "-dNOPAUSE", "-q", "-sDEVICE=pdfwrite",
+                    f"-sOutputFile={out}"] + allp, check=True)
+    print("PDF:", out)
+    return out
 
 
-def render_tiles(svg_path, outdir, name):
-    """Render full page + 6 overlapping tiles for VLM QA review."""
+def render_tiles(svg_path, outdir, name, grid=(3, 2), overlap=150,
+                 width=1275):
+    """Render full page + overlapping tiles (grid rows x cols) for VLM QA."""
     import cairosvg, os
     from PIL import Image
     os.makedirs(outdir, exist_ok=True)
     big = os.path.join(outdir, name + "-full.png")
-    cairosvg.svg2png(url=svg_path, write_to=big, output_width=1275)
+    cairosvg.svg2png(url=svg_path, write_to=big, output_width=width)
     im = Image.open(big)
+    Wp, Hp = im.size
+    rows, cols = grid
+    tw = Wp // cols + overlap
+    th = Hp // rows + overlap
     paths = [big]
-    for r, (y0, y1) in enumerate([(0, 650), (500, 1150), (1000, 1650)]):
-        for c, (x0, x1) in enumerate([(0, 710), (565, 1275)]):
+    for r in range(rows):
+        for c in range(cols):
+            x0 = min(c * (Wp // cols), max(0, Wp - tw))
+            y0 = min(r * (Hp // rows), max(0, Hp - th))
             p = os.path.join(outdir, f"{name}-r{r}c{c}.png")
-            im.crop((x0, y0, x1, y1)).save(p)
+            im.crop((x0, y0, x0 + tw, y0 + th)).save(p)
             paths.append(p)
     return paths
 
@@ -502,24 +853,32 @@ def wrap_words(text, maxchars=54):
     return lines
 
 
-def spage(title, body, num=None, caption=None, title_size=42):
-    """Whole page: border, optional title, body, wrapped multi-line caption, page #."""
-    parts = [f'<rect x="0" y="0" width="{W}" height="{H}" fill="white"/>',
-             f'<rect x="28" y="28" width="{W-56}" height="{H-56}" rx="26" '
+def spage(title, body, num=None, caption=None, title_size=42, layout=None):
+    """Whole page: border, optional title, body, wrapped multi-line caption, page #.
+    `layout` marks non-scene pages for the validator: "activity" (name tracing,
+    find-the-X — sparse composition is fine) or "vignette" (back-cover mini
+    scene — small figures allowed)."""
+    parts = [f'<rect data-chrome="1" x="0" y="0" width="{W}" height="{H}" fill="white"/>',
+             f'<rect data-chrome="1" x="28" y="28" width="{W-56}" height="{H-56}" rx="26" '
              f'fill="none" stroke="black" stroke-width="6"/>']
+    if layout:
+        body = f'<g data-layout="{layout}">' + body + "</g>"
+    chrome = []
     if title:
-        parts.append(TXT(W / 2, 102, title, title_size))
-        parts.append(P(f"M {W/2-270} 124 Q {W/2} 142 {W/2+270} 124", 4))
+        chrome.append(TXT(W / 2, 102, title, title_size))
+        chrome.append(P(f"M {W/2-270} 124 Q {W/2} 142 {W/2+270} 124", 4))
     parts.append(body)
     if caption:
         lines = wrap_words(caption, 54)
         start = 1058 - (len(lines) - 1) * 28
         for i, ln in enumerate(lines):
-            parts.append(TXT(W / 2, start + i * 28, ln, 22, weight="normal"))
+            chrome.append(TXT(W / 2, start + i * 28, ln, 22, weight="normal"))
     if num:
-        parts.append(TXT(72, 1058, str(num), 20, weight="normal"))
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
-            f'viewBox="0 0 {W} {H}">' + "".join(parts) + "</svg>")
+        chrome.append(TXT(72, 1058, str(num), 20, weight="normal"))
+    if chrome:
+        parts.append('<g data-chrome="1">' + "".join(chrome) + "</g>")
+    return _serialize(f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+                      f'viewBox="0 0 {W} {H}">' + "".join(parts) + "</svg>")
 
 
 # ---------------------------------------------------------------- prop-characters
@@ -623,8 +982,9 @@ def dotline(x1, y1, x2, y2, sw=4):
 def kid_reach(t, outfit=None):
     """Kid reaching BOTH arms to the RIGHT at chest height (searching / lifting
     cushions / peeking behind furniture). Origin at feet center like kid_stand;
-    mirror with GM(x, y, kid_reach(t), s) to reach left. Hands overlap arm ends
-    and stay well clear of the head radius."""
+    mirror with GM(x, y, kid_reach(t), s) to reach left. Smooth tapered limbs
+    ending at the same wrist targets; hands overlap arm ends and stay well
+    clear of the head radius."""
     out = []
     outfit = outfit or t.get("outfit", "tee")
     head_y = -196 if outfit == "dress" else -188
@@ -643,13 +1003,10 @@ def kid_reach(t, outfit=None):
         out.append(P("M -18 -152 L 18 -152 L 26 -70 L -26 -70 Z", 5, "white"))
         out.append(P("M -22 -96 L 22 -96", 4))
         sh = (-18, -142), (18, -142)
-    (lsx, lsy), (rsx, rsy) = sh
-    out.append(P(f"M {lsx} {lsy} Q 10 -120 52 -108", 5))
-    out.append(C(58, -106, 8, 4, "white"))
-    out.append(P(f"M {rsx} {rsy} Q 40 -132 66 -124", 5))
-    out.append(C(72, -122, 8, 4, "white"))
+    out.append(_arm(sh[0], (52, -106), bulge=-2, lift=16))
+    out.append(_arm(sh[1], (72, -122), bulge=4, lift=10))
     out.append(face_traits(0, head_y, 37, t))
-    return "".join(out)
+    return '<g data-el="figure">' + "".join(out) + "</g>"
 
 
 # ---------------------------------------------------------------- furniture
@@ -769,7 +1126,7 @@ def toybox(x, floor=FLOOR, w=124, h=92):
 
 def _wheel(cx, g, r, sw=4.5):
     """Wheel tangent to ground line g (hub at g-r), with a hub circle."""
-    return C(cx, g - r, r, sw, "white") + C(cx, g - r, r * 0.38, 3, "white")
+    return C(cx, g - r, r, sw, "white", ground=_f(g)) + C(cx, g - r, r * 0.38, 3, "white")
 
 
 def car_side(cx, ground_y, w=220, sw=5):
@@ -915,10 +1272,10 @@ def bicycle(cx, ground_y, s=200, sw=5):
     return "".join(out)
 
 
-def tree_round(cx, ground_y, h=260, sw=5):
+def tree_round(cx, ground_y, h=260, sw=5, texture=True):
     """Lollipop tree: stubby trunk + fat round canopy, base tangent to ground_y.
-    If you add your own leaf/texture marks: keep them ASYMMETRIC and unpaired —
-    two arcs at the same height inside a canopy read as a pair of closed eyes."""
+    texture=True adds ASYMMETRIC scallop + leaf marks (bare overlapping circles
+    read as balloons; two marks at the same height read as a pair of eyes)."""
     g = ground_y
     tw = 0.18 * h
     out = [rrect(cx - tw / 2, g - 0.28 * h, tw, 0.28 * h, 6, sw, "white")]
@@ -929,6 +1286,32 @@ def tree_round(cx, ground_y, h=260, sw=5):
     out.append(C(cx + 0.24 * h, cyy + 0.10 * h, 0.20 * h, sw, "white"))
     # re-cap the crown so lobe seams read as one canopy
     out.append(C(cx, cyy, 0.34 * h, sw, "white"))
+    if texture:
+        # small bumps straddling the rim + a few asymmetric interior leaf
+        # ticks (unpaired heights — no "eye pairs")
+        rr = 0.34 * h
+        mk = max(2.5, sw - 2)
+        for ang_deg in (-150, -110, -60, -15, 55):
+            a = math.radians(ang_deg)
+            bx = cx + rr * math.cos(a)
+            by = cyy + rr * math.sin(a)
+            # outward bump: tangent direction t=(-sin,cos)
+            tx, ty = -math.sin(a), math.cos(a)
+            wdt = 0.045 * h
+            p1 = (bx - tx * wdt, by - ty * wdt)
+            p2 = (bx + tx * wdt, by + ty * wdt)
+            tipx = bx + math.cos(a) * 0.055 * h
+            tipy = by + math.sin(a) * 0.055 * h
+            out.append(P(f"M {_f(p1[0])} {_f(p1[1])} "
+                         f"Q {_f(tipx)} {_f(tipy)} {_f(p2[0])} {_f(p2[1])}", mk))
+        # interior leaf ticks: vee pairs at staggered heights, left-biased
+        for dx, dy, s_ in ((-0.13, -0.10, 0.035), (-0.02, 0.02, 0.03),
+                           (0.12, -0.06, 0.032), (-0.16, 0.08, 0.03)):
+            lx = cx + dx * h
+            ly = cyy + dy * h
+            out.append(P(f"M {_f(lx - s_*h)} {_f(ly + 0.02*h)} "
+                         f"Q {_f(lx)} {_f(ly - 0.045*h)} "
+                         f"{_f(lx + s_*h*0.6)} {_f(ly - 0.01*h)}", mk))
     return "".join(out)
 
 
@@ -1060,25 +1443,35 @@ def swing_set(cx, ground_y, w=240, sw=5):
 
 
 # ---------------------------------------------------------------- knockout mat
-def matted(inner, pad=9):
+def matted(inner, pad=9, scale=1.0):
     """Anti-tangency halo: returns a white 'mat' copy of `inner` (every stroke
-    whitened and thickened by `pad`) followed by `inner` itself. Draw background
+    whitened and thickened) followed by `inner` itself. Draw background
     (rug, path, fence, furniture) first, then wrap each foreground figure/object
     in matted() — background lines get knocked out wherever they approach it,
     so tangent-line illusions can't happen. Nested G()/GM() transforms are kept.
+
+    `scale`: if the fragment will be placed inside G(x, y, ..., scale=s), pass
+    that s here — pad is expressed in FINAL PAGE pixels and divided by s so the
+    visible halo is uniform regardless of placement scale (a pad of 9 on a
+    0.5-scaled group would otherwise render as a 4.5px halo and under-protect).
+
     CLUSTERS: with 3+ overlapping matted objects, later mats can fully erase an
     earlier neighbor (a dog's halo can swallow a mound). Draw tight clusters as
-    ONE matted group, or keep ~2x pad clearance — and verify with tile crops:
-    full-page thumbnails hide mat-swallowing."""
+    ONE matted group, or keep ~2x pad clearance — validate_svg() in
+    lib/validate.py now flags full-erasure events numerically; verify partial
+    nibbles with tile crops (thumbnails hide them).
+    The invisible white copy is wrapped in <g data-mat="1"> so the validator
+    can tell halo geometry from real art."""
     import re
+    eff = max(0.5, pad / float(abs(scale))) if scale else pad
     mat = inner
     mat = re.sub(r'stroke-width="([0-9.]+)"',
-                 lambda m: f'stroke-width="{float(m.group(1)) + pad:.1f}"', mat)
+                 lambda m: f'stroke-width="{float(m.group(1)) + eff:.1f}"', mat)
     mat = mat.replace('stroke="black"', 'stroke="white"')
     # fill-only elements (DOT/TXT/filled polygons) just go white in the mat;
     # adding stroke attrs here would duplicate attributes on stroked elements
     mat = mat.replace('fill="black"', 'fill="white"')
-    return mat + inner
+    return f'<g data-mat="1" data-pad="{eff:.1f}">{mat}</g>' + inner
 
 
 # ---------------------------------------------------------------- scene & prop library (harvested from production books, 2026-07)
@@ -1939,7 +2332,8 @@ def qa_page(svg_path, min_region_mm2=9.0, min_stroke_pt=0.5, dpi=150):
     order = sizes.argsort()[::-1]
     slivers = [int(s) for s in sizes[order[1:]] if s < min_px]
     # print safety: min stroke-width attr in the SVG, converted to points
-    svg = open(svg_path).read()
+    with open(svg_path) as fh:
+        svg = fh.read()
     widths = [float(w) for w in _re.findall(r'stroke-width="([0-9.]+)"', svg)]
     # page units are px on an 850-wide canvas printed at 612pt letter width
     min_w_pt = (min(widths) * 612.0 / 850.0) if widths else None
@@ -2290,11 +2684,15 @@ def penguin(cx, ground_y, w=130, sw=5):
 
 def planet_ringed(cx, cy, r=90, sw=5):
     """Ringed planet floating at (cx, cy): disc with a ring passing behind (top)
-    and in front (bottom), plus a surface band and craters. Twemoji 1fa90."""
+    and in front (bottom), plus a surface band and craters. Twemoji 1fa90.
+    Ring halves are cubic half-ellipse approximations (exact at the tips) —
+    charlib avoids SVG arc commands so validator bboxes stay exact."""
     rx, ry = 1.75 * r, 0.5 * r
+    k = 4.0 / 3.0 * ry
     out = []
     # back half of the ring (behind the disc)
-    out.append(P(f"M {cx - rx} {cy} A {rx} {ry} 0 0 1 {cx + rx} {cy}", sw))
+    out.append(P(f"M {_f(cx - rx)} {_f(cy)} "
+                 f"C {_f(cx - rx)} {_f(cy - k)} {_f(cx + rx)} {_f(cy - k)} {_f(cx + rx)} {_f(cy)}", sw))
     # disc (white fill knocks out the back arc where it crosses)
     out.append(C(cx, cy, r, sw, "white"))
     # surface band + craters
@@ -2302,7 +2700,8 @@ def planet_ringed(cx, cy, r=90, sw=5):
     out.append(C(cx - r * 0.3, cy + r * 0.3, r * 0.14, 3, "white"))
     out.append(C(cx + r * 0.4, cy - r * 0.42, r * 0.09, 3, "white"))
     # front half of the ring (in front of the disc)
-    out.append(P(f"M {cx - rx} {cy} A {rx} {ry} 0 0 0 {cx + rx} {cy}", sw))
+    out.append(P(f"M {_f(cx - rx)} {_f(cy)} "
+                 f"C {_f(cx - rx)} {_f(cy + k)} {_f(cx + rx)} {_f(cy + k)} {_f(cx + rx)} {_f(cy)}", sw))
     return "".join(out)
 
 
@@ -2450,3 +2849,1759 @@ def shield(cx, cy, w=150, sw=5):
     out.append(LINE(cx - 0.42 * w, top + 0.10 * h, cx + 0.42 * w, top + 0.10 * h, 3))
     out.append(star(cx, cy - 0.02 * h, 0.22 * w, 3.5, "white"))
     return "".join(out)
+
+
+# ---------------------------------------------------------------- legacy figure mode
+# use_legacy_figures(True) binds the canonical figure names back to their
+# pre-smoothing geometry — conservative model-tier mode and A/B reference
+# renders. Call it again with False (or reload the module) to restore.
+USE_LEGACY_FIGURES = False
+
+
+def use_legacy_figures(flag=True):
+    global kid_stand, dog, USE_LEGACY_FIGURES
+    USE_LEGACY_FIGURES = bool(flag)
+    kid_stand = _legacy_kid_stand if flag else _smooth_kid_stand
+    dog = _legacy_dog if flag else _smooth_dog
+    return None
+
+
+# canonical bindings (smooth rebuilds)
+kid_stand = _smooth_kid_stand
+dog = _smooth_dog
+
+
+# ---------------------------------------------------------------- colorable letters & words
+# Vector outlines baked from the bundled Andika font (SIL OFL) by
+# tools/build_font.py -> lib/letters.json. Renderer-independent (no font
+# must be installed anywhere), and every glyph is a real closed path a child
+# can color. Widths come from GLYPH ADVANCES, so containers can be sized
+# numerically — the drawing-guide banner rule is satisfied by construction.
+_LETTERS_CACHE = None
+
+
+def _letters():
+    global _LETTERS_CACHE
+    if _LETTERS_CACHE is None:
+        import json as _json
+        import os as _os
+        p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                          "letters.json")
+        with open(p) as fh:
+            _LETTERS_CACHE = _json.load(fh)
+    return _LETTERS_CACHE
+
+
+def letter(ch, x, y_base, size=120, style="colorable", sw=4):
+    """One glyph as an SVG path. (x, y_base) = LEFT edge ON THE BASELINE.
+    style: "colorable" (white fill + outline) or "trace" (dashed outline to
+    trace along with a crayon). Unknown characters render nothing."""
+    L = _letters()["letters"].get(ch)
+    if not L or not L.get("d"):
+        return ""
+    s = size / _letters()["upem"]
+    fill = 'fill="none"' if style == "trace" else 'fill="white"'
+    dash = ' stroke-dasharray="9 8"' if style == "trace" else ""
+    return (f'<path d="{L["d"]}" {fill} stroke="black" '
+            f'stroke-width="{_f(sw / s)}"{dash} data-letter="{ch}" '
+            f'transform="translate({_f(x)},{_f(y_base)}) scale({_f(s)},-{_f(s)})"/>')
+
+
+def word_width(text, size=120, tracking=10):
+    """Exact rendered width of word() from glyph advances."""
+    L = _letters()["letters"]
+    adv = sum(L.get(c, {}).get("adv", 0) for c in text)
+    return adv * size / _letters()["upem"] + tracking * max(0, len(text) - 1)
+
+
+def word(text, x_center, y_base, size=120, tracking=10, style="colorable",
+         sw=4):
+    """A run of glyphs centered on x_center, sitting on y_base."""
+    total = word_width(text, size, tracking)
+    out, pen = [], x_center - total / 2
+    for ch in text:
+        out.append(letter(ch, pen, y_base, size, style=style, sw=sw))
+        pen += (_letters()["letters"].get(ch, {}).get("adv", 0)
+                * size / _letters()["upem"] + tracking)
+    return '<g data-word="' + _xml_escape(text) + '">' + "".join(out) + "</g>"
+
+
+def banner(text, cy, size=64, sw=SW, pad_x=28, style="colorable",
+           x_center=None, w=W, rounded=16):
+    """Ribbon sized EXACTLY for its text (glyph-metric width), centered by
+    default. Text-in-box overflow is impossible by construction; if the
+    ribbon itself would exceed the page, validate_svg's border check fires."""
+    xc = W / 2 if x_center is None else x_center
+    tw = word_width(text, size)
+    bw = tw + 2 * pad_x
+    bh = int(size * 1.55)
+    out = [rrect(xc - bw / 2, cy - bh / 2, bw, bh, rounded, sw, "white")]
+    out.append(word(text, xc, cy + size * 0.36, size=size,
+                    tracking=size * 0.08, style=style))
+    return "".join(out)
+
+
+def guideline(x0, x1, y, sw=2.5, dashed=False):
+    if dashed:
+        return stitch_dash(x0, y, x1, y, sw=sw, dash="7 7")
+    return LINE(x0, y, x1, y, sw)
+
+
+def name_trace_page(names, title="Trace Your Names!", num=None,
+                    caption=None, row_size=170):
+    """Handwriting-practice page: per-name ruled guidelines (top/mid/base),
+    the name in TRACE style sitting on the baseline, and a start star before
+    each name. Uses the activity layout marker so the validator knows sparse
+    composition is intentional."""
+    rows = []
+    n = len(names)
+    top0, bot0 = 300, 950
+    slot = (bot0 - top0) / max(1, n)
+    max_w = W - 2 * 130  # room for the start star + border margin
+    for i, nm in enumerate(names):
+        base_y = top0 + slot * i + slot * 0.72
+        # auto-fit: shrink oversized names so star + letters clear the border
+        size = row_size
+        if word_width(nm.upper(), size, tracking=12) > max_w:
+            size = row_size * max_w / word_width(nm.upper(), size, tracking=12)
+        asc = size * 0.75
+        rows.append(guideline(70, W - 70, base_y))
+        rows.append(stitch_dash(70, base_y - asc, W - 70, base_y - asc, sw=2.5, dash="6 6"))
+        rows.append(stitch_dash(70, base_y - asc * 0.5, W - 70, base_y - asc * 0.5,
+                                sw=2, dash="4 8"))
+        ww = word_width(nm.upper(), size, tracking=12)
+        x0 = W / 2 - ww / 2
+        rows.append(word(nm.upper(), W / 2, base_y, size=size,
+                         tracking=12, style="trace"))
+        rows.append(star(x0 - 34, base_y - size * 0.18, 14, 3.5, "white"))
+    body = "".join(rows)
+    return spage(title, body, num=num, caption=caption, layout="activity")
+
+
+# ---------------------------------------------------------------- world & landscape systems
+# Compositional ground/sky systems. Convention: every system declares where
+# things STAND — vehicles/figures snap onto the returned ground line (roads:
+# the NEAR edge y+ROAD_H; rail: y; pond/beach: the shoreline y). All scatter
+# (windows, dashes, ties, pickets, trees) is index-arithmetic — never random.
+ROAD_H = 56  # road band height; far edge at y, vehicles drive on y + ROAD_H
+
+
+def ground_line(y, x0=60, x1=None, sw=4):
+    """Plain ground stroke spanning the art band."""
+    return LINE(x0, y, (W - 60) if x1 is None else x1, y, sw)
+
+
+def hill(cx, ground_y, w=420, h=130, sw=4.5):
+    """Rolling hill: open arc rising from the ground line (background
+    contour — draw before figures; figures on the crest use ground_y-h)."""
+    return P(f"M {_f(cx - w / 2)} {_f(ground_y)} "
+             f"Q {_f(cx)} {_f(ground_y - 2.0 * h)} {_f(cx + w / 2)} {_f(ground_y)}", sw)
+
+
+def mountain(cx, ground_y, w=320, h=280, snow=True, sw=4.5):
+    """Single peak, optional zigzag snow line + ridge shading stroke."""
+    x0, x1 = cx - w / 2, cx + w / 2
+    g = ground_y
+    out = [P(f"M {_f(x0)} {_f(g)} L {_f(cx)} {_f(g - h)} "
+             f"L {_f(x1)} {_f(g)} Z", sw, "white")]
+    if snow:
+        sy = g - h * 0.30
+        pts = [(cx - w * 0.15, sy), (cx - w * 0.07, sy + h * 0.05),
+               (cx, sy - h * 0.02), (cx + w * 0.07, sy + h * 0.05),
+               (cx + w * 0.15, sy)]
+        out.append(P("M " + " L ".join(f"{_f(a)} {_f(b)}" for a, b in pts), 3.5))
+    out.append(LINE(cx, g - h + 6, cx + w * 0.055, g - h * 0.45, 3))
+    return "".join(out)
+
+
+def mountain_range(cx, ground_y, w=640, peaks=3, h=260, snow=True, sw=4.5):
+    """Deterministic peak row (tall-short-tall pattern); draw BEFORE hills."""
+    heights = [1.0, 0.68, 0.86, 0.6, 0.9]
+    out, span = [], w / max(1, peaks)
+    for i in range(peaks):
+        ph = h * heights[i % len(heights)]
+        out.append(mountain(cx - w / 2 + span * (i + 0.5), ground_y,
+                            w=span * 1.35, h=ph, snow=snow, sw=sw))
+    return "".join(out)
+
+
+def road(x0, x1, y, sw=4.5, dashes=True):
+    """Road band: far edge y, NEAR edge y+ROAD_H (vehicle ground line).
+    Center dashes are index-spaced, never random."""
+    out = [LINE(x0, y, x1, y, sw), LINE(x0, y + ROAD_H, x1, y + ROAD_H, sw)]
+    if dashes:
+        cx_ = int(x0) + 46
+        while cx_ + 36 < x1 - 10:
+            out.append(LINE(cx_, y + ROAD_H / 2, cx_ + 36, y + ROAD_H / 2, 4))
+            cx_ += 92
+    return "".join(out)
+
+
+def rail_track(x0, x1, y, sw=4):
+    """Side-view track: two rails + ties; train wheels sit on y (top rail)."""
+    out = [LINE(x0, y, x1, y, sw), LINE(x0, y + 16, x1, y + 16, sw)]
+    tx = int(x0) + 14
+    while tx < x1 - 6:
+        out.append(LINE(tx, y + 2, tx - 8, y + 14, 3))
+        tx += 38
+    return "".join(out)
+
+
+def fence_picket(x0, x1, y, h=64, sw=3.5):
+    """Classic pointed-picket fence ON ground line y (pickets sink 4px in)."""
+    out = []
+    for i, px in enumerate(range(int(x0), int(x1) + 1, 34)):
+        out.append(P(f"M {_f(px)} {_f(y)} L {_f(px)} {_f(y - h + 12)} "
+                     f"L {_f(px + 9)} {_f(y - h)} L {_f(px + 18)} {_f(y - h + 12)} "
+                     f"L {_f(px + 18)} {_f(y)} Z", sw, "white"))
+    out.append(LINE(x0 - 8, y - h * 0.62, x1 + 8, y - h * 0.62, 3.5))
+    out.append(LINE(x0 - 8, y - h * 0.30, x1 + 8, y - h * 0.30, 3.5))
+    return "".join(out)
+
+
+def fence_ranch(x0, x1, y, posts=4, h=78, sw=4):
+    """Post-and-rail ranch fence on ground line y."""
+    out = []
+    step = (x1 - x0) / max(1, posts - 1)
+    for i in range(posts):
+        px = x0 + step * i
+        out.append(rrect(px - 4, y - h, 8, h, 2, sw, "white"))
+    for ry in (y - h * 0.72, y - h * 0.34):
+        out.append(LINE(x0 - 6, ry, x1 + 6, ry, 3.5))
+    return "".join(out)
+
+
+def pond(cx, ground_y, w=240, sw=4):
+    """Small pond: flat water ellipse + inner wave arcs, rim ON ground line."""
+    rx, ry = w / 2, w * 0.075
+    out = [E(cx, ground_y - ry, rx, ry, sw, "white")]
+    for dx in (-rx * 0.45, 0, rx * 0.45):
+        out.append(P(f"M {_f(cx + dx - 16)} {_f(ground_y - ry)} "
+                     f"Q {_f(cx + dx - 8)} {_f(ground_y - ry - 7)} "
+                     f"{_f(cx + dx + 8)} {_f(ground_y - ry)}", 2.5))
+    return "".join(out)
+
+
+def beach_shore(y, x0=60, x1=None, sw=4):
+    """Waterline: smooth wave edge + sand dots below (beach ground = y)."""
+    x1 = (W - 60) if x1 is None else x1
+    pts = []
+    n = 7
+    for i in range(n + 1):
+        t = i / n
+        pts.append((x0 + (x1 - x0) * t, y + (5 if i % 2 else -5)))
+    out = [smooth_path(pts, sw)]
+    for i in range(9):
+        dx = x0 + (x1 - x0) * (0.08 + 0.105 * i)
+        out.append(DOT(dx, y + 22 + (6 if i % 3 == 0 else 0), 2.5))
+    return "".join(out)
+
+
+def forest_border(ground_y, x0=60, x1=None, n=7, h=150, sw=4):
+    """Overlapping tree line along a ground line (deterministic pine/round
+    alternation, slight height stagger). Draw BEFORE foreground figures."""
+    x1 = (W - 60) if x1 is None else x1
+    out = []
+    step = (x1 - x0) / max(1, n)
+    for i in range(n):
+        tx = x0 + step * (i + 0.5)
+        th = h * (1.0 if i % 2 == 0 else 0.82)
+        if i % 2 == 0:
+            out.append(tree_pine(tx, ground_y, h=th, sw=sw))
+        else:
+            out.append(tree_round(tx, ground_y, h=th * 0.9, sw=sw))
+    return "".join(out)
+
+
+def skyline(y, x0=60, x1=None, sw=4):
+    """City silhouette band standing ON y; windows are index-spaced grids."""
+    x1 = (W - 60) if x1 is None else x1
+    widths = [96, 74, 110, 84, 128, 92]
+    heights = [150, 210, 120, 250, 170, 190]
+    out = []
+    bx = x0
+    i = 0
+    while bx < x1 - 40:
+        bw = widths[i % len(widths)]
+        bh = heights[i % len(heights)]
+        bw = min(bw, x1 - bx)
+        out.append(rrect(bx, y - bh, bw, bh, 3, sw, "white"))
+        wy = y - bh + 18
+        while wy < y - 26:
+            wx = bx + 14
+            while wx < bx + bw - 20:
+                out.append(rrect(wx, wy, 14, 14, 2, 2.5, "white"))
+                wx += 26
+            wy += 26
+        bx += bw + 10
+        i += 1
+    return "".join(out)
+
+
+def bridge(cx, ground_y, w=340, sw=4.5):
+    """Arch footbridge: deck on ground_y, arch below, railing posts above."""
+    x0, x1 = cx - w / 2, cx + w / 2
+    out = [LINE(x0, ground_y - 34, x1, ground_y - 34, sw),          # deck
+           P(f"M {_f(x0)} {_f(ground_y)} Q {_f(cx)} {_f(ground_y + 70)} "
+             f"{_f(x1)} {_f(ground_y)}", sw),                        # arch
+           LINE(x0, ground_y - 34, x0 + w * 0.18, ground_y, sw),     # abutments
+           LINE(x1 - w * 0.18, ground_y, x1, ground_y - 34, sw)]
+    px = x0 + 12
+    while px < x1 - 6:                                               # railing
+        out.append(LINE(px, ground_y - 34, px, ground_y - 62, 3))
+        px += 34
+    out.append(LINE(x0, ground_y - 62, x1, ground_y - 62, 3.5))
+    return "".join(out)
+
+
+# ---------------------------------------------------------------- vehicles II
+def school_bus(cx, ground_y, w=280, sw=5):
+    """Long school bus facing right: window row, door, stripe, wheels."""
+    x0, g = cx - w / 2, ground_y
+    r = 0.085 * w
+    body_top = g - 0.40 * w
+    out = [rrect(x0, body_top, w, 0.30 * w, 10, sw, "white")]          # body
+    out.append(rrect(x0 + 0.02 * w, g - 0.115 * w, 0.13 * w, 0.115 * w, 6, sw, "white"))  # hood
+    for i in range(4):                                                  # windows
+        wx = x0 + 0.18 * w + i * 0.16 * w
+        out.append(rrect(wx, body_top + 0.035 * w, 0.12 * w, 0.10 * w, 4, 3.5, "white"))
+    out.append(rrect(x0 + 0.845 * w, body_top + 0.035 * w, 0.10 * w, 0.24 * w, 4, 3.5, "white"))  # door
+    out.append(LINE(x0 + 0.03 * w, body_top + 0.19 * w, x0 + 0.97 * w, body_top + 0.19 * w, 3.5))
+    out.append(_wheel(x0 + 0.22 * w, g, r, sw - 0.5))
+    out.append(_wheel(x0 + 0.78 * w, g, r, sw - 0.5))
+    out.append(DOT(x0 + 0.985 * w, g - 0.075 * w, 3))                   # headlight
+    return "".join(out)
+
+
+def dump_truck(cx, ground_y, w=260, sw=5):
+    """Dump truck facing right: cab + tilted open dump bed, 3 wheels."""
+    x0, g = cx - w / 2, ground_y
+    r = 0.095 * w
+    out = []
+    # dump bed (rear, tilted up)
+    out.append(P(f"M {_f(x0 + 0.03 * w)} {_f(g - 0.16 * w)} "
+                 f"L {_f(x0 + 0.05 * w)} {_f(g - 0.42 * w)} "
+                 f"L {_f(x0 + 0.52 * w)} {_f(g - 0.50 * w)} "
+                 f"L {_f(x0 + 0.54 * w)} {_f(g - 0.26 * w)} Z", sw, "white"))
+    # cab (front)
+    out.append(rrect(x0 + 0.58 * w, g - 0.40 * w, 0.30 * w, 0.28 * w, 8, sw, "white"))
+    out.append(rrect(x0 + 0.63 * w, g - 0.37 * w, 0.16 * w, 0.11 * w, 4, 3.5, "white"))
+    out.append(LINE(x0 + 0.56 * w, g - 0.16 * w, x0 + 0.90 * w, g - 0.16 * w, sw))  # chassis
+    out.append(LINE(x0 + 0.40 * w, g - 0.50 * w, x0 + 0.40 * w, g - 0.58 * w, 4))   # exhaust
+    out.append(_wheel(x0 + 0.20 * w, g, r, sw - 0.5))
+    out.append(_wheel(x0 + 0.44 * w, g, r, sw - 0.5))
+    out.append(_wheel(x0 + 0.80 * w, g, r, sw - 0.5))
+    out.append(DOT(x0 + 0.875 * w, g - 0.20 * w, 3))
+    return "".join(out)
+
+
+def helicopter(cx, cy, w=240, sw=5):
+    """Helicopter facing right, centred on the BODY; rotor mast on top."""
+    out = []
+    bx, by = cx + w * 0.06, cy
+    # tail boom + fin (draw first, body caps the joint)
+    out.append(P(f"M {_f(bx - 0.10 * w)} {_f(by + 4)} L {_f(bx - 0.46 * w)} {_f(by - 0.06 * w)} "
+                 f"L {_f(bx - 0.46 * w)} {_f(by + 0.05 * w)} L {_f(bx - 0.08 * w)} {_f(by + 0.06 * w)} Z",
+                 sw - 0.5, "white"))
+    out.append(P(f"M {_f(bx - 0.46 * w)} {_f(by - 0.10 * w)} L {_f(bx - 0.52 * w)} {_f(by - 0.16 * w)} "
+                 f"L {_f(bx - 0.42 * w)} {_f(by - 0.16 * w)} Z", sw - 0.5, "white"))
+    out.append(LINE(bx - 0.49 * w, by - 0.16 * w, bx - 0.49 * w, by - 0.02 * w, 3))  # tail rotor
+    # body
+    out.append(smooth_path([(bx - 0.14 * w, by - 0.14 * w), (bx + 0.16 * w, by - 0.13 * w),
+                            (bx + 0.26 * w, by + 0.02 * w), (bx + 0.12 * w, by + 0.14 * w),
+                            (bx - 0.12 * w, by + 0.14 * w), (bx - 0.20 * w, by)],
+                           sw, closed=True, fill="white"))
+    out.append(P(f"M {_f(bx + 0.02 * w)} {_f(by - 0.12 * w)} "
+                 f"Q {_f(bx + 0.18 * w)} {_f(by - 0.10 * w)} {_f(bx + 0.22 * w)} {_f(by)} "
+                 f"L {_f(bx + 0.02 * w)} {_f(by)} Z", 3.5, "white"))            # windshield
+    # skids
+    out.append(LINE(bx - 0.10 * w, by + 0.14 * w, bx - 0.13 * w, by + 0.22 * w, 3.5))
+    out.append(LINE(bx + 0.10 * w, by + 0.14 * w, bx + 0.13 * w, by + 0.22 * w, 3.5))
+    out.append(LINE(bx - 0.22 * w, by + 0.24 * w, bx + 0.24 * w, by + 0.24 * w, 4))
+    # mast + main rotor
+    out.append(LINE(bx, by - 0.14 * w, bx, by - 0.22 * w, 4))
+    out.append(C(bx, by - 0.22 * w, 5, 3.5, "white"))
+    out.append(LINE(bx - 0.55 * w, by - 0.22 * w, bx + 0.55 * w, by - 0.22 * w, 4.5))
+    return "".join(out)
+
+
+def hot_air_balloon(cx, cy, h=250, sw=4.5):
+    """Hot-air balloon centred on the ENVELOPE; basket hangs below."""
+    r = 0.34 * h
+    out = [C(cx, cy, r, sw, "white")]
+    for dx in (-r * 0.45, 0, r * 0.45):                                 # gores
+        out.append(P(f"M {_f(cx + dx)} {_f(cy - r * 0.97)} "
+                     f"Q {_f(cx + dx * 1.35)} {_f(cy)} {_f(cx + dx * 0.35)} {_f(cy + r * 0.92)}", 3))
+    bx, by = cx, cy + r * 0.92
+    out.append(P(f"M {_f(cx - r * 0.35)} {_f(by)} L {_f(cx - r * 0.18)} {_f(by + 0.10 * h)} "
+                 f"L {_f(cx + r * 0.18)} {_f(by + 0.10 * h)} L {_f(cx + r * 0.35)} {_f(by)} Z",
+                 3.5, "white"))
+    bs = 0.13 * h
+    out.append(rrect(cx - bs / 2, by + 0.10 * h, bs, bs * 0.8, 4, 4, "white"))
+    for sx in (-1, 1):                                                  # ropes
+        out.append(LINE(cx + sx * r * 0.30, by + 2, cx + sx * bs * 0.42, by + 0.10 * h, 2.5))
+    return "".join(out)
+
+
+def sailboat(cx, water_y, w=220, sw=5):
+    """Sailboat facing right on waterline y: hull, mast, mainsail + jib."""
+    x0, g = cx - w / 2, water_y
+    out = [P(f"M {_f(x0 + 0.06 * w)} {_f(g - 0.13 * w)} L {_f(x0 + 0.94 * w)} {_f(g - 0.13 * w)} "
+             f"L {_f(x0 + 0.80 * w)} {_f(g)} L {_f(x0 + 0.20 * w)} {_f(g)} Z", sw, "white")]
+    mast_x = x0 + 0.42 * w
+    mast_top = g - 0.88 * w
+    out.append(LINE(mast_x, g - 0.13 * w, mast_x, mast_top, 4))
+    out.append(P(f"M {_f(mast_x)} {_f(mast_top)} L {_f(x0 + 0.86 * w)} {_f(g - 0.15 * w)} "
+                 f"L {_f(mast_x)} {_f(g - 0.15 * w)} Z", 4.5, "white"))           # mainsail
+    out.append(P(f"M {_f(mast_x - 4)} {_f(mast_top + 6)} L {_f(x0 + 0.10 * w)} {_f(g - 0.15 * w)} "
+                 f"L {_f(mast_x - 4)} {_f(g - 0.15 * w)} Z", 4.5, "white"))        # jib
+    out.append(LINE(mast_x, mast_top, mast_x, mast_top - 14, 3))
+    out.append(P(f"M {_f(mast_x)} {_f(mast_top - 14)} L {_f(mast_x + 20)} {_f(mast_top - 10)} "
+                 f"L {_f(mast_x)} {_f(mast_top - 6)} Z", 3, "white"))              # flag
+    out += [waves(g, x0 - 10, x0 + w + 10, amp=8)]
+    return "".join(out)
+
+
+def rowboat(cx, water_y, w=200, sw=4.5):
+    """Rowboat: banana hull + gunwale + thwarts + oars, on waterline y."""
+    x0, g = cx - w / 2, water_y
+    out = [smooth_path([(x0, g - 0.16 * w), (x0 + 0.25 * w, g - 0.24 * w),
+                        (x0 + 0.75 * w, g - 0.24 * w), (x0 + w, g - 0.16 * w),
+                        (x0 + 0.72 * w, g), (x0 + 0.28 * w, g)],
+                       sw, closed=True, fill="white")]
+    out.append(P(f"M {_f(x0 + 0.08 * w)} {_f(g - 0.155 * w)} "
+                 f"Q {_f(cx)} {_f(g - 0.08 * w)} {_f(x0 + 0.92 * w)} {_f(g - 0.155 * w)}", 3))
+    out.append(LINE(x0 + 0.30 * w, g - 0.22 * w, x0 + 0.34 * w, g - 0.13 * w, 3))
+    out.append(LINE(x0 + 0.66 * w, g - 0.22 * w, x0 + 0.62 * w, g - 0.13 * w, 3))
+    for sx, dx in ((0.20, -1), (0.78, 1)):                              # oars
+        px = x0 + sx * w
+        out.append(LINE(px, g - 0.20 * w, px + dx * 0.16 * w, g + 14, 3.5))
+        out.append(E(px + dx * 0.17 * w, g + 17, 8, 5, 3, "white"))
+    out += [waves(g, x0 - 8, x0 + w + 8, amp=8)]
+    return "".join(out)
+
+
+def canoe(cx, water_y, w=190, sw=4.5):
+    """Canoe with pointed ends + two thwarts + paddle, on waterline y."""
+    x0, g = cx - w / 2, water_y
+    out = [smooth_path([(x0, g - 0.10 * w), (x0 + 0.2 * w, g - 0.17 * w),
+                        (x0 + 0.8 * w, g - 0.17 * w), (x0 + w, g - 0.10 * w),
+                        (x0 + 0.78 * w, g - 0.02 * w), (x0 + 0.22 * w, g - 0.02 * w)],
+                       sw, closed=True, fill="white")]
+    out.append(LINE(x0 + 0.28 * w, g - 0.155 * w, x0 + 0.32 * w, g - 0.045 * w, 3))
+    out.append(LINE(x0 + 0.68 * w, g - 0.155 * w, x0 + 0.64 * w, g - 0.045 * w, 3))
+    px = x0 + 0.52 * w
+    out.append(LINE(px + 0.10 * w, g + 12, px - 0.04 * w, g - 0.24 * w, 3.5))
+    out.append(E(px - 0.05 * w, g - 0.26 * w, 9, 6, 3, "white"))
+    out += [waves(g, x0 - 8, x0 + w + 8, amp=7)]
+    return "".join(out)
+
+
+def train_car(cx, ground_y, w=180, kind="box", sw=5):
+    """Rolling stock for train_engine: kind = "box" | "passenger" | "caboose"."""
+    x0, g = cx - w / 2, ground_y
+    r = 0.075 * w
+    body_top = g - 0.34 * w
+    out = [LINE(x0 - 8, g - 0.05 * w, x0 + w + 8, g - 0.05 * w, 4)]     # chassis
+    out.append(rrect(x0, body_top, w, 0.30 * w, 6, sw, "white"))
+    if kind == "box":
+        out.append(rrect(x0 + 0.30 * w, body_top + 0.05 * w, 0.40 * w, 0.20 * w, 3, 3.5, "white"))
+        out.append(LINE(x0 + 0.50 * w, body_top + 0.05 * w, x0 + 0.50 * w, body_top + 0.25 * w, 3))
+    elif kind == "passenger":
+        for i in range(3):
+            out.append(rrect(x0 + 0.10 * w + i * 0.24 * w, body_top + 0.05 * w,
+                             0.14 * w, 0.11 * w, 3, 3.5, "white"))
+        out.append(LINE(x0 + 0.03 * w, body_top + 0.22 * w, x0 + 0.97 * w, body_top + 0.22 * w, 3))
+    else:  # caboose
+        out.append(rrect(x0 + 0.32 * w, body_top - 0.10 * w, 0.36 * w, 0.10 * w, 4, sw, "white"))
+        out.append(rrect(x0 + 0.40 * w, body_top - 0.085 * w, 0.20 * w, 0.07 * w, 3, 3, "white"))
+        out.append(rrect(x0 + 0.10 * w, body_top + 0.06 * w, 0.16 * w, 0.11 * w, 3, 3.5, "white"))
+        out.append(rrect(x0 + 0.74 * w, body_top + 0.06 * w, 0.16 * w, 0.11 * w, 3, 3.5, "white"))
+    out.append(_wheel(x0 + 0.24 * w, g, r, sw - 0.5))
+    out.append(_wheel(x0 + 0.76 * w, g, r, sw - 0.5))
+    return "".join(out)
+
+
+# ---------------------------------------------------------------- space pack
+def star_field(x0, y0, x1, y1, n=14, sw=2.5):
+    """Deterministic star/sparkle scatter (golden-ratio hops — never random).
+    Sky decoration; tagged data-sky so the validator ignores it for span."""
+    out = []
+    for i in range(n):
+        fx = (i * 0.61803398875) % 1.0
+        fy = (i * 0.37777777) % 1.0
+        px = x0 + (x1 - x0) * fx
+        py = y0 + (y1 - y0) * fy
+        if i % 3 == 0:
+            out.append(star(px, py, 9 + (i % 3) * 3, sw, "white")
+                       .replace("<polygon ", '<polygon data-sky="1" ', 1))
+        else:
+            out.append(sparkle(px, py, 7 + (i % 2) * 4))
+    return "".join(out)
+
+
+def moon(cx, cy, r=85, sw=5):
+    """Moon disc with asymmetric craters (unpaired heights)."""
+    out = [C(cx, cy, r, sw, "white")]
+    for dx, dy, cr in ((-0.35, -0.25, 0.16), (0.30, -0.05, 0.11),
+                       (-0.10, 0.38, 0.13), (0.42, 0.42, 0.08)):
+        out.append(C(cx + dx * r, cy + dy * r, cr * r, 3.5, "white"))
+        out.append(P(f"M {_f(cx + dx * r - cr * r * 0.6)} {_f(cy + dy * r - cr * r * 0.35)} "
+                     f"Q {_f(cx + dx * r)} {_f(cy + dy * r - cr * r * 0.7)} "
+                     f"{_f(cx + dx * r + cr * r * 0.6)} {_f(cy + dy * r - cr * r * 0.35)}", 2.5))
+    return "".join(out)
+
+
+def crater_ground(y, x0=60, x1=None, sw=4):
+    """Moon/lunar surface: ground stroke + shallow crater rims (ground = y)."""
+    x1 = (W - 60) if x1 is None else x1
+    out = [LINE(x0, y, x1, y, sw)]
+    for i, (fx, fw) in enumerate(((0.18, 46), (0.46, 30), (0.72, 52))):
+        cx_ = x0 + (x1 - x0) * fx
+        out.append(E(cx_, y, fw, 9, 3.5, "white"))
+        out.append(P(f"M {_f(cx_ - fw * 0.7)} {_f(y - 4)} "
+                     f"Q {_f(cx_)} {_f(y - 13)} {_f(cx_ + fw * 0.7)} {_f(y - 4)}", 2.5))
+    return "".join(out)
+
+
+def ufo(cx, cy, w=210, sw=5, alien=True, beam=False):
+    """Flying saucer centred (cx, cy): dome + saucer + lights (+ alien)."""
+    out = [P(f"M {_f(cx - 0.16 * w)} {_f(cy - 0.10 * w)} "
+             f"Q {_f(cx - 0.16 * w)} {_f(cy - 0.30 * w)} {_f(cx)} {_f(cy - 0.30 * w)} "
+             f"Q {_f(cx + 0.16 * w)} {_f(cy - 0.30 * w)} {_f(cx + 0.16 * w)} {_f(cy - 0.10 * w)} Z",
+             sw - 0.5, "white")]
+    if alien:
+        out.append(DOT(cx - 0.06 * w, cy - 0.20 * w, 3))
+        out.append(DOT(cx + 0.06 * w, cy - 0.20 * w, 3))
+        out.append(P(f"M {_f(cx - 0.03 * w)} {_f(cy - 0.15 * w)} "
+                     f"Q {_f(cx)} {_f(cy - 0.12 * w)} {_f(cx + 0.03 * w)} {_f(cy - 0.15 * w)}", 2.5))
+    out.append(E(cx, cy, 0.5 * w, 0.15 * w, sw, "white"))               # saucer
+    for i in range(4):                                                   # lights
+        lx = cx - 0.33 * w + i * 0.22 * w
+        ly = cy + 0.055 * w
+        out.append(C(lx, ly, 4.5, 2.5, "white"))
+    if beam:
+        out.append(P(f"M {_f(cx - 0.18 * w)} {_f(cy + 0.14 * w)} "
+                     f"L {_f(cx - 0.30 * w)} {_f(cy + 0.55 * w)} "
+                     f"L {_f(cx + 0.30 * w)} {_f(cy + 0.55 * w)} "
+                     f"L {_f(cx + 0.18 * w)} {_f(cy + 0.14 * w)} Z", 3, "white")
+                  .replace('stroke="black" stroke-width="3"', 'stroke="black" stroke-width="3" stroke-dasharray="8 7"'))
+    return "".join(out)
+
+
+def satellite(cx, cy, w=230, sw=4.5):
+    """Satellite: body + solar panel wings + dish, centred (cx, cy)."""
+    bw, bh = 0.16 * w, 0.22 * w
+    out = [rrect(cx - bw / 2, cy - bh / 2, bw, bh, 4, sw, "white")]
+    out.append(C(cx, cy - bh / 2, 5, 3, "white"))                        # antenna hub
+    for sx in (-1, 1):
+        px = cx + sx * (bw / 2 + 8)
+        out.append(LINE(cx + sx * bw / 2, cy, px, cy, 3))
+        pw = 0.30 * w
+        panel_x = px if sx > 0 else px - pw
+        out.append(rrect(panel_x, cy - 0.09 * w, pw, 0.18 * w, 3, sw - 0.5, "white"))
+        gx = panel_x + pw / 3
+        while gx < panel_x + pw - 4:
+            out.append(LINE(gx, cy - 0.09 * w, gx, cy + 0.09 * w, 2))
+            gx += pw / 3
+        out.append(LINE(panel_x, cy, panel_x + pw, cy, 2))
+    dx = cx - bw / 2 - 14                                                # dish
+    out.append(P(f"M {_f(dx - 12)} {_f(cy - 10)} Q {_f(dx)} {_f(cy + 12)} {_f(dx + 12)} {_f(cy - 10)} "
+                 f"Q {_f(dx)} {_f(cy - 2)} {_f(dx - 12)} {_f(cy - 10)} Z", 3, "white"))
+    out.append(LINE(dx, cy - 4, dx, cy - 16, 2.5))
+    return "".join(out)
+
+
+def telescope(cx, ground_y, h=190, sw=4.5):
+    """Tripod telescope aimed up-right; a target sparkle at the eyepiece line."""
+    top_y = ground_y - h
+    out = [G(cx, ground_y,
+             LINE(0, 0, -34, -h * 0.62, sw - 0.5) +
+             LINE(0, 0, 34, -h * 0.62, sw - 0.5) +
+             LINE(0, -h * 0.62, 0, -h, sw - 0.5))]
+    out.append(G(cx, top_y + h * 0.38,
+                 G(0, 0, rrect(-h * 0.30, -11, h * 0.60, 22, 8, sw, "white"), 1.0, -28)))
+    out.append(C(cx, top_y + h * 0.38, 7, 3.5, "white"))
+    out.append(sparkle(cx + h * 0.42, top_y - h * 0.10, 10))
+    return "".join(out)
+
+
+def shooting_star(cx, cy, s=1.0, sw=4):
+    """Comet: star head + three swoosh trails up-left."""
+    out = [star(cx, cy, 16 * s, sw, "white")]
+    for i, (dx, dy, ln) in enumerate(((1.6, 1.0, 60), (1.9, 0.55, 78), (1.3, 1.35, 46))):
+        out.append(LINE(cx + dx * 14 * s, cy + dy * 14 * s,
+                        cx + dx * 14 * s + ln * s * 0.55, cy + dy * 14 * s + ln * s * 0.35,
+                        sw - i * 0.5).replace("<line ", '<line data-sky="1" ', 1))
+    return "".join(out)
+
+
+# ---------------------------------------------------------------- nature pack
+def fish(cx, cy, w=150, sw=4.5, bubbles=True):
+    """Side-view fish swimming right, centred (cx, cy) — no ground line."""
+    out = []
+    # tail (body caps the joint)
+    out.append(P(f"M {_f(cx - 0.22 * w)} {_f(cy)} "
+                 f"L {_f(cx - 0.48 * w)} {_f(cy - 0.22 * w)} "
+                 f"L {_f(cx - 0.36 * w)} {_f(cy)} "
+                 f"L {_f(cx - 0.48 * w)} {_f(cy + 0.22 * w)} Z", sw, "white"))
+    # body: teardrop point-forward
+    out.append(smooth_path([(cx - 0.30 * w, cy), (cx - 0.10 * w, cy - 0.20 * w),
+                            (cx + 0.18 * w, cy - 0.17 * w), (cx + 0.36 * w, cy - 0.05 * w),
+                            (cx + 0.36 * w, cy + 0.05 * w), (cx + 0.18 * w, cy + 0.17 * w),
+                            (cx - 0.10 * w, cy + 0.20 * w)],
+                           sw, closed=True, fill="white"))
+    out.append(P(f"M {_f(cx + 0.02 * w)} {_f(cy - 0.16 * w)} "
+                 f"Q {_f(cx - 0.04 * w)} {_f(cy - 0.28 * w)} {_f(cx + 0.10 * w)} {_f(cy - 0.24 * w)} "
+                 f"L {_f(cx + 0.10 * w)} {_f(cy - 0.13 * w)} Z", 3.5, "white"))   # top fin
+    out.append(P(f"M {_f(cx + 0.02 * w)} {_f(cy + 0.16 * w)} "
+                 f"Q {_f(cx - 0.02 * w)} {_f(cy + 0.26 * w)} {_f(cx + 0.10 * w)} {_f(cy + 0.23 * w)} "
+                 f"L {_f(cx + 0.10 * w)} {_f(cy + 0.13 * w)} Z", 3.5, "white"))   # bottom fin
+    out.append(P(f"M {_f(cx + 0.20 * w)} {_f(cy - 0.10 * w)} "
+                 f"Q {_f(cx + 0.13 * w)} {_f(cy)} {_f(cx + 0.20 * w)} {_f(cy + 0.10 * w)}", 3))  # gill
+    out.append(DOT(cx + 0.27 * w, cy - 0.05 * w, 3.2))
+    out.append(P(f"M {_f(cx + 0.31 * w)} {_f(cy + 0.06 * w)} "
+                 f"Q {_f(cx + 0.34 * w)} {_f(cy + 0.09 * w)} {_f(cx + 0.31 * w)} {_f(cy + 0.11 * w)}", 2.5))
+    if bubbles:
+        for i, (dx, dy, r) in enumerate(((0.46, -0.18, 4), (0.55, -0.30, 3), (0.62, -0.42, 2.2))):
+            out.append(C(cx + dx * w, cy + dy * w, r, 2, "white"))
+    return "".join(out)
+
+
+def turtle(cx, ground_y, w=180, sw=4.5):
+    """Side-view turtle facing right, feet on ground_y."""
+    x0, g = cx - w / 2, ground_y
+    out = []
+    # head + neck (draw first, shell caps the joint)
+    out.append(C(x0 + 0.88 * w, g - 0.24 * w, 0.10 * w, sw, "white"))
+    out.append(DOT(x0 + 0.91 * w, g - 0.26 * w, 2.8))
+    out.append(P(f"M {_f(x0 + 0.93 * w)} {_f(g - 0.20 * w)} "
+                 f"Q {_f(x0 + 0.96 * w)} {_f(g - 0.18 * w)} {_f(x0 + 0.94 * w)} {_f(g - 0.16 * w)}", 2.5))
+    # legs
+    for lx in (0.24, 0.40, 0.62, 0.76):
+        px = x0 + lx * w
+        out.append(LINE(px, g - 0.16 * w, px, g, sw - 0.5))
+        out.append(LINE(px - 0.03 * w, g, px + 0.045 * w, g, sw - 1))
+    # shell dome + rim
+    out.append(smooth_path([(x0 + 0.12 * w, g - 0.16 * w), (x0 + 0.20 * w, g - 0.42 * w),
+                            (x0 + 0.45 * w, g - 0.52 * w), (x0 + 0.68 * w, g - 0.40 * w),
+                            (x0 + 0.76 * w, g - 0.16 * w)],
+                           sw, closed=True, fill="white"))
+    out.append(P(f"M {_f(x0 + 0.10 * w)} {_f(g - 0.16 * w)} L {_f(x0 + 0.78 * w)} {_f(g - 0.16 * w)}", sw - 1))
+    # shell pattern (asymmetric, unpaired)
+    for dx, dy, s_ in ((0.30, -0.36, 0.055), (0.48, -0.30, 0.05), (0.38, -0.22, 0.045)):
+        out.append(P(f"M {_f(x0 + (dx - s_) * w)} {_f(g + dy * w)} "
+                     f"L {_f(x0 + dx * w)} {_f(g + (dy - s_) * w)} "
+                     f"L {_f(x0 + (dx + s_) * w)} {_f(g + dy * w)} "
+                     f"L {_f(x0 + dx * w)} {_f(g + (dy + s_) * w)} Z", 2.5))
+    # tail
+    out.append(P(f"M {_f(x0 + 0.12 * w)} {_f(g - 0.14 * w)} L {_f(x0 + 0.05 * w)} {_f(g - 0.10 * w)} "
+                 f"L {_f(x0 + 0.12 * w)} {_f(g - 0.08 * w)} Z", 3, "white"))
+    return "".join(out)
+
+
+def snail(cx, ground_y, w=120, sw=4):
+    """Snail facing right: spiral shell + body with raised head."""
+    x0, g = cx - w / 2, ground_y
+    out = []
+    # body/foot with raised neck
+    out.append(smooth_path([(x0 + 0.04 * w, g), (x0 + 0.02 * w, g - 0.06 * w),
+                            (x0 + 0.30 * w, g - 0.08 * w), (x0 + 0.72 * w, g - 0.09 * w),
+                            (x0 + 0.88 * w, g - 0.16 * w), (x0 + 0.92 * w, g - 0.28 * w),
+                            (x0 + 0.86 * w, g - 0.30 * w), (x0 + 0.78 * w, g - 0.20 * w),
+                            (x0 + 0.96 * w, g)],
+                           sw, closed=True, fill="white"))
+    # antennae
+    out.append(LINE(x0 + 0.87 * w, g - 0.29 * w, x0 + 0.83 * w, g - 0.40 * w, 2.5) +
+               C(x0 + 0.83 * w, g - 0.415 * w, 2.5, 2, "white"))
+    out.append(LINE(x0 + 0.90 * w, g - 0.28 * w, x0 + 0.94 * w, g - 0.38 * w, 2.5) +
+               C(x0 + 0.94 * w, g - 0.395 * w, 2.5, 2, "white"))
+    out.append(DOT(x0 + 0.885 * w, g - 0.245 * w, 2.2))                  # eye
+    # shell: spiral (cubic approximation — charlib avoids A commands so the
+    # validator's bbox pairing stays exact)
+    scx, scy, sr = x0 + 0.38 * w, g - 0.30 * w, 0.26 * w
+    out.append(C(scx, scy, sr, sw, "white"))
+    out.append(P(f"M {_f(scx + sr * 0.70)} {_f(scy)} "
+                 f"C {_f(scx + sr * 0.70)} {_f(scy + sr * 0.75)} {_f(scx - sr * 0.10)} {_f(scy + sr * 0.85)} "
+                 f"{_f(scx - sr * 0.55)} {_f(scy + sr * 0.45)} "
+                 f"C {_f(scx - sr * 0.90)} {_f(scy + sr * 0.12)} {_f(scx - sr * 0.55)} {_f(scy - sr * 0.40)} "
+                 f"{_f(scx - sr * 0.05)} {_f(scy - sr * 0.32)}", 3))
+    out.append(C(scx + sr * 0.10, scy - sr * 0.05, sr * 0.26, 2.5, "white"))
+    return "".join(out)
+
+
+def rabbit(cx, ground_y, w=150, sw=4.5):
+    """Sitting rabbit facing right, feet on ground_y."""
+    x0, g = cx - w / 2, ground_y
+    out = []
+    # ears (head caps their base)
+    out.append(E(x0 + 0.70 * w, g - 0.62 * w, 0.045 * w, 0.16 * w, 3.5, "white"))
+    out.append(E(x0 + 0.79 * w, g - 0.60 * w, 0.045 * w, 0.15 * w, 3.5, "white"))
+    # body: haunch + chest
+    out.append(smooth_path([(x0 + 0.16 * w, g), (x0 + 0.10 * w, g - 0.22 * w),
+                            (x0 + 0.24 * w, g - 0.40 * w), (x0 + 0.52 * w, g - 0.44 * w),
+                            (x0 + 0.72 * w, g - 0.34 * w), (x0 + 0.80 * w, g - 0.20 * w),
+                            (x0 + 0.78 * w, g)],
+                           sw, closed=True, fill="white"))
+    # head + muzzle
+    out.append(C(x0 + 0.76 * w, g - 0.44 * w, 0.13 * w, sw, "white"))
+    out.append(E(x0 + 0.86 * w, g - 0.41 * w, 0.055 * w, 0.045 * w, 3, "white"))
+    out.append(DOT(x0 + 0.875 * w, g - 0.425 * w, 2.2))
+    out.append(DOT(x0 + 0.73 * w, g - 0.47 * w, 2.6))
+    # front paws + haunch line
+    out.append(P(f"M {_f(x0 + 0.62 * w)} {_f(g)} L {_f(x0 + 0.66 * w)} {_f(g - 0.10 * w)}", 3.5))
+    out.append(P(f"M {_f(x0 + 0.30 * w)} {_f(g - 0.06 * w)} "
+                 f"Q {_f(x0 + 0.42 * w)} {_f(g - 0.20 * w)} {_f(x0 + 0.56 * w)} {_f(g - 0.10 * w)}", 3))
+    # tail puff
+    out.append(C(x0 + 0.14 * w, g - 0.10 * w, 0.05 * w, 3, "white"))
+    return "".join(out)
+
+
+def duck(cx, water_y, w=140, sw=4.5):
+    """Duck floating right on waterline y."""
+    x0, g = cx - w / 2, water_y
+    out = []
+    # tail flick + body
+    out.append(smooth_path([(x0 + 0.06 * w, g - 0.24 * w), (x0 + 0.16 * w, g - 0.30 * w),
+                            (x0 + 0.40 * w, g - 0.26 * w), (x0 + 0.66 * w, g - 0.24 * w),
+                            (x0 + 0.80 * w, g - 0.16 * w), (x0 + 0.78 * w, g - 0.04 * w),
+                            (x0 + 0.20 * w, g - 0.04 * w)],
+                           sw, closed=True, fill="white"))
+    # head + bill
+    out.append(C(x0 + 0.78 * w, g - 0.38 * w, 0.115 * w, sw, "white"))
+    out.append(P(f"M {_f(x0 + 0.885 * w)} {_f(g - 0.40 * w)} L {_f(x0 + 0.99 * w)} {_f(g - 0.375 * w)} "
+                 f"L {_f(x0 + 0.885 * w)} {_f(g - 0.345 * w)} Z", 3.5, "white"))
+    out.append(DOT(x0 + 0.80 * w, g - 0.40 * w, 2.6))
+    # wing
+    out.append(P(f"M {_f(x0 + 0.30 * w)} {_f(g - 0.18 * w)} "
+                 f"Q {_f(x0 + 0.46 * w)} {_f(g - 0.24 * w)} {_f(x0 + 0.56 * w)} {_f(g - 0.13 * w)} "
+                 f"Q {_f(x0 + 0.42 * w)} {_f(g - 0.10 * w)} {_f(x0 + 0.30 * w)} {_f(g - 0.18 * w)}", 3))
+    out += [waves(g, x0 - 6, x0 + w + 6, amp=6)]
+    return "".join(out)
+
+
+def cow(cx, ground_y, w=240, sw=5):
+    """Side-view cow facing right, feet on ground_y."""
+    x0, g = cx - w / 2, ground_y
+    out = []
+    # tail (behind body)
+    out.append(P(f"M {_f(x0 + 0.06 * w)} {_f(g - 0.52 * w)} "
+                 f"Q {_f(x0 - 0.01 * w)} {_f(g - 0.36 * w)} {_f(x0 + 0.03 * w)} {_f(g - 0.20 * w)}", 3.5))
+    # legs
+    for lx in (0.18, 0.30, 0.60, 0.72):
+        px = x0 + lx * w
+        out.append(P(f"M {_f(px)} {_f(g - 0.26 * w)} L {_f(px)} {_f(g)}", sw - 0.5))
+        out.append(P(f"M {_f(px - 0.022 * w)} {_f(g)} L {_f(px + 0.03 * w)} {_f(g)}", sw - 1.5))
+    # body
+    out.append(smooth_path([(x0 + 0.08 * w, g - 0.44 * w), (x0 + 0.16 * w, g - 0.56 * w),
+                            (x0 + 0.42 * w, g - 0.58 * w), (x0 + 0.66 * w, g - 0.55 * w),
+                            (x0 + 0.76 * w, g - 0.42 * w), (x0 + 0.72 * w, g - 0.26 * w),
+                            (x0 + 0.40 * w, g - 0.24 * w), (x0 + 0.14 * w, g - 0.28 * w)],
+                           sw, closed=True, fill="white"))
+    # head (drawn after body): muzzle + horns + ears
+    hx, hy = x0 + 0.84 * w, g - 0.56 * w
+    out.append(P(f"M {_f(x0 + 0.72 * w)} {_f(g - 0.50 * w)} "
+                 f"Q {_f(x0 + 0.78 * w)} {_f(g - 0.62 * w)} {_f(x0 + 0.90 * w)} {_f(g - 0.60 * w)} "
+                 f"L {_f(x0 + 0.94 * w)} {_f(g - 0.46 * w)} "
+                 f"Q {_f(x0 + 0.84 * w)} {_f(g - 0.42 * w)} {_f(x0 + 0.74 * w)} {_f(g - 0.44 * w)} Z",
+                 sw, "white"))
+    out.append(E(x0 + 0.90 * w, g - 0.47 * w, 0.055 * w, 0.04 * w, 3, "white"))   # muzzle
+    out.append(DOT(x0 + 0.885 * w, g - 0.475 * w, 2.2))                            # nostril
+    out.append(DOT(x0 + 0.815 * w, g - 0.545 * w, 2.6))                            # eye
+    out.append(P(f"M {_f(x0 + 0.78 * w)} {_f(g - 0.615 * w)} L {_f(x0 + 0.755 * w)} {_f(g - 0.665 * w)} "
+                 f"L {_f(x0 + 0.81 * w)} {_f(g - 0.635 * w)} Z", 3, "white"))      # horn
+    out.append(E(x0 + 0.755 * w, g - 0.565 * w, 0.035 * w, 0.02 * w, 3, "white"))  # ear
+    # spots (asymmetric)
+    out.append(E(x0 + 0.28 * w, g - 0.42 * w, 0.07 * w, 0.05 * w, 3))
+    out.append(E(x0 + 0.50 * w, g - 0.34 * w, 0.055 * w, 0.04 * w, 3))
+    out.append(E(x0 + 0.60 * w, g - 0.50 * w, 0.045 * w, 0.035 * w, 3))
+    return "".join(out)
+
+
+def sheep(cx, ground_y, w=170, sw=4.5):
+    """Woolly sheep facing right: bumpy fleece, dark-outlined face, legs."""
+    x0, g = cx - w / 2, ground_y
+    out = []
+    for lx in (0.26, 0.38, 0.58, 0.70):
+        px = x0 + lx * w
+        out.append(P(f"M {_f(px)} {_f(g - 0.24 * w)} L {_f(px)} {_f(g)}", sw - 0.5))
+        out.append(P(f"M {_f(px - 0.02 * w)} {_f(g)} L {_f(px + 0.03 * w)} {_f(g)}", sw - 1.5))
+    # fleece: bumpy closed loop
+    pts, bumps = [], 9
+    rcx, rcy, rr = x0 + 0.47 * w, g - 0.38 * w, 0.26 * w
+    for i in range(bumps):
+        a = 2 * math.pi * i / bumps
+        pts.append((rcx + rr * math.cos(a), rcy + rr * 0.78 * math.sin(a)))
+    out.append(smooth_path(pts, sw, closed=True, fill="white"))
+    for i in range(bumps):                                               # wool curls
+        a = 2 * math.pi * (i + 0.5) / bumps
+        out.append(C(rcx + rr * 0.82 * math.cos(a), rcy + rr * 0.64 * math.sin(a),
+                     rr * 0.22, 2.5, "white"))
+    # head
+    hx, hy = x0 + 0.80 * w, g - 0.42 * w
+    out.append(E(hx, hy, 0.10 * w, 0.115 * w, sw, "white"))
+    out.append(E(hx + 0.055 * w, hy + 0.045 * w, 0.05 * w, 0.035 * w, 3, "white"))  # muzzle
+    out.append(DOT(hx + 0.05 * w, hy + 0.035 * w, 2))
+    out.append(DOT(hx + 0.035 * w, hy - 0.03 * w, 2.4))
+    out.append(E(hx - 0.075 * w, hy - 0.075 * w, 0.035 * w, 0.02 * w, 3, "white"))  # ear
+    return "".join(out)
+
+
+def chicken(cx, ground_y, w=120, sw=4):
+    """Hen facing right: comb, beak, wattle, wing, tail feathers."""
+    x0, g = cx - w / 2, ground_y
+    out = []
+    for lx in (0.42, 0.54):
+        px = x0 + lx * w
+        out.append(LINE(px, g - 0.16 * w, px, g, sw - 0.5))
+        out.append(LINE(px - 0.025 * w, g, px + 0.03 * w, g, sw - 1.5))
+    # body + tail
+    out.append(smooth_path([(x0 + 0.30 * w, g - 0.16 * w), (x0 + 0.16 * w, g - 0.30 * w),
+                            (x0 + 0.22 * w, g - 0.46 * w), (x0 + 0.42 * w, g - 0.50 * w),
+                            (x0 + 0.64 * w, g - 0.48 * w), (x0 + 0.72 * w, g - 0.36 * w),
+                            (x0 + 0.66 * w, g - 0.18 * w), (x0 + 0.52 * w, g - 0.14 * w)],
+                           sw, closed=True, fill="white"))
+    out.append(P(f"M {_f(x0 + 0.24 * w)} {_f(g - 0.42 * w)} "
+                 f"Q {_f(x0 + 0.10 * w)} {_f(g - 0.52 * w)} {_f(x0 + 0.16 * w)} {_f(g - 0.60 * w)} "
+                 f"Q {_f(x0 + 0.26 * w)} {_f(g - 0.56 * w)} {_f(x0 + 0.30 * w)} {_f(g - 0.48 * w)}", 3.5))  # tail
+    # head + comb + beak + wattle
+    hx, hy = x0 + 0.72 * w, g - 0.56 * w
+    out.append(C(hx, hy, 0.105 * w, sw, "white"))
+    out.append(P(f"M {_f(hx - 0.05 * w)} {_f(hy - 0.09 * w)} "
+                 f"Q {_f(hx - 0.03 * w)} {_f(hy - 0.14 * w)} {_f(hx)} {_f(hy - 0.09 * w)} "
+                 f"Q {_f(hx + 0.02 * w)} {_f(hy - 0.14 * w)} {_f(hx + 0.04 * w)} {_f(hy - 0.085 * w)}", 3))
+    out.append(P(f"M {_f(hx + 0.10 * w)} {_f(hy - 0.015 * w)} L {_f(hx + 0.185 * w)} {_f(hy + 0.01 * w)} "
+                 f"L {_f(hx + 0.10 * w)} {_f(hy + 0.035 * w)} Z", 3, "white"))
+    out.append(C(hx + 0.075 * w, hy + 0.075 * w, 0.02 * w, 2.5, "white"))
+    out.append(DOT(hx + 0.03 * w, hy - 0.02 * w, 2.4))
+    # wing
+    out.append(P(f"M {_f(x0 + 0.38 * w)} {_f(g - 0.32 * w)} "
+                 f"Q {_f(x0 + 0.50 * w)} {_f(g - 0.38 * w)} {_f(x0 + 0.56 * w)} {_f(g - 0.28 * w)} "
+                 f"Q {_f(x0 + 0.46 * w)} {_f(g - 0.24 * w)} {_f(x0 + 0.38 * w)} {_f(g - 0.32 * w)}", 3))
+    return "".join(out)
+
+
+def owl(cx, ground_y, w=120, sw=4.5):
+    """Owl standing on ground_y: ear tufts, big eyes, wing lines, feet."""
+    x0, g = cx - w / 2, ground_y
+    cxm, top = cx, g - 0.95 * w
+    out = []
+    # ear tufts
+    out.append(P(f"M {_f(cxm - 0.30 * w)} {_f(g - 0.62 * w)} L {_f(cxm - 0.34 * w)} {_f(g - 0.86 * w)} "
+                 f"L {_f(cxm - 0.14 * w)} {_f(g - 0.74 * w)} Z", sw - 0.5, "white"))
+    out.append(P(f"M {_f(cxm + 0.30 * w)} {_f(g - 0.62 * w)} L {_f(cxm + 0.34 * w)} {_f(g - 0.86 * w)} "
+                 f"L {_f(cxm + 0.14 * w)} {_f(g - 0.74 * w)} Z", sw - 0.5, "white"))
+    # body
+    out.append(smooth_path([(cxm - 0.34 * w, g - 0.10 * w), (cxm - 0.40 * w, g - 0.50 * w),
+                            (cxm - 0.20 * w, g - 0.72 * w), (cxm, g - 0.76 * w),
+                            (cxm + 0.20 * w, g - 0.72 * w), (cxm + 0.40 * w, g - 0.50 * w),
+                            (cxm + 0.34 * w, g - 0.10 * w)],
+                           sw, closed=True, fill="white"))
+    # eyes + beak
+    out.append(C(cxm - 0.14 * w, g - 0.60 * w, 0.115 * w, 3.5, "white"))
+    out.append(C(cxm + 0.14 * w, g - 0.60 * w, 0.115 * w, 3.5, "white"))
+    out.append(DOT(cxm - 0.14 * w, g - 0.60 * w, 3.2))
+    out.append(DOT(cxm + 0.14 * w, g - 0.60 * w, 3.2))
+    out.append(P(f"M {_f(cxm - 0.035 * w)} {_f(g - 0.50 * w)} L {_f(cxm)} {_f(g - 0.43 * w)} "
+                 f"L {_f(cxm + 0.035 * w)} {_f(g - 0.50 * w)} Z", 3, "white"))
+    # chest + wing marks
+    out.append(P(f"M {_f(cxm - 0.10 * w)} {_f(g - 0.34 * w)} "
+                 f"Q {_f(cxm)} {_f(g - 0.40 * w)} {_f(cxm + 0.10 * w)} {_f(g - 0.34 * w)} "
+                 f"Q {_f(cxm)} {_f(g - 0.28 * w)} {_f(cxm - 0.10 * w)} {_f(g - 0.34 * w)}", 2.5))
+    out.append(P(f"M {_f(cxm + 0.20 * w)} {_f(g - 0.56 * w)} "
+                 f"Q {_f(cxm + 0.30 * w)} {_f(g - 0.40 * w)} {_f(cxm + 0.22 * w)} {_f(g - 0.20 * w)}", 2.5))
+    # feet
+    for lx in (-0.10, 0.10):
+        px = cxm + lx * w
+        out.append(LINE(px, g - 0.10 * w, px, g, 3))
+        for t in (-1, 0, 1):
+            out.append(LINE(px + t * 5, g, px + t * 7, g + 4, 2.5))
+    return "".join(out)
+
+
+def monkey(cx, ground_y, w=180, sw=4.5):
+    """Sitting monkey facing right with curled tail, feet on ground_y."""
+    x0, g = cx - w / 2, ground_y
+    out = []
+    # tail: long curl behind
+    out.append(smooth_path([(x0 + 0.16 * w, g - 0.30 * w), (x0 - 0.02 * w, g - 0.34 * w),
+                            (x0 - 0.10 * w, g - 0.52 * w), (x0 + 0.02 * w, g - 0.62 * w),
+                            (x0 + 0.12 * w, g - 0.56 * w), (x0 + 0.06 * w, g - 0.48 * w)], 3.5))
+    # body: hunched sitting
+    out.append(smooth_path([(x0 + 0.20 * w, g), (x0 + 0.14 * w, g - 0.24 * w),
+                            (x0 + 0.26 * w, g - 0.44 * w), (x0 + 0.48 * w, g - 0.50 * w),
+                            (x0 + 0.66 * w, g - 0.42 * w), (x0 + 0.70 * w, g - 0.24 * w),
+                            (x0 + 0.62 * w, g)],
+                           sw, closed=True, fill="white"))
+    # arm + legs
+    out.append(limb((x0 + 0.56 * w, g - 0.40 * w), (x0 + 0.66 * w, g - 0.22 * w),
+                    (x0 + 0.72 * w, g - 0.06 * w), w0=5, w1=3.5, sw=sw - 0.5, hand_r=5))
+    out.append(P(f"M {_f(x0 + 0.30 * w)} {_f(g)} L {_f(x0 + 0.30 * w)} {_f(g - 0.14 * w)}", sw - 0.5))
+    out.append(P(f"M {_f(x0 + 0.26 * w)} {_f(g)} L {_f(x0 + 0.36 * w)} {_f(g)}", sw - 1.5))
+    # head with face disc + ears
+    hx, hy = x0 + 0.62 * w, g - 0.62 * w
+    out.append(C(hx, hy, 0.155 * w, sw, "white"))
+    out.append(E(hx - 0.155 * w, hy - 0.02 * w, 0.05 * w, 0.06 * w, 3.5, "white"))
+    out.append(E(hx + 0.155 * w, hy - 0.02 * w, 0.05 * w, 0.06 * w, 3.5, "white"))
+    out.append(E(hx + 0.02 * w, hy + 0.03 * w, 0.085 * w, 0.07 * w, 2.5))            # muzzle disc
+    out.append(DOT(hx - 0.055 * w, hy - 0.03 * w, 2.6))
+    out.append(DOT(hx + 0.085 * w, hy - 0.03 * w, 2.6))
+    out.append(P(f"M {_f(hx + 0.005 * w)} {_f(hy + 0.055 * w)} "
+                 f"Q {_f(hx + 0.035 * w)} {_f(hy + 0.075 * w)} {_f(hx + 0.065 * w)} {_f(hy + 0.05 * w)}", 2.5))
+    return "".join(out)
+
+
+def frog(cx, ground_y, w=150, sw=4.5):
+    """Crouched frog facing right: eye bumps, folded legs, front feet."""
+    x0, g = cx - w / 2, ground_y
+    out = []
+    # folded hind leg (behind body)
+    out.append(P(f"M {_f(x0 + 0.30 * w)} {_f(g - 0.10 * w)} "
+                 f"Q {_f(x0 + 0.16 * w)} {_f(g - 0.34 * w)} {_f(x0 + 0.30 * w)} {_f(g - 0.40 * w)} "
+                 f"Q {_f(x0 + 0.42 * w)} {_f(g - 0.42 * w)} {_f(x0 + 0.46 * w)} {_f(g - 0.24 * w)}", 3.5))
+    # body
+    out.append(smooth_path([(x0 + 0.10 * w, g - 0.08 * w), (x0 + 0.14 * w, g - 0.28 * w),
+                            (x0 + 0.34 * w, g - 0.36 * w), (x0 + 0.62 * w, g - 0.34 * w),
+                            (x0 + 0.78 * w, g - 0.22 * w), (x0 + 0.80 * w, g - 0.08 * w)],
+                           sw, closed=True, fill="white"))
+    # eye bumps
+    out.append(C(x0 + 0.66 * w, g - 0.40 * w, 0.075 * w, sw, "white"))
+    out.append(DOT(x0 + 0.675 * w, g - 0.41 * w, 2.6))
+    # mouth + front feet
+    out.append(P(f"M {_f(x0 + 0.60 * w)} {_f(g - 0.16 * w)} "
+                 f"Q {_f(x0 + 0.70 * w)} {_f(g - 0.13 * w)} {_f(x0 + 0.78 * w)} {_f(g - 0.17 * w)}", 3))
+    for lx in (0.56, 0.72):
+        px = x0 + lx * w
+        out.append(LINE(px, g - 0.08 * w, px + 0.02 * w, g, sw - 0.5))
+        out.append(LINE(px - 0.02 * w, g, px + 0.06 * w, g, sw - 1.5))
+    # belly line
+    out.append(P(f"M {_f(x0 + 0.20 * w)} {_f(g - 0.12 * w)} "
+                 f"Q {_f(x0 + 0.44 * w)} {_f(g - 0.04 * w)} {_f(x0 + 0.66 * w)} {_f(g - 0.10 * w)}", 2.5))
+    return "".join(out)
+
+
+def tulip(cx, ground_y, h=110, sw=3.5):
+    """Tulip: three-point cup head on a stem with two leaves."""
+    top = ground_y - h
+    hw = 0.16 * h
+    out = [P(f"M {_f(cx - hw)} {_f(top + 0.22 * h)} "
+             f"L {_f(cx - hw)} {_f(top + 0.04 * h)} "
+             f"Q {_f(cx - hw * 0.5)} {_f(top + 0.14 * h)} {_f(cx - hw * 0.28)} {_f(top + 0.02 * h)} "
+             f"L {_f(cx)} {_f(top + 0.12 * h)} "
+             f"L {_f(cx + hw * 0.28)} {_f(top + 0.02 * h)} "
+             f"Q {_f(cx + hw * 0.5)} {_f(top + 0.14 * h)} {_f(cx + hw)} {_f(top + 0.04 * h)} "
+             f"L {_f(cx + hw)} {_f(top + 0.22 * h)} "
+             f"Q {_f(cx)} {_f(top + 0.34 * h)} {_f(cx - hw)} {_f(top + 0.22 * h)} Z", sw, "white")]
+    out.append(LINE(cx, top + 0.30 * h, cx, ground_y, 3.5))
+    out.append(P(f"M {_f(cx)} {_f(ground_y - 0.30 * h)} "
+                 f"Q {_f(cx - 0.20 * h)} {_f(ground_y - 0.34 * h)} {_f(cx - 0.22 * h)} {_f(ground_y - 0.12 * h)} "
+                 f"Q {_f(cx - 0.10 * h)} {_f(ground_y - 0.14 * h)} {_f(cx)} {_f(ground_y - 0.30 * h)} Z", 3, "white"))
+    out.append(P(f"M {_f(cx)} {_f(ground_y - 0.22 * h)} "
+                 f"Q {_f(cx + 0.16 * h)} {_f(ground_y - 0.28 * h)} {_f(cx + 0.18 * h)} {_f(ground_y - 0.10 * h)} "
+                 f"Q {_f(cx + 0.08 * h)} {_f(ground_y - 0.10 * h)} {_f(cx)} {_f(ground_y - 0.22 * h)} Z", 3, "white"))
+    return "".join(out)
+
+
+def sunflower(cx, ground_y, h=160, sw=3.5):
+    """Sunflower: petal ring + seeded centre + stem and leaves."""
+    cyy = ground_y - h * 0.80
+    rr = h * 0.13
+    out = []
+    for i in range(12):
+        a = i * math.pi / 6
+        px = cyy and rr * 1.9
+        out.append(G(cx + rr * 1.75 * math.cos(a), cyy + rr * 1.75 * math.sin(a),
+                     E(0, 0, rr * 0.95, rr * 0.42, 3, "white"), 1.0, math.degrees(a)))
+    out.append(C(cx, cyy, rr * 1.15, sw, "white"))
+    for i in range(6):
+        a = i * math.pi / 3 + 0.3
+        out.append(DOT(cx + rr * 0.55 * math.cos(a), cyy + rr * 0.55 * math.sin(a), 1.8))
+    out.append(LINE(cx, cyy + rr * 1.1, cx, ground_y, 3.5))
+    out.append(P(f"M {_f(cx)} {_f(ground_y - h * 0.42)} "
+                 f"Q {_f(cx - 0.24 * h)} {_f(ground_y - h * 0.48)} {_f(cx - 0.26 * h)} {_f(ground_y - h * 0.24)} "
+                 f"Q {_f(cx - 0.10 * h)} {_f(ground_y - h * 0.24)} {_f(cx)} {_f(ground_y - h * 0.42)} Z", 3, "white"))
+    return "".join(out)
+
+
+def apple_tree(cx, ground_y, h=300, sw=5):
+    """Round tree with colorable apples (fixed asymmetric positions)."""
+    out = [tree_round(cx, ground_y, h=h, sw=sw, texture=False)]
+    rr = 0.34 * h
+    cyy = ground_y - 0.62 * h
+    for dx, dy in ((-0.5, -0.3), (0.1, -0.75), (0.55, -0.15), (-0.15, 0.1), (0.62, 0.45)):
+        ax, ay = cx + dx * rr, cyy + dy * rr
+        out.append(C(ax, ay, 0.052 * h, 3, "white"))
+        out.append(LINE(ax, ay - 0.052 * h, ax + 3, ay - 0.052 * h - 6, 2.2))
+    return "".join(out)
+
+
+def potted_plant(cx, ground_y, h=150, sw=4):
+    """Potted plant: rim pot + five-leaf fan."""
+    pw = 0.42 * h
+    pt = ground_y - 0.34 * h
+    out = [P(f"M {_f(cx - pw * 0.36)} {_f(pt + 0.34 * h)} L {_f(cx - pw * 0.30)} {_f(ground_y)} "
+             f"L {_f(cx + pw * 0.30)} {_f(ground_y)} L {_f(cx + pw * 0.36)} {_f(pt + 0.34 * h)} Z",
+             sw, "white"),
+           rrect(cx - pw * 0.42, pt, pw * 0.84, 0.075 * h, 4, sw, "white")]
+    for i, (ang, ln) in enumerate(((-64, 0.52), (-32, 0.68), (0, 0.80), (32, 0.68), (64, 0.52))):
+        a = math.radians(ang)
+        tipx, tipy = cx + math.sin(a) * h * ln, pt - math.cos(a) * h * ln
+        out.append(smooth_path([(cx, pt + 4),
+                                (cx + math.sin(a) * h * ln * 0.5 - 6, (pt + tipy) / 2),
+                                (tipx, tipy),
+                                (cx + math.sin(a) * h * ln * 0.5 + 6, (pt + tipy) / 2)],
+                               3, closed=True, fill="white"))
+    return "".join(out)
+
+
+def cactus(cx, ground_y, h=180, sw=4.5):
+    """Saguaro: trunk + two arms + spine ticks + bloom."""
+    tw = 0.20 * h
+    out = [rrect(cx - tw / 2, ground_y - h, tw, h, tw / 2, sw, "white")]
+    for sx, ah in ((-1, 0.52), (1, 0.36)):
+        aw = tw * 0.62
+        ay = ground_y - h * ah
+        out.append(P(f"M {_f(cx + sx * (tw / 2 - 2))} {_f(ay + aw * 0.9)} "
+                     f"L {_f(cx + sx * (tw / 2 + aw * 0.9))} {_f(ay + aw * 0.9)} "
+                     f"Q {_f(cx + sx * (tw / 2 + aw * 1.5))} {_f(ay + aw * 0.9)} "
+                     f"{_f(cx + sx * (tw / 2 + aw * 1.5))} {_f(ay + aw * 0.3)} "
+                     f"L {_f(cx + sx * (tw / 2 + aw * 0.6))} {_f(ay + aw * 0.3)} "
+                     f"L {_f(cx + sx * (tw / 2 + aw * 0.6))} {_f(ay + aw * 0.9 - 4)} "
+                     f"L {_f(cx + sx * tw / 2)} {_f(ay + aw * 0.9 - 4)} Z", sw - 0.5, "white"))
+    for i in range(6):                                                    # spines
+        px = cx - tw * 0.3 + (i % 3) * tw * 0.3
+        py = ground_y - h * (0.25 + 0.18 * (i // 3))
+        out.append(LINE(px, py, px, py - 7, 2))
+    out.append(C(cx, ground_y - h - 6, 6, 3, "white"))
+    return "".join(out)
+
+
+def garden_strip(x0, x1, ground_y, sw=3.5):
+    """Flower bed: alternating tulip/sunflower/daisy + grass, index-spaced."""
+    out = [P(f"M {_f(x0)} {_f(ground_y)} Q {_f((x0 + x1) / 2)} {_f(ground_y + 10)} "
+             f"{_f(x1)} {_f(ground_y)}", 3)]
+    kinds = (tulip, sunflower, flower)
+    span = x1 - x0
+    n = max(3, int(span // 95))
+    for i in range(n):
+        fx = x0 + span * (i + 0.5) / n
+        if i % 3 == 2:
+            out.append(G(fx, ground_y - 14, kinds[2](0, 0, s=1.3), 1.0))
+            out.append(LINE(fx, ground_y - 12, fx, ground_y, 3))
+        else:
+            out.append(kinds[i % 3](fx, ground_y, h=90 + 26 * ((i * 7) % 3)))
+        if i % 2 == 0:
+            out.append(grass_tuft(fx + 26, ground_y - 2))
+    return "".join(out)
+
+
+# ---------------------------------------------------------------- games pack
+def kite(cx, cy, w=140, sw=4):
+    """Diamond kite with spars, tail bows and a string; centred (cx, cy)."""
+    hw, hh = w / 2, w * 0.62
+    pts = [(cx, cy - hh), (cx + hw, cy), (cx, cy + hh), (cx - hw, cy)]
+    out = ['<polygon data-el="figure" points="' +
+           " ".join(f"{_f(a)},{_f(b)}" for a, b in pts) +
+           f'" fill="white" stroke="black" stroke-width="{_f(sw)}" stroke-linejoin="round"/>']
+    out.append(LINE(cx, cy - hh, cx, cy + hh, 2.5))
+    out.append(LINE(cx - hw, cy, cx + hw, cy, 2.5))
+    tx, ty = cx + 8, cy + hh
+    for i in range(3):
+        nx, ny = tx + 14, ty + 30
+        out.append(P(f"M {_f(tx)} {_f(ty)} Q {_f((tx + nx) / 2 + 8)} {_f((ty + ny) / 2)} {_f(nx)} {_f(ny)}", 2.5))
+        out.append(P(f"M {_f(nx - 7)} {_f(ny - 2)} L {_f(nx + 7)} {_f(ny + 2)} M {_f(nx - 7)} {_f(ny + 2)} "
+                     f"L {_f(nx + 7)} {_f(ny - 2)}", 2.5))
+        tx, ty = nx, ny
+    out.append(LINE(cx - hw, cy, cx - hw - 46, cy + 40, 2))
+    return "".join(out)
+
+
+def scooter(cx, ground_y, w=170, sw=4.5):
+    """Kick scooter facing right: deck, small wheels, stem, T-bar."""
+    x0, g = cx - w / 2, ground_y
+    r = 0.075 * w
+    out = [_wheel(x0 + 0.14 * w, g, r, sw - 0.5), _wheel(x0 + 0.86 * w, g, r, sw - 0.5)]
+    out.append(LINE(x0 + 0.14 * w, g - r * 2, x0 + 0.72 * w, g - r * 2, sw))       # deck
+    out.append(LINE(x0 + 0.72 * w, g - r * 2, x0 + 0.86 * w, g - r, sw - 0.5))
+    sx = x0 + 0.14 * w
+    out.append(LINE(sx, g - r * 2, sx, g - 0.52 * w, sw))                          # stem
+    out.append(LINE(sx - 0.10 * w, g - 0.52 * w, sx + 0.10 * w, g - 0.52 * w, sw)) # bar
+    out.append(DOT(sx - 0.10 * w, g - 0.52 * w, 3))
+    out.append(DOT(sx + 0.10 * w, g - 0.52 * w, 3))
+    return "".join(out)
+
+
+def tricycle(cx, ground_y, w=170, sw=4.5):
+    """Tricycle facing right: big front wheel + pedals, two rear wheels."""
+    x0, g = cx - w / 2, ground_y
+    rf, rr_ = 0.16 * w, 0.09 * w
+    fx, rx_ = x0 + 0.80 * w, x0 + 0.16 * w
+    out = [_wheel(fx, g, rf, sw - 0.5), _wheel(rx_, g, rr_, sw - 0.5),
+           _wheel(rx_ + 0.22 * w, g, rr_, sw - 0.5)]
+    out.append(LINE(fx, g - rf, fx + 0.02 * w, g - 0.42 * w, sw - 0.5))            # fork
+    out.append(LINE(fx - 0.07 * w, g - 0.44 * w, fx + 0.11 * w, g - 0.44 * w, sw)) # bars
+    out.append(LINE(fx, g - 0.30 * w, rx_ + 0.11 * w, g - 0.34 * w, sw - 0.5))     # frame
+    out.append(rrect(rx_ + 0.02 * w, g - 0.40 * w, 0.20 * w, 0.055 * w, 4, 3.5, "white"))  # seat
+    out.append(C(fx - 0.035 * w, g - rf * 0.55, 4.5, 3, "white"))                  # pedal hub
+    out.append(LINE(fx - 0.035 * w, g - rf * 0.55, fx - 0.075 * w, g - rf * 0.25, 3))
+    return "".join(out)
+
+
+def seesaw(cx, ground_y, w=270, sw=4.5):
+    """Seesaw: fulcrum + tilted plank + handles + seats."""
+    x0, g = cx - w / 2, ground_y
+    tilt = 0.10 * w
+    out = [P(f"M {_f(cx - 16)} {_f(g)} L {_f(cx)} {_f(g - 44)} L {_f(cx + 16)} {_f(g)} Z", sw, "white")]
+    out.append(LINE(x0, g - 44 - tilt, x0 + w, g - 44 + tilt, sw))
+    for t, s_ in ((0.10, -1), (0.90, 1)):
+        px = x0 + w * t
+        py = g - 44 - tilt + w * tilt / w * (t * 2 - 1)
+        out.append(LINE(px, py, px, py - 22, 3.5))
+        out.append(LINE(px - 12, py - 22, px + 12, py - 22, 3.5))
+        out.append(rrect(px - 16, py - 4, 32, 8, 4, 3.5, "white"))
+    return "".join(out)
+
+
+def sandbox(cx, ground_y, w=230, sw=4.5):
+    """Sandbox: wooden frame + sand hatch + bucket + shovel."""
+    x0, g = cx - w / 2, ground_y
+    h_ = 0.24 * w
+    out = [rrect(x0, g - h_, w, h_, 6, sw, "white")]
+    out.append(rrect(x0 + 10, g - h_ + 9, w - 20, h_ - 18, 4, 3, "white"))
+    for i in range(4):                                                    # sand
+        sx_ = x0 + 26 + i * (w - 60) / 4
+        out.append(P(f"M {_f(sx_)} {_f(g - h_ * 0.55)} "
+                     f"Q {_f(sx_ + 8)} {_f(g - h_ * 0.55 - 6)} {_f(sx_ + 16)} {_f(g - h_ * 0.55)}", 2.5))
+    bx = x0 + w - 44
+    out.append(P(f"M {_f(bx - 12)} {_f(g - h_ + 14)} L {_f(bx + 12)} {_f(g - h_ + 14)} "
+                 f"L {_f(bx + 8)} {_f(g - 12)} L {_f(bx - 8)} {_f(g - 12)} Z", 3, "white"))
+    out.append(LINE(bx - 14, g - h_ + 14, bx + 14, g - h_ + 14, 3.5))
+    return "".join(out)
+
+
+def blocks(cx, ground_y, s=1.0, letters="ABC", sw=3.5):
+    """Stacked letter blocks (uses the baked Andika glyph outlines)."""
+    bs = 52 * s
+    out = []
+    pos = [(0, 0), (bs + 6, 0), (bs / 2 + 3, -bs - 6)]
+    for (dx, dy), ch in zip(pos, letters):
+        bx, by = cx + dx * s - bs / 2, ground_y + dy
+        out.append(rrect(bx, by - bs, bs, bs, 6, sw, "white"))
+        out.append(letter(ch, bx + bs * 0.24, by - bs * 0.18, size=bs * 0.62, sw=2.5))
+    return "".join(out)
+
+
+def dice(cx, cy, s=46, rot=0, face=5, sw=3.5):
+    """Rounded die with pips 1-6, centred (cx, cy), slight rotation."""
+    pips = {1: ((0, 0),), 2: ((-1, -1), (1, 1)), 3: ((-1, -1), (0, 0), (1, 1)),
+            4: ((-1, -1), (1, -1), (-1, 1), (1, 1)),
+            5: ((-1, -1), (1, -1), (0, 0), (-1, 1), (1, 1)),
+            6: ((-1, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (1, 1))}
+    out = [G(cx, cy, rrect(-s / 2, -s / 2, s, s, 9, sw, "white"), 1.0, rot)]
+    for px, py in pips.get(max(1, min(6, face)), pips[5]):
+        out.append(G(cx, cy, DOT(px * s * 0.26, py * s * 0.26, s * 0.09), 1.0, rot))
+    return "".join(out)
+
+
+def drum(cx, ground_y, w=140, sw=4.5):
+    """Toy drum + crossed sticks."""
+    x0, g = cx - w / 2, ground_y
+    h_ = 0.55 * w
+    out = [E(cx, g - h_, w / 2, w * 0.10, sw, "white"),                   # head
+           P(f"M {_f(x0)} {_f(g - h_)} L {_f(x0)} {_f(g - 10)} "
+             f"Q {_f(cx)} {_f(g + 2)} {_f(x0 + w)} {_f(g - 10)} "
+             f"L {_f(x0 + w)} {_f(g - h_)}", sw, "white")]
+    for i in range(-1, 2, 2):                                             # lacing
+        out.append(P(f"M {_f(cx + i * w * 0.30)} {_f(g - h_ + 4)} "
+                     f"Q {_f(cx + i * w * 0.38)} {_f(g - h_ / 2)} {_f(cx + i * w * 0.30)} {_f(g - 14)}", 2.5))
+    out.append(LINE(cx - 26, g - h_ - 34, cx + 10, g - h_ - 4, 3.5))       # sticks
+    out.append(LINE(cx + 30, g - h_ - 30, cx - 4, g - h_ + 0, 3.5))
+    return "".join(out)
+
+
+def puzzle_piece(cx, cy, s=100, sw=4):
+    """Single jigsaw piece: knob top, knob right, socket bottom."""
+    k = s * 0.16
+    d = (f"M {_f(cx - s / 2)} {_f(cy + s / 2)} "
+         f"L {_f(cx - s / 2)} {_f(cy - s / 2)} "
+         f"L {_f(cx - k * 0.6)} {_f(cy - s / 2)} "
+         f"C {_f(cx - k * 0.6)} {_f(cy - s / 2 - k * 1.6)} {_f(cx + k * 1.6)} {_f(cy - s / 2 - k * 1.6)} "
+         f"{_f(cx + k * 0.6)} {_f(cy - s / 2)} "
+         f"L {_f(cx + s / 2)} {_f(cy - s / 2)} "
+         f"L {_f(cx + s / 2)} {_f(cy + k * 0.6)} "
+         f"C {_f(cx + s / 2 + k * 1.6)} {_f(cy + k * 0.6)} {_f(cx + s / 2 + k * 1.6)} {_f(cy - k * 1.2)} "
+         f"{_f(cx + s / 2)} {_f(cy - k * 1.2)} "  # placeholder replaced below
+         )
+    # simpler robust outline: square + top knob + right knob (sockets skipped)
+    d = (f"M {_f(cx - s / 2)} {_f(cy + s / 2)} L {_f(cx - s / 2)} {_f(cy - s / 2)} "
+         f"L {_f(cx - k)} {_f(cy - s / 2)} "
+         f"C {_f(cx - k)} {_f(cy - s / 2 - 2 * k)} {_f(cx + k)} {_f(cy - s / 2 - 2 * k)} {_f(cx + k)} {_f(cy - s / 2)} "
+         f"L {_f(cx + s / 2)} {_f(cy - s / 2)} L {_f(cx + s / 2)} {_f(cy - k)} "
+         f"C {_f(cx + s / 2 + 2 * k)} {_f(cy - k)} {_f(cx + s / 2 + 2 * k)} {_f(cy + k)} {_f(cx + s / 2)} {_f(cy + k)} "
+         f"L {_f(cx + s / 2)} {_f(cy + s / 2)} Z")
+    return P(d, sw, "white")
+
+
+def ice_cream(cx, cy, h=160, sw=4):
+    """Two-scoop cone, tip-down at (cx, cy + h/2)."""
+    ch = h * 0.52
+    tipy = cy + h / 2
+    topy = tipy - ch
+    out = [P(f"M {_f(cx - 0.20 * h)} {_f(topy)} L {_f(cx)} {_f(tipy)} "
+             f"L {_f(cx + 0.20 * h)} {_f(topy)} Z", sw, "white")]
+    for i in (-1, 0, 1):                                                   # waffle
+        out.append(LINE(cx + i * 0.10 * h, topy + 4, cx + i * 0.045 * h, tipy - 8, 2))
+    out.append(C(cx - 0.10 * h, topy - 0.16 * h, 0.17 * h, sw, "white"))
+    out.append(C(cx + 0.09 * h, topy - 0.24 * h, 0.15 * h, sw, "white"))
+    out.append(P(f"M {_f(cx + 0.09 * h)} {_f(topy - 0.40 * h)} "
+                 f"Q {_f(cx + 0.13 * h)} {_f(topy - 0.46 * h)} {_f(cx + 0.16 * h)} {_f(topy - 0.41 * h)}", 2.5))
+    out.append(C(cx + 0.16 * h, topy - 0.44 * h, 4, 2.5, "white"))         # cherry
+    return "".join(out)
+
+
+# ---------------------------------------------------------------- structures pack
+def barn(cx, ground_y, w=260, sw=5):
+    """Red-barn classic: gambrel roof, X-braced doors, loft window."""
+    x0, g = cx - w / 2, ground_y
+    eave = g - 0.52 * w
+    out = [rrect(x0 + 0.08 * w, eave, 0.84 * w, 0.52 * w, 3, sw, "white")]
+    knee_l, knee_r = x0 + 0.02 * w, x0 + 0.98 * w
+    apex = g - 0.88 * w
+    out.append(P(f"M {_f(x0)} {_f(eave)} L {_f(knee_l)} {_f(g - 0.70 * w)} "
+                 f"L {_f(cx)} {_f(apex)} L {_f(knee_r)} {_f(g - 0.70 * w)} "
+                 f"L {_f(x0 + w)} {_f(eave)} Z", sw, "white"))
+    dw = 0.34 * w
+    out.append(rrect(cx - dw / 2, g - 0.36 * w, dw, 0.36 * w, 4, sw, "white"))
+    out.append(LINE(cx, g - 0.36 * w, cx, g, sw - 1))
+    out.append(LINE(cx - dw / 2, g - 0.36 * w, cx + dw / 2, g, 3))
+    out.append(LINE(cx + dw / 2, g - 0.36 * w, cx - dw / 2, g, 3))
+    out.append(P(f"M {_f(cx - 13)} {_f(g - 0.62 * w)} L {_f(cx)} {_f(g - 0.62 * w - 22)} "
+                 f"L {_f(cx + 13)} {_f(g - 0.62 * w)} L {_f(cx)} {_f(g - 0.62 * w + 8)} Z", 3, "white"))
+    return "".join(out)
+
+
+def schoolhouse(cx, ground_y, w=280, sw=5):
+    """One-room schoolhouse: wide body, cupola bell, flag, steps."""
+    x0, g = cx - w / 2, ground_y
+    wall_top = g - 0.42 * w
+    out = [rrect(x0, wall_top, w, 0.42 * w, 3, sw, "white")]
+    out.append(P(f"M {_f(x0 - 10)} {_f(wall_top)} L {_f(cx)} {_f(wall_top - 0.16 * w)} "
+                 f"L {_f(x0 + w + 10)} {_f(wall_top)} Z", sw, "white"))
+    cup = 0.10 * w
+    out.append(rrect(cx - cup / 2, wall_top - 0.16 * w - cup, cup, cup, 3, sw, "white"))
+    out.append(P(f"M {_f(cx - cup / 2 - 3)} {_f(wall_top - 0.16 * w - cup)} "
+                 f"L {_f(cx)} {_f(wall_top - 0.16 * w - cup - 12)} "
+                 f"L {_f(cx + cup / 2 + 3)} {_f(wall_top - 0.16 * w - cup)} Z", sw, "white"))
+    out.append(LINE(cx, wall_top - 0.16 * w - cup - 12, cx, wall_top - 0.16 * w - cup - 34, 2.5))
+    out.append(LINE(cx, wall_top - 0.16 * w - cup - 34, cx + 22, wall_top - 0.16 * w - cup - 30, 2.5))
+    for i in range(3):                                                     # windows
+        wx = x0 + 0.10 * w + i * 0.16 * w
+        out.append(rrect(wx, wall_top + 0.07 * w, 0.11 * w, 0.13 * w, 3, 3.5, "white"))
+        out.append(LINE(wx + 0.055 * w, wall_top + 0.07 * w, wx + 0.055 * w, wall_top + 0.20 * w, 2))
+    out.append(rrect(cx - 0.07 * w, g - 0.26 * w, 0.14 * w, 0.26 * w, 3, sw, "white"))  # door
+    out.append(C(cx + 0.035 * w, g - 0.13 * w, 2.5, 2, "white"))
+    out.append(LINE(cx - 0.12 * w, g, cx + 0.12 * w, g, sw))               # step
+    return "".join(out)
+
+
+def lighthouse(cx, ground_y, h=330, sw=5):
+    """Lighthouse on rocks: striped taper, gallery, light rays."""
+    x0, g = cx - 0.16 * h, ground_y
+    tw = 0.30 * h
+    out = [P(f"M {_f(cx - 46)} {_f(g)} L {_f(cx - 30)} {_f(g - 18)} L {_f(cx)} {_f(g - 8)} "
+             f"L {_f(cx + 34)} {_f(g - 20)} L {_f(cx + 50)} {_f(g)} Z", sw - 0.5, "white")]
+    top = g - h
+    out.append(P(f"M {_f(cx - tw * 0.62)} {_f(g - 0.10 * h)} L {_f(cx - tw * 0.38)} {_f(top + 0.16 * h)} "
+                 f"L {_f(cx + tw * 0.38)} {_f(top + 0.16 * h)} L {_f(cx + tw * 0.62)} {_f(g - 0.10 * h)} Z",
+                 sw, "white"))
+    for i in range(2):                                                     # stripes
+        sy = g - 0.10 * h - (i + 0.5) * (h * 0.74) / 2
+        half = tw * (0.62 - 0.24 * (i + 0.5) / 2)
+        out.append(P(f"M {_f(cx - half)} {_f(sy)} L {_f(cx + half)} {_f(sy)}", 3.5))
+    out.append(rrect(cx - tw * 0.44, top + 0.10 * h, tw * 0.88, 0.06 * h, 3, sw, "white"))
+    out.append(rrect(cx - tw * 0.30, top + 0.015 * h, tw * 0.60, 0.09 * h, 4, 4, "white"))
+    out.append(P(f"M {_f(cx - tw * 0.34)} {_f(top + 0.02 * h)} L {_f(cx)} {_f(top - 0.035 * h)} "
+                 f"L {_f(cx + tw * 0.34)} {_f(top + 0.02 * h)} Z", sw, "white"))
+    for sx in (-1, 1):                                                     # beams
+        out.append(P(f"M {_f(cx + sx * tw * 0.32)} {_f(top + 0.06 * h)} "
+                     f"L {_f(cx + sx * (tw * 0.32 + 46))} {_f(top + 0.06 * h - 16)} "
+                     f"L {_f(cx + sx * (tw * 0.32 + 46))} {_f(top + 0.06 * h + 14)} Z", 2.5)
+                  .replace('stroke-width="2.5"', 'stroke-width="2.5" stroke-dasharray="6 5"'))
+    return "".join(out)
+
+
+def windmill(cx, ground_y, h=310, sw=5):
+    """Windmill: tapered body, cap, four lattice blades."""
+    x0, g = cx - 0.22 * h, ground_y
+    bw_top = 0.16 * h
+    top = g - h
+    out = [P(f"M {_f(cx - 0.22 * h)} {_f(g)} L {_f(cx - bw_top / 2)} {_f(top + 0.14 * h)} "
+             f"L {_f(cx + bw_top / 2)} {_f(top + 0.14 * h)} L {_f(cx + 0.22 * h)} {_f(g)} Z",
+             sw, "white")]
+    out.append(P(f"M {_f(cx - bw_top / 2 - 6)} {_f(top + 0.14 * h)} "
+                 f"Q {_f(cx)} {_f(top - 0.02 * h)} {_f(cx + bw_top / 2 + 6)} {_f(top + 0.14 * h)} Z",
+                 sw, "white"))
+    out.append(rrect(cx - 0.05 * h, g - 0.22 * h, 0.10 * h, 0.22 * h, 3, sw, "white"))  # door
+    hub_x, hub_y = cx, top + 0.10 * h
+    out.append(C(hub_x, hub_y, 7, 3.5, "white"))
+    for i in range(4):
+        a = math.pi / 4 + i * math.pi / 2
+        ex, ey = hub_x + math.cos(a) * 0.34 * h, hub_y + math.sin(a) * 0.34 * h
+        out.append(LINE(hub_x, hub_y, ex, ey, sw - 0.5))
+        for t in (0.35, 0.65):
+            px, py = hub_x + math.cos(a) * 0.34 * h * t, hub_y + math.sin(a) * 0.34 * h * t
+            out.append(LINE(px, py, px + math.cos(a + 1.35) * 10, py + math.sin(a + 1.35) * 10, 2.5))
+    return "".join(out)
+
+
+# ---------------------------------------------------------------- structures pack
+def barn(cx, ground_y, w=240, sw=5):
+    """Classic barn: gambrel roof, X-braced doors, loft diamond window."""
+    x0, g = cx - w / 2, ground_y
+    eave = g - 0.50 * w
+    out = [rrect(x0 + 0.08 * w, eave, 0.84 * w, 0.50 * w, 3, sw, "white")]
+    out.append(P(f"M {_f(x0)} {_f(eave)} L {_f(x0 + 0.02 * w)} {_f(g - 0.68 * w)} "
+                 f"L {_f(cx)} {_f(g - 0.86 * w)} L {_f(x0 + 0.98 * w)} {_f(g - 0.68 * w)} "
+                 f"L {_f(x0 + w)} {_f(eave)} Z", sw, "white"))
+    dw = 0.34 * w
+    out.append(rrect(cx - dw / 2, g - 0.34 * w, dw, 0.34 * w, 4, sw, "white"))
+    out.append(LINE(cx, g - 0.34 * w, cx, g, sw - 1))
+    out.append(LINE(cx - dw / 2, g - 0.34 * w, cx + dw / 2, g, 3))
+    out.append(LINE(cx + dw / 2, g - 0.34 * w, cx - dw / 2, g, 3))
+    lw = 0.075 * w
+    out.append(P(f"M {_f(cx)} {_f(g - 0.60 * w - lw)} L {_f(cx + lw)} {_f(g - 0.60 * w)} "
+                 f"L {_f(cx)} {_f(g - 0.60 * w + lw)} L {_f(cx - lw)} {_f(g - 0.60 * w)} Z",
+                 3, "white"))
+    return "".join(out)
+
+
+def schoolhouse(cx, ground_y, w=250, sw=5):
+    """One-room schoolhouse: bell cupola, flag, three windows, steps."""
+    x0, g = cx - w / 2, ground_y
+    wall_top = g - 0.40 * w
+    out = [rrect(x0, wall_top, w, 0.40 * w, 3, sw, "white")]
+    out.append(P(f"M {_f(x0 - 10)} {_f(wall_top)} L {_f(cx)} {_f(wall_top - 0.15 * w)} "
+                 f"L {_f(x0 + w + 10)} {_f(wall_top)} Z", sw, "white"))
+    cup = 0.09 * w
+    cy_ = wall_top - 0.15 * w
+    out.append(rrect(cx - cup / 2, cy_ - cup, cup, cup, 3, sw, "white"))
+    out.append(P(f"M {_f(cx - cup / 2 - 3)} {_f(cy_ - cup)} "
+                 f"L {_f(cx)} {_f(cy_ - cup - 12)} "
+                 f"L {_f(cx + cup / 2 + 3)} {_f(cy_ - cup)} Z", sw, "white"))
+    out.append(LINE(cx, cy_ - cup - 12, cx, cy_ - cup - 32, 2.5))
+    out.append(LINE(cx, cy_ - cup - 32, cx + 20, cy_ - cup - 28, 2.5))
+    for i in range(3):
+        wx = x0 + 0.09 * w + i * 0.15 * w
+        out.append(rrect(wx, wall_top + 0.07 * w, 0.10 * w, 0.12 * w, 3, 3.5, "white"))
+        out.append(LINE(wx + 0.05 * w, wall_top + 0.07 * w, wx + 0.05 * w,
+                        wall_top + 0.19 * w, 2))
+    out.append(rrect(cx - 0.065 * w, g - 0.24 * w, 0.13 * w, 0.24 * w, 3, sw, "white"))
+    out.append(C(cx + 0.032 * w, g - 0.12 * w, 2.5, 2, "white"))
+    out.append(LINE(cx - 0.11 * w, g, cx + 0.11 * w, g, sw))
+    return "".join(out)
+
+
+def lighthouse(cx, ground_y, h=300, sw=5):
+    """Lighthouse on rocks: striped taper, gallery, lamp room, dashed rays."""
+    g = ground_y
+    tw = 0.30 * h
+    top = g - h
+    out = [P(f"M {_f(cx - 46)} {_f(g)} L {_f(cx - 28)} {_f(g - 16)} L {_f(cx)} {_f(g - 7)} "
+             f"L {_f(cx + 32)} {_f(g - 18)} L {_f(cx + 48)} {_f(g)} Z", sw - 0.5, "white")]
+    out.append(P(f"M {_f(cx - tw * 0.60)} {_f(g - 0.09 * h)} "
+                 f"L {_f(cx - tw * 0.37)} {_f(top + 0.16 * h)} "
+                 f"L {_f(cx + tw * 0.37)} {_f(top + 0.16 * h)} "
+                 f"L {_f(cx + tw * 0.60)} {_f(g - 0.09 * h)} Z", sw, "white"))
+    for i in range(2):
+        sy = g - 0.09 * h - (i + 0.5) * (h * 0.75) / 2
+        half = tw * (0.60 - 0.23 * (i + 0.5) / 2)
+        out.append(LINE(cx - half, sy, cx + half, sy, 3.5))
+    out.append(rrect(cx - tw * 0.43, top + 0.10 * h, tw * 0.86, 0.055 * h, 3, sw, "white"))
+    out.append(rrect(cx - tw * 0.28, top + 0.02 * h, tw * 0.56, 0.085 * h, 4, 4, "white"))
+    out.append(P(f"M {_f(cx - tw * 0.32)} {_f(top + 0.03 * h)} L {_f(cx)} {_f(top - 0.03 * h)} "
+                 f"L {_f(cx + tw * 0.32)} {_f(top + 0.03 * h)} Z", sw, "white"))
+    for sx in (-1, 1):
+        beam = (f"M {_f(cx + sx * tw * 0.30)} {_f(top + 0.055 * h)} "
+                f"L {_f(cx + sx * (tw * 0.30 + 44))} {_f(top + 0.055 * h - 15)} "
+                f"L {_f(cx + sx * (tw * 0.30 + 44))} {_f(top + 0.055 * h + 13)} Z")
+        out.append(P(beam, 2.5).replace('stroke-width="2.5"',
+                                        'stroke-width="2.5" stroke-dasharray="6 5"'))
+    return "".join(out)
+
+
+def windmill(cx, ground_y, h=240, sw=5):
+    """Windmill: tapered body, domed cap, four lattice blades (reach 0.34h)."""
+    g = ground_y
+    bw_top = 0.16 * h
+    top = g - h
+    out = [P(f"M {_f(cx - 0.20 * h)} {_f(g)} L {_f(cx - bw_top / 2)} {_f(top + 0.14 * h)} "
+             f"L {_f(cx + bw_top / 2)} {_f(top + 0.14 * h)} L {_f(cx + 0.20 * h)} {_f(g)} Z",
+             sw, "white")]
+    out.append(P(f"M {_f(cx - bw_top / 2 - 6)} {_f(top + 0.14 * h)} "
+                 f"Q {_f(cx)} {_f(top - 0.02 * h)} {_f(cx + bw_top / 2 + 6)} {_f(top + 0.14 * h)} Z",
+                 sw, "white"))
+    out.append(rrect(cx - 0.045 * h, g - 0.20 * h, 0.09 * h, 0.20 * h, 3, sw, "white"))
+    hub_x, hub_y = cx, top + 0.10 * h
+    out.append(C(hub_x, hub_y, 6, 3.5, "white"))
+    for i in range(4):
+        a = math.pi / 4 + i * math.pi / 2
+        ex, ey = hub_x + math.cos(a) * 0.34 * h, hub_y + math.sin(a) * 0.34 * h
+        out.append(LINE(hub_x, hub_y, ex, ey, sw - 0.5))
+        for t in (0.4, 0.7):
+            px, py = hub_x + math.cos(a) * 0.34 * h * t, hub_y + math.sin(a) * 0.34 * h * t
+            out.append(LINE(px, py, px + math.cos(a + 1.35) * 9, py + math.sin(a + 1.35) * 9, 2.5))
+    return "".join(out)
+
+
+# ---------------------------------------------------------------- people expansion
+def _run_legs(out, s=1.0):
+    """Running legs: front leg striding forward, back leg kicking behind."""
+    out.append(limb((-8, -70), (12, -38), (26, -4), w0=7, w1=4.5, sw=5))
+    out.append(LINE(20, -2, 34, -2, 4.5))
+    out.append(limb((10, -70), (-8, -40), (-22, -14), w0=7, w1=4.5, sw=5))
+    out.append(LINE(-30, -12, -18, -8, 4.5))
+
+
+def kid_run(t, outfit=None):
+    """Running kid: leaning stride, pumping arms. Origin at feet center."""
+    out, sh, head_y = _kid_top(t, outfit, legs=False)
+    _run_legs(out)
+    out.append(_arm(sh[0], (-38, -108), bulge=-12, lift=2))
+    out.append(_arm(sh[1], (40, -128), bulge=12, lift=2))
+    out.append(face_traits(2, head_y, 37, t))
+    return '<g data-el="figure">' + "".join(out) + "</g>"
+
+
+def kid_jump(t, outfit=None):
+    """Jumping/cheering kid: arms up, legs kicked out, motion ticks below."""
+    out, sh, head_y = _kid_top(t, outfit, legs=False)
+    out.append(limb((-9, -70), (-20, -38), (-30, -8), w0=7, w1=4.5, sw=5))
+    out.append(limb((9, -70), (20, -38), (30, -8), w0=7, w1=4.5, sw=5))
+    out.append(LINE(-36, -4, -24, -4, 4.5))
+    out.append(LINE(24, -4, 36, -4, 4.5))
+    out.append(_arm(sh[0], (-64, -207)))
+    out.append(_arm(sh[1], (64, -207)))
+    for dx in (-14, 0, 14):                                   # ground ticks
+        out.append(LINE(dx, 8, dx - 4, 16, 3))
+    out.append(face_traits(0, head_y, 37, t))
+    return '<g data-el="figure">' + "".join(out) + "</g>"
+
+
+def kid_point(t, outfit=None):
+    """Kid pointing to the RIGHT (mirror with GM to point left)."""
+    out, sh, head_y = _kid_top(t, outfit, legs=True)
+    out.append(_arm(sh[0], (-48, -86)))
+    out.append(_arm(sh[1], (54, -152), bulge=6, lift=-6))
+    out.append(DOT(66, -152, 3))                              # pointing sparkle
+    out.append(face_traits(4, head_y, 37, t))
+    return '<g data-el="figure">' + "".join(out) + "</g>"
+
+
+def kid_carry(t, outfit=None, box_w=74, box_h=54):
+    """Kid carrying a box in front (hands redrawn OVER the box corners)."""
+    out, sh, head_y = _kid_top(t, outfit, legs=True)
+    out.append(_arm(sh[0], (-47, -96)))
+    out.append(_arm(sh[1], (47, -96)))
+    bx, by = 0, -100
+    out.append(rrect(bx - box_w / 2, by - box_h, box_w, box_h, 5, 4, "white"))
+    out.append(LINE(bx - box_w / 2, by - box_h / 2, bx + box_w / 2, by - box_h / 2, 3))
+    out.append(LINE(bx, by - box_h / 2, bx, by - box_h, 3))
+    for sx in (-1, 1):                                        # hands over box
+        out.append(C(sx * 47, -96, 8, 4, "white", hand="1"))
+    out.append(face_traits(0, head_y, 37, t))
+    return '<g data-el="figure">' + "".join(out) + "</g>"
+
+
+def kid_in_bed(t, x, floor=FLOOR, w=250, foot=True):
+    """Kid asleep in a side-view bed (head on pillow, blanket bump, closed
+    eyes, Zzz). Bed head at left; kid traits apply to hair/face only."""
+    out = [bed(x, floor, w=w, foot=foot)]
+    hx = x + 44
+    hy = floor - 24 - 34 - 26                                  # pillow top area
+    out.append(C(hx, hy, 28, 4.5, "white"))
+    out.append(face(hx, hy, 28, hair=t.get("hair", "tousled"),
+                    glasses=False, freckles=t.get("freckles", False),
+                    extras=True, mouth="none", cheeks=True))
+    out.append(LINE(hx - 9, hy + 3, hx - 3, hy + 3, 2.5))       # closed eyes
+    out.append(LINE(hx + 3, hy + 3, hx + 9, hy + 3, 2.5))
+    # blanket over the body
+    bx0, bx1 = x + 74, x + w - 6
+    out.append(smooth_path([(bx0, floor - 24), (bx0 + 20, floor - 74),
+                            (bx0 + 90, floor - 84), (bx1, floor - 58),
+                            (bx1, floor - 24)],
+                           4.5, closed=True, fill="white"))
+    out.append(LINE(bx0 + 60, floor - 82, bx0 + 66, floor - 26, 3))
+    out.append(P(f"M {_f(hx + 40)} {_f(hy - 34)} L {_f(hx + 50)} {_f(hy - 40)} "
+                 f"L {_f(hx + 46)} {_f(hy - 30)} L {_f(hx + 56)} {_f(hy - 32)}", 3))   # Zzz
+    return '<g data-el="figure">' + "".join(out) + "</g>"
+
+
+def kids_holding_hands(t1, t2, cx, ground_y, s=1.0):
+    """Two kids holding hands, centred at cx on ground_y. Left kid aims both
+    arms right (hold_r), right kid is mirrored (hold_l) so the inner wrists
+    meet at the centre; two overlapping hand circles anchor the clasp."""
+    half = 44 * s
+    out = [G(cx - half, ground_y, kid_stand(t1, "hold_r"), s),
+           GM(cx + half, ground_y, kid_stand(t2, "hold_l"), s)]
+    hy = ground_y - 106 * s
+    out.append(C(cx - 3 * s, hy, 8 * s, 4, "white", hand="1"))
+    out.append(C(cx + 3 * s, hy, 8 * s, 4, "white", hand="1"))
+    return "".join(out)
+
+
+def kid_wheelchair(t, outfit=None):
+    """Wheelchair user, origin at ground under the big wheel. Side view
+    facing right: seated kid, chair frame, big rear wheel + small caster."""
+    out, sh, head_y = _kid_top(t, outfit, legs=False)
+    del sh
+    hy = -150
+    # seated body (torso from _kid_top is standing-shaped; reuse torso only)
+    out.clear()
+    outfit = outfit or t.get("outfit", "tee")
+    if outfit == "dress":
+        out.append(P("M -14 -158 L 16 -158 L 26 -112 L 34 -74 L -22 -74 L -18 -114 Z", 5, "white"))
+        head_y = -196
+    else:
+        out.append(P("M -16 -150 L 16 -150 L 20 -76 L -20 -76 Z", 5, "white"))
+        head_y = -188
+    # lap + lower legs on footplate
+    out.append(limb((-6, -80), (16, -74), (34, -70), w0=6.5, w1=4, sw=5))
+    out.append(limb((-2, -78), (18, -66), (32, -48), w0=6, w1=4, sw=5))
+    out.append(LINE(24, -40, 48, -40, 4.5))                    # footplate
+    # chair frame
+    out.append(LINE(-30, -8, -30, -120, 4.5))                  # back post
+    out.append(LINE(-30, -120, -6, -128, 4))                   # push handle
+    out.append(LINE(-30, -74, 26, -74, 4))                     # seat rail
+    out.append(LINE(26, -74, 40, -40, 4))                      # front frame
+    out.append(C(-14, -36, 36, 5, "white", ground=_f(0)))      # big wheel
+    for i in range(6):
+        a = i * math.pi / 3
+        out.append(LINE(-14, -36, -14 + 30 * math.cos(a), -36 + 30 * math.sin(a), 2.5))
+    out.append(C(38, -12, 12, 4, "white", ground=_f(0)))       # caster
+    out.append(_arm((-14, -140), (30, -96), bulge=8))
+    out.append(_arm((-16, -142), (-34, -100), bulge=-8))
+    out.append(face_traits(2, head_y, 36, t))
+    return '<g data-el="figure">' + "".join(out) + "</g>"
+
+
+def kid_toddler(t, outfit=None):
+    """Toddler proportions: bigger head, shorter body (~170 tall at s=1)."""
+    out = []
+    outfit = outfit or t.get("outfit", "tee")
+    if outfit == "dress":
+        out.append(P("M -13 -118 L 13 -118 L 22 -78 L 40 -16 "
+                     "Q 30 -24 22 -12 Q 12 -22 2 -10 Q -8 -22 -18 -10 Q -28 -22 -36 -12 "
+                     f"L -20 -80 Z", 4.5, "white"))
+        sh = (-15, -112), (15, -112)
+        head_y = -146
+    else:
+        out.append(P("M -9 -52 L -9 -6 Q -9 0 -3 0 L 3 0", 4.5))
+        out.append(P("M 9 -52 L 9 -6 Q 9 0 15 0 L 21 0", 4.5))
+        out.append(P("M -13 -110 L 13 -110 L 19 -52 L -19 -52 Z", 4.5, "white"))
+        sh = (-13, -104), (13, -104)
+        head_y = -138
+    out.append(_arm(sh[0], (-34, -62), bulge=-10, hand_r=6.5))
+    out.append(_arm(sh[1], (34, -62), bulge=10, hand_r=6.5))
+    out.append(face_traits(0, head_y, 34, t))
+    return '<g data-el="figure">' + "".join(out) + "</g>"
+
+
+# ---------------------------------------------------------------- creativity layer
+# Page elements that INVITE the child's own art: blank speech bubbles,
+# finish-the-symmetry pages, pattern menus to copy from, design templates,
+# sticker sheets. Creative pages mark themselves spage(..., layout="creative")
+# so the validator knows open composition is intentional.
+
+def _dashify(fragment, dash="6 7"):
+    """Dotted-hint copy of a fragment: every stroked element gets a dash."""
+    out = re.sub(r'stroke-width="([0-9.]+)"',
+                 lambda m: f'stroke-width="{m.group(1)}" stroke-dasharray="{dash}"',
+                 fragment)
+    return out.replace('fill="white"', 'fill="none"')
+
+
+def _clipify(fragment, clip_id):
+    """Apply a clipPath to every element of a fragment. cairosvg supports
+    clip-path per SHAPE, not on <g> — hence the per-element attribute.
+    NOTE: clipPath rects resolve in each element's LOCAL frame (transforms
+    apply), so callers define clip rects around the motif's local origin."""
+    return re.sub(r'/\s*>', f' clip-path="url(#{clip_id})"/>', fragment)
+
+
+# local-frame clip rects (axis at local x = 0, page-tall)
+_CLIP_L = '<clipPath id="{i}L"><rect x="-440" y="-560" width="440" height="1120"/></clipPath>'
+_CLIP_R = '<clipPath id="{i}R"><rect x="0" y="-560" width="440" height="1120"/></clipPath>'
+
+
+def speech_bubble(cx, cy, w=210, h=100, tail="down", lines=False, sw=4):
+    """BLANK speech balloon (draw the word/picture inside). tail points at
+    the speaker: "down" | "left" | "right"."""
+    out = [rrect(cx - w / 2, cy - h / 2, w, h, 22, sw, "white")]
+    if tail == "down":
+        out.append(P(f"M {_f(cx - 12)} {_f(cy + h / 2 - 2)} L {_f(cx + 2)} {_f(cy + h / 2 + 26)} "
+                     f"L {_f(cx + 16)} {_f(cy + h / 2 - 2)} Z", sw, "white"))
+    elif tail == "left":
+        out.append(P(f"M {_f(cx - w / 2 + 2)} {_f(cy - 10)} L {_f(cx - w / 2 - 26)} {_f(cy)} "
+                     f"L {_f(cx - w / 2 + 2)} {_f(cy + 12)} Z", sw, "white"))
+    else:
+        out.append(P(f"M {_f(cx + w / 2 - 2)} {_f(cy - 10)} L {_f(cx + w / 2 + 26)} {_f(cy)} "
+                     f"L {_f(cx + w / 2 - 2)} {_f(cy + 12)} Z", sw, "white"))
+    if lines:
+        for i in range(2):
+            ly = cy - 10 + i * 24
+            out.append(stitch_dash(cx - w / 2 + 24, ly, cx + w / 2 - 24, ly, sw=2.5, dash="7 7"))
+    return "".join(out)
+
+
+def thought_bubble(cx, cy, w=190, h=95, sw=4):
+    """Cloud-style thought bubble with trailing puffs (blank inside)."""
+    out = [cloud(cx, cy, w * 0.34, sw)]
+    for dx, dy, r in ((-w * 0.30, h * 0.62, 8), (-w * 0.20, h * 0.85, 5.5)):
+        out.append(C(cx + dx, cy + dy, r, 3, "white"))
+    return "".join(out)
+
+
+_SYMMETRY_MOTIFS = {
+    "butterfly": lambda cx, cy: G(cx, cy, butterfly(0, 0, 2.6)),
+    "heart": lambda cx, cy: G(cx, cy, heart(0, 0, 52, 5, "white")),
+    "star": lambda cx, cy: G(cx, cy, star(0, 0, 62, 5, "white")),
+    "flower": lambda cx, cy: G(cx, cy, flower(0, 0, s=3.4)),
+    "face": lambda cx, cy: G(cx, cy, face(0, 0, 52, hair="bob_bangs")),
+}
+
+
+def symmetry_page(motif="butterfly", title="Finish the Other Half!",
+                  num=None, caption=None, axis_x=None):
+    """Creativity page: LEFT half drawn solid, right half shown as a dotted
+    hint — the child mirrors it. Uses per-element clipPath (cairosvg-safe)."""
+    ax = axis_x or W / 2
+    frag = _SYMMETRY_MOTIFS[motif](ax, 540)
+    defs = '<defs>' + _CLIP_L.format(i="sym") + _CLIP_R.format(i="sym") + '</defs>'
+    body = (defs
+            + _clipify(frag, "symL")
+            + _clipify(_dashify(frag), "symR")
+            + stitch_dash(ax, 300, ax, 800, sw=3, dash="4 9"))
+    return spage(title, body, num=num, caption=caption, layout="creative")
+
+
+_FINISH_KINDS = {
+    # each draws around a LOCAL ORIGIN sitting ON the mirror axis (local x=0)
+    "house": lambda: G(-120, 330, house(0, 0, w=240)),
+    "rocket": lambda: G(0, 200, rocket(0, -105)),
+    "butterfly": lambda: butterfly(0, 0, 3.0),
+    "face": lambda: face(0, 0, 55, hair="curly"),
+}
+
+
+def finish_page(kind="house", title="Finish the Picture!", num=None,
+                caption=None, axis_x=None):
+    """Creativity page: the LEFT half of the object is solid, the right half
+    a dotted ghost — the child completes it (following the hint or not)."""
+    ax = axis_x or (W / 2 + 30)
+    frag = G(ax, 500, _FINISH_KINDS[kind]())
+    defs = ('<defs>' + _CLIP_L.format(i="fin") + _CLIP_R.format(i="fin") + '</defs>')
+    body = (defs
+            + _clipify(frag, "finL")
+            + _clipify(_dashify(frag), "finR")
+            + stitch_dash(ax, 260, ax, 860, sw=3, dash="4 9")
+            + sparkle(ax + 150, 380, 10) + sparkle(ax + 200, 640, 8))
+    return spage(title, body, num=num, caption=caption, layout="creative")
+
+
+def pattern_menu(x, y, w=260, sw=3.5):
+    """Four pattern swatches (stripes/dots/checks/waves) with labels — kids
+    copy them onto blank bands (clothes, rugs, walls). Returns the strip."""
+    labels = ("stripes", "dots", "checks", "waves")
+    cell = (w - 3 * 12) / 4
+    out = []
+    for i, lab in enumerate(labels):
+        cx0 = x + i * (cell + 12)
+        out.append(rrect(cx0, y, cell, cell, 6, sw, "white"))
+        if lab == "stripes":
+            for k in range(1, 4):
+                out.append(LINE(cx0 + 4, y + cell * k / 4, cx0 + cell - 4,
+                                y + cell * k / 4, 2.5))
+        elif lab == "dots":
+            for r_ in range(3):
+                for c_ in range(3):
+                    out.append(DOT(cx0 + cell * (0.25 + 0.25 * c_),
+                                   y + cell * (0.25 + 0.25 * r_), 2.8))
+        elif lab == "checks":
+            for k in (1, 2, 3):
+                out.append(LINE(cx0 + cell * k / 4, y + 4, cx0 + cell * k / 4,
+                                y + cell - 4, 2))
+                out.append(LINE(cx0 + 4, y + cell * k / 4, cx0 + cell - 4,
+                                y + cell * k / 4, 2))
+        else:  # waves
+            for k in range(1, 4):
+                yy = y + cell * k / 4
+                out.append(P(f"M {_f(cx0 + 5)} {_f(yy)} "
+                             f"Q {_f(cx0 + cell * 0.33)} {_f(yy - 6)} {_f(cx0 + cell * 0.55)} {_f(yy)} "
+                             f"Q {_f(cx0 + cell * 0.75)} {_f(yy + 6)} {_f(cx0 + cell - 5)} {_f(yy)}", 2.2))
+        out.append(TXT(cx0 + cell / 2, y + cell + 20, lab, 15, weight="normal"))
+    return "".join(out)
+
+
+def design_template(kind="tee", cx=None, ground_y=860, sw=5):
+    """Blank 'design your own' outline + idea sparks. kind: tee | cake |
+    rocket | fish. Pair with pattern_menu() and a caption prompt."""
+    cx = W / 2 if cx is None else cx
+    out = []
+    if kind == "tee":
+        out.append(P(f"M {_f(cx - 90)} {_f(ground_y - 210)} L {_f(cx - 50)} {_f(ground_y - 240)} "
+                     f"Q {_f(cx)} {_f(ground_y - 222)} {_f(cx + 50)} {_f(ground_y - 240)} "
+                     f"L {_f(cx + 90)} {_f(ground_y - 210)} L {_f(cx + 66)} {_f(ground_y - 158)} "
+                     f"L {_f(cx + 44)} {_f(ground_y - 170)} L {_f(cx + 44)} {_f(ground_y - 40)} "
+                     f"Q {_f(cx)} {_f(ground_y - 28)} {_f(cx - 44)} {_f(ground_y - 40)} "
+                     f"L {_f(cx - 44)} {_f(ground_y - 170)} L {_f(cx - 66)} {_f(ground_y - 158)} Z",
+                     sw, "white"))
+        out += [sparkle(cx - 120, ground_y - 250, 9), sparkle(cx + 130, ground_y - 120, 8)]
+    elif kind == "cake":
+        out.append(rrect(cx - 110, ground_y - 120, 220, 90, 10, sw, "white"))
+        out.append(rrect(cx - 75, ground_y - 195, 150, 75, 10, sw, "white"))
+        out.append(LINE(cx - 130, ground_y - 28, cx + 130, ground_y - 28, sw))
+        out.append(LINE(cx - 110, ground_y - 75, cx + 110, ground_y - 75, 3))
+        for dx in (-40, 0, 40):
+            out.append(LINE(cx + dx, ground_y - 195, cx + dx, ground_y - 220, 3))
+            out.append(P(f"M {_f(cx + dx - 4)} {_f(ground_y - 226)} "
+                         f"Q {_f(cx + dx)} {_f(ground_y - 238)} {_f(cx + dx + 4)} {_f(ground_y - 226)} "
+                         f"Q {_f(cx + dx)} {_f(ground_y - 218)} {_f(cx + dx - 4)} {_f(ground_y - 226)} Z",
+                         2.5, "white"))
+        out += [sparkle(cx - 140, ground_y - 210, 8), sparkle(cx + 145, ground_y - 150, 9)]
+    else:  # rocket
+        out.append(P(f"M {_f(cx)} {_f(ground_y - 300)} "
+                     f"Q {_f(cx + 52)} {_f(ground_y - 230)} {_f(cx + 46)} {_f(ground_y - 110)} "
+                     f"L {_f(cx - 46)} {_f(ground_y - 110)} "
+                     f"Q {_f(cx - 52)} {_f(ground_y - 230)} {_f(cx)} {_f(ground_y - 300)} Z",
+                     sw, "white"))
+        out.append(C(cx, ground_y - 220, 24, 4, "white"))
+        out.append(P(f"M {_f(cx - 46)} {_f(ground_y - 150)} L {_f(cx - 84)} {_f(ground_y - 96)} "
+                     f"L {_f(cx - 46)} {_f(ground_y - 104)} Z", sw - 0.5, "white"))
+        out.append(P(f"M {_f(cx + 46)} {_f(ground_y - 150)} L {_f(cx + 84)} {_f(ground_y - 96)} "
+                     f"L {_f(cx + 46)} {_f(ground_y - 104)} Z", sw - 0.5, "white"))
+        out.append(P(f"M {_f(cx - 20)} {_f(ground_y - 108)} Q {_f(cx)} {_f(ground_y - 60)} "
+                     f"{_f(cx + 20)} {_f(ground_y - 108)}", 3))
+        out += [star(cx - 110, ground_y - 260, 12, 3.5, "white"),
+                sparkle(cx + 120, ground_y - 200, 9)]
+    return "".join(out)
+
+
+def sticker_sheet(motifs, title="Stickers!", num=None, cols=3, cell=170,
+                  x0=70, y0=200, caption=None):
+    """Cut-and-play sheet: dashed cells with one motif each. `motifs` is a
+    list of FRAGMENT STRINGS drawn around a LOCAL ORIGIN (e.g.
+    butterfly(0, 0, 1.6) or G(0, 0, dino(0, 0, s=0.9))) — the sheet places
+    and centres each one in its cell."""
+    out = []
+    rows = (len(motifs) + cols - 1) // cols
+    for i in range(len(motifs)):
+        r_, c_ = divmod(i, cols)
+        cx_ = x0 + cell * (c_ + 0.5)
+        cy_ = y0 + cell * (r_ + 0.5)
+        out.append(rrect(cx_ - cell / 2 + 8, cy_ - cell / 2 + 8, cell - 16, cell - 16,
+                         10, 3, "white")
+                   .replace('stroke="black" stroke-width="3"',
+                            'stroke="black" stroke-width="3" stroke-dasharray="9 8"'))
+        out.append(G(cx_, cy_ + 6, motifs[i]))
+    body = "".join(out)
+    return spage(title, body, num=num, caption=caption, layout="creative")

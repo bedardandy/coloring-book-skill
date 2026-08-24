@@ -40,134 +40,6 @@ def otext(x, y, s, size, sw=3, anchor="middle"):
             f'stroke-width="{sw}" letter-spacing="10">{s}</text>')
 
 
-def wrap_words(text, maxchars=54):
-    words, lines, cur = text.split(), [], ""
-    for w in words:
-        if len(cur) + len(w) + 1 <= maxchars:
-            cur = (cur + " " + w).strip()
-        else:
-            lines.append(cur); cur = w
-    if cur:
-        lines.append(cur)
-    return lines
-
-
-def spage(title, body, num=None, caption=None, title_size=42):
-    """Whole page: border, optional title, body, wrapped multi-line caption, page #."""
-    parts = [f'<rect x="0" y="0" width="{W}" height="{H}" fill="white"/>',
-             f'<rect x="28" y="28" width="{W-56}" height="{H-56}" rx="26" '
-             f'fill="none" stroke="black" stroke-width="6"/>']
-    if title:
-        parts.append(TXT(W / 2, 102, title, title_size))
-        parts.append(P(f"M {W/2-270} 124 Q {W/2} 142 {W/2+270} 124", 4))
-    parts.append(body)
-    if caption:
-        lines = wrap_words(caption, 54)
-        start = 1058 - (len(lines) - 1) * 28
-        for i, ln in enumerate(lines):
-            parts.append(TXT(W / 2, start + i * 28, ln, 22, weight="normal"))
-    if num:
-        parts.append(TXT(72, 1058, str(num), 20, weight="normal"))
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
-            f'viewBox="0 0 {W} {H}">' + "".join(parts) + "</svg>")
-
-
-# ---------------------------------------------------------------- prop-characters
-def teddy(cx, byy, s=1.0, sw=5):
-    """Button the teddy bear, sitting. cx = center x, byy = bottom (feet) y."""
-    out = []
-    # legs
-    out.append(E(cx - 20 * s, byy - 13 * s, 18 * s, 14 * s, sw, "white"))
-    out.append(E(cx + 20 * s, byy - 13 * s, 18 * s, 14 * s, sw, "white"))
-    out.append(DOT(cx - 30 * s, byy - 13 * s, 3 * s))   # paw pad
-    out.append(DOT(cx + 30 * s, byy - 13 * s, 3 * s))
-    # body
-    out.append(E(cx, byy - 58 * s, 34 * s, 40 * s, sw, "white"))
-    out.append(E(cx, byy - 52 * s, 18 * s, 22 * s, 3, "white"))  # tummy patch
-    # arms
-    out.append(E(cx - 40 * s, byy - 62 * s, 13 * s, 22 * s, sw, "white"))
-    out.append(E(cx + 40 * s, byy - 62 * s, 13 * s, 22 * s, sw, "white"))
-    # ears (behind head)
-    out.append(C(cx - 26 * s, byy - 142 * s, 13 * s, sw, "white"))
-    out.append(C(cx + 26 * s, byy - 142 * s, 13 * s, sw, "white"))
-    # head (white, drawn after ears so it caps them)
-    out.append(C(cx, byy - 118 * s, 32 * s, sw, "white"))
-    # muzzle + face
-    out.append(E(cx, byy - 108 * s, 15 * s, 11 * s, 3.5, "white"))
-    out.append(P(f"M {cx-6*s} {byy-116*s} L {cx+6*s} {byy-116*s} "
-                 f"L {cx} {byy-108*s} Z", 3.5, "black"))          # nose
-    out.append(P(f"M {cx} {byy-108*s} Q {cx-5*s} {byy-101*s} {cx-9*s} {byy-103*s}", 3))  # mouth
-    out.append(P(f"M {cx} {byy-108*s} Q {cx+5*s} {byy-101*s} {cx+9*s} {byy-103*s}", 3))
-    out.append(DOT(cx - 12 * s, byy - 124 * s, 3.5 * s))         # eyes
-    out.append(DOT(cx + 12 * s, byy - 124 * s, 3.5 * s))
-    return "".join(out)
-
-
-def dino(cx, cy, s=1.0, sw=4):
-    """Side-view dinosaur facing right, origin at feet center. ~90*s tall, ~175*s
-    wide: tapered curved tail, 4 legs, back plates on the spine, head with jaw."""
-    out = []
-    # tail first (body drawn after covers the joint)
-    out.append(P(f"M {cx-32*s} {cy-56*s} Q {cx-88*s} {cy-58*s} {cx-94*s} {cy-14*s} "
-                 f"Q {cx-64*s} {cy-34*s} {cx-28*s} {cy-22*s} Z", sw, "white"))
-    # neck (head drawn after covers the top joint)
-    out.append(P(f"M {cx+22*s} {cy-60*s} Q {cx+38*s} {cy-74*s} {cx+52*s} {cy-78*s} "
-                 f"L {cx+56*s} {cy-64*s} Q {cx+42*s} {cy-52*s} {cx+30*s} {cy-44*s} Z", sw, "white"))
-    # 4 legs with feet
-    for lx in (-26, -10, 12, 28):
-        out.append(P(f"M {cx+lx*s} {cy-16*s} L {cx+lx*s} {cy}", sw))
-        out.append(P(f"M {cx+(lx-5)*s} {cy} L {cx+(lx+5)*s} {cy}", max(2.5, sw - 0.5)))
-    # body
-    out.append(E(cx, cy - 40 * s, 40 * s, 28 * s, sw, "white"))
-    # back plates along the spine
-    for px in (-26, -8, 10):
-        py = -40 - 28 * math.sqrt(max(0.0, 1 - (px / 40) ** 2))
-        out.append(P(f"M {cx+(px-8)*s} {cy+(py+3)*s} L {cx+px*s} {cy+(py-15)*s} "
-                     f"L {cx+(px+8)*s} {cy+(py+3)*s}", max(2.5, sw - 0.5)))
-    # head with jaw line + eye
-    out.append(E(cx + 62 * s, cy - 74 * s, 17 * s, 13 * s, sw, "white"))
-    out.append(P(f"M {cx+58*s} {cy-70*s} L {cx+77*s} {cy-70*s}", 3))
-    out.append(DOT(cx + 60 * s, cy - 79 * s, 2.6))
-    return "".join(out)
-
-
-def soccer_ball(cx, cy, r, sw=4):
-    """Soccer ball: circle + central pentagon + short seam lines to the rim."""
-    out = [C(cx, cy, r, sw, "white")]
-    pts = []
-    for i in range(5):
-        a = math.pi / 2 + i * 2 * math.pi / 5
-        pts.append((cx + 0.40 * r * math.cos(a), cy - 0.40 * r * math.sin(a)))
-    out.append('<polygon points="' + " ".join(f"{x:.1f},{y:.1f}" for x, y in pts) +
-               '" fill="black" stroke="black" stroke-width="2"/>')
-    for x, y in pts:
-        dx, dy = x - cx, y - cy
-        n = math.hypot(dx, dy) or 1
-        out.append(LINE(x, y, cx + dx / n * 0.85 * r, cy + dy / n * 0.85 * r,
-                        max(2.5, sw - 1.5)))
-    return "".join(out)
-
-
-def wall_clock(cx, cy, r=40):
-    """Wall clock: rim, 4 hour ticks, two hands, center dot."""
-    out = [C(cx, cy, r, 5, "white")]
-    for i in range(4):
-        a = i * math.pi / 2
-        out.append(LINE(cx + (r - 11) * math.cos(a), cy + (r - 11) * math.sin(a),
-                        cx + (r - 4) * math.cos(a), cy + (r - 4) * math.sin(a), 3.5))
-    out.append(LINE(cx, cy, cx, cy - r * 0.58, 4))          # minute hand
-    out.append(LINE(cx, cy, cx + r * 0.40, cy + r * 0.12, 4))  # hour hand
-    out.append(DOT(cx, cy, 4))
-    return "".join(out)
-
-
-def dotline(x1, y1, x2, y2, sw=4):
-    """Dotted guide line (round dots)."""
-    return (f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
-            f'stroke="black" stroke-width="{sw}" stroke-linecap="round" '
-            f'stroke-dasharray="0.1 16"/>')
-
-
 def hold_teddy(x, feet, ks):
     """Button held at CHEST by a kid drawn with kid_stand(..., pose='hold') at
     (x, feet, scale=ks). Bear top stays fully below the chin (face and bangs
@@ -180,39 +52,6 @@ def hold_teddy(x, feet, ks):
     return out
 
 
-def kid_reach(t, outfit=None):
-    """Kid reaching BOTH arms to the RIGHT at chest height (searching / lifting
-    cushions / peeking behind furniture). Origin at feet center like kid_stand;
-    mirror with GM(x, y, kid_reach(t), s) to reach left. Hands overlap arm ends
-    and stay well clear of the head radius."""
-    out = []
-    outfit = outfit or t.get("outfit", "tee")
-    head_y = -196 if outfit == "dress" else -188
-    if outfit == "dress":
-        out.append(P("M -18 -160 L 18 -160 L 30 -108 L 62 -18 "
-                     "Q 48 -28 38 -14 Q 28 -26 16 -12 Q 4 -26 -8 -12 Q -20 -26 -30 -14 Q -42 -28 -55 -16 "
-                     "L -28 -108 Z", 5, "white"))
-        out.append(P("M -26 -100 L 26 -100", 4))
-        out.append(DOT(-20, -58, 3) + DOT(4, -42, 3) + DOT(24, -62, 3) + DOT(0, -78, 3))
-        out.append(P("M -18 -14 L -18 0 Q -18 6 -10 6 L -6 6", 4.5))
-        out.append(P("M 18 -14 L 18 0 Q 18 6 26 6 L 30 6", 4.5))
-        sh = (-20, -150), (20, -150)
-    else:
-        out.append(P("M -12 -70 L -12 -8 Q -12 0 -4 0 L 4 0", 5))
-        out.append(P("M 14 -70 L 14 -8 Q 14 0 22 0 L 30 0", 5))
-        out.append(P("M -18 -152 L 18 -152 L 26 -70 L -26 -70 Z", 5, "white"))
-        out.append(P("M -22 -96 L 22 -96", 4))
-        sh = (-18, -142), (18, -142)
-    (lsx, lsy), (rsx, rsy) = sh
-    out.append(P(f"M {lsx} {lsy} Q 10 -120 52 -108", 5))
-    out.append(C(58, -106, 8, 4, "white"))
-    out.append(P(f"M {rsx} {rsy} Q 40 -132 66 -124", 5))
-    out.append(C(72, -122, 8, 4, "white"))
-    out.append(face_traits(0, head_y, 37, t))
-    return "".join(out)
-
-
-# ---------------------------------------------------------------- furniture
 def floor_line(y=FLOOR):
     return LINE(46, y, 804, y, 5)
 
@@ -367,7 +206,7 @@ def names():
     b.append(butterfly(150, 760, 2.4))
     b.append(butterfly(700, 760, 2.4))
     b.append(P("M 120 500 L 730 500", 3))                # faint divider
-    return spage("Trace Your Names!", "".join(b), num=2,
+    return spage("Trace Your Names!", "".join(b), num=2, layout="activity",
                  caption="Trace the letters. M-A-X spells Max. L-I-L-Y spells Lily. "
                          "Color a dinosaur for Max and a butterfly for Lily!")
 
@@ -537,7 +376,7 @@ def back_cover():
     b.append(TXT(W / 2, 866, "Goodnight, Biscuit and Button.", 26, weight="normal"))
     b.append(heart(W / 2, 928, 18, 4))
     b.append(TXT(W / 2, 985, "Made with love for Max and Lily", 26, weight="normal"))
-    return spage("", "".join(b))
+    return spage("", "".join(b), layout="vignette")
 
 
 # ---------------------------------------------------------------- build

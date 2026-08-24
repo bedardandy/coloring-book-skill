@@ -1,5 +1,14 @@
 # Drawing guide — line-art rules & hard-won gotchas
 
+## These rules are now CODE
+Every numeric rule below is enforced by `lib/validate.py` (`python -m lib.validate
+pages/*.svg`): border clearance, connected-mass span (sky tokens excluded), figure/
+face size, caption-band + title-zone, text width, head kill-radius, hand/arm overlap,
+wheel tangency, parallel-line sliver floor, mat-swallowing (full erasure; partial halo
+nibbles still need tile eyes), duplicate pages. The prose stays for UNDERSTANDING the
+why — do not hand-audit what `lib.validate` already measures. Pages that are
+intentionally sparse take `spage(..., layout="activity")` or `"vignette"`.
+
 ## Age-band tuning
 | Age | main stroke | elements/page | notes |
 |---|---|---|---|

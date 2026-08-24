@@ -47,9 +47,13 @@ statements were badly miscalibrated (70-80% claimed on failed elements). Rules:
 - **Helpers and cookbook recipes ONLY. No custom poses, no novel objects.** Reframe the
   scene so a stock pose works: "kneeling to pet" → kid_stand(pose="down") beside the dog
   with the hand circle overlapping the dog's back; "climbing" → standing on/near, etc.
+- If arm/limb rendering misbehaves, `charlib.use_legacy_figures(True)` rebinds
+  kid_stand/dog to the pre-smoothing wire-limb geometry (the 2026-07 originals).
 - Max ~8 elements/page; one background anchor + figures + 2-3 fillers.
-- Apply the numeric layout checklist as arithmetic on your own coordinates BEFORE
-  rendering (bounding boxes are trustworthy; your visual judgment of renders is not).
+- **Run `python -m lib.validate pages/*.svg` after every build** — it converts the
+  numeric layout checklist below into exact arithmetic (border clearance, span,
+  figure size, head clearance, mat swallowing...) and exits nonzero on HIGH findings.
+  Fix findings by MOVING/SCALING elements per the message; do not eyeball-argue with it.
 - QA is MANDATORY and external: spawn a stronger-model reviewer per page if the Agent
   tool is available. If it is not, tell the user plainly that page quality is unverified
   and recommend a review pass with a stronger model.
