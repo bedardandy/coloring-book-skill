@@ -66,7 +66,7 @@ def pages():
             G(650, 300, satellite(0, 0), 0.7) +
             telescope(140, 640, h=150) + shooting_star(430, 500, 1.0) +
             planet_ringed(680, 560, r=60) +
-            G(350, G_, rocket(0, -105), 1.1)),
+            G(350, G_, rocket(0, -105), 1.25)),
         "04-games": (
             G(178, 300, kite(0, 0, w=130), 1.1) +
             scooter(125, G_, w=130) + tricycle(258, G_, w=130) +

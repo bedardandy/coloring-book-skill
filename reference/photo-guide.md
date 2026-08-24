@@ -78,3 +78,21 @@ CLI: `python -m lib.photolib photo.jpg -o page.svg [--style sketch] [--fragment 
 OpenCV (Apache-2.0) provides GrabCut, morphology, contours; the bundled
 YuNet face model is Apache-2.0 from opencv_zoo (see CREDITS.md). No photo
 ever leaves the machine; nothing phones home.
+
+## Evaluation (`tools/eval_photo.py`)
+
+The pipeline is scored, not eyeballed. `python tools/eval_photo.py` renders
+the synthetic fixture tiers (simple subjects, crisp toy, soft portrait,
+textured foliage, low light) through the trace and reports:
+
+- reference-free: strokes, slivers, regions, print safety, ink coverage %
+- reference (synthetic only): **subject hit ratio** — fraction of traced ink
+  falling inside the known subject silhouette (dilated); low values mean the
+  trace invented geometry outside the subject
+- round-trip doctrine: the pipeline can re-line-art its own rendered pages
+  (tested in CI)
+
+`--calibrate` rewrites `tools/eval_bands.json` from the current run; `--gate`
+fails when any metric leaves its band — the CI workflow runs the gate on
+every push, so trace regressions block merge the same way validator
+violations do.

@@ -18,6 +18,8 @@ jobs:
         run: pip install -r requirements.txt
       - name: Fast tests (deterministic, no raster QA)
         run: pytest -q -m "not slow"
+      - name: Photo-pipeline evaluation gate
+        run: python tools/eval_photo.py --styles clean,sketch --gate
       - name: Full example book build + validation
         if: github.event_name != 'pull_request'
         run: pytest -q -m slow

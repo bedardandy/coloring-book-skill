@@ -126,6 +126,18 @@ face the same way and the interaction reads rump-first.
 - Ladders/ropes attach beside the trunk, never overlapping it (rails over the trunk
   crowd out its silhouette).
 
+## Three-layer composition recipe (default for scene pages)
+1. BACKGROUND: scene kit (ground line, hills/skyline, sky) — kits take
+   `variant=N` for deterministic layout variety and `midground=True`
+   (default) for depth anchors.
+2. MIDGROUND: kit anchors sit at y≈750-930 at reduced size (further away).
+3. FOREGROUND: characters/vehicles at scale 1.2-1.4 (~35-45% of page
+   height) standing ON the declared ground line. Scale 1.0 reads as a
+   distant figure — bump it or add midground so the page doesn't read
+   bottom-empty (the span checker flags this).
+Rotate `variant` between pages of the same setting so spreads don't repeat
+a layout; keep one variant per scene across a single book for coherence.
+
 ## Vision-reviewed composition lessons (2026-08)
 - Scene-kit suns/clouds sit at y>=215: sky tokens at title height collide
   with page titles (was a real defect in scene_meadow/street/beach/farm).

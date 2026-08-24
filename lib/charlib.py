@@ -354,16 +354,40 @@ def grass_tuft(gx, gy, sw=3):
 HAIR_STYLES = ("bob_bangs", "bob", "tousled", "long_wavy", "pigtails", "curly", "buzz")
 
 
+def face_seed_for(name):
+    """Deterministic seed from a character name — put it in the trait dict as
+    face_seed so every page of one character shares a face, while different
+    characters get subtly different eyes/smile (anti same-face syndrome)."""
+    h = 0
+    for ch in (name or ""):
+        h = (h * 31 + ord(ch)) % 1000003
+    return h % 99991 or 0
+
+
 def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
          headband=False, extras=True, brows=False, mouth="smile", cheeks=True,
-         beard=False):
+         beard=False, seed=0):
     """Head with parametric hair/glasses/freckles. Draw AFTER body & arms.
     Hair+face occupy roughly a 1.3*r radius — keep props outside it.
     Friendliness defaults (anti-eerie): brows OFF (brows close to dot eyes read
     as scheming), smile is a narrow deep U, mouth="open" gives an unambiguous
-    happy D-mouth, cheeks adds small colorable blush circles."""
+    happy D-mouth, cheeks adds small colorable blush circles.
+    seed (from face_seed_for(name) via the trait dict's face_seed) drives
+    subtle per-character micro-variation: eye spacing/size, smile width.
+    seed=0 keeps the classic geometry exactly."""
     s = C(cx, cy, r, SW, "white", face=f"{_f(cx)},{_f(cy)},{_f(r)}")
     ey, ex = cy + r * 0.08, r * 0.38
+    # seeded micro-variation (seed=0 -> exact classic geometry)
+    if seed:
+        j1 = ((seed * 73 + 41) % 1000) / 999.0     # 0..1
+        j2 = ((seed * 151 + 97) % 1000) / 999.0
+        j3 = ((seed * 211 + 13) % 1000) / 999.0
+        ex *= 0.88 + 0.24 * j1                     # eye spacing +-12%
+        eye_r = 3.5 * (0.82 + 0.36 * j2)           # eye size +-18%
+        smile_k = 0.84 + 0.32 * j3                 # smile width +-16%
+        ey += (j1 - 0.5) * r * 0.05                # eye height +-2.5%r
+    else:
+        eye_r, smile_k = 3.5, 1.0
     hairsvg = ""
     if hair == "tousled":
         d = (f"M {cx - r * 1.02} {cy + r * 0.05} Q {cx - r * 1.15} {cy - r * 0.9} {cx - r * 0.35} {cy - r * 1.12} "
@@ -447,13 +471,14 @@ def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
                      f"Q {cx + r * 0.55} {cy + r * 1.28} {cx + r * 0.82} {cy + r * 0.57} "
                      f"Q {cx + r * 0.52} {cy + r * 0.98} {cx} {cy + r * 1.00} "
                      f"Q {cx - r * 0.52} {cy + r * 0.98} {cx - r * 0.82} {cy + r * 0.57} Z", 3.5, "white")
-    eyes = DOT(cx - ex, ey) + DOT(cx + ex, ey)
+    eyes = DOT(cx - ex, ey, eye_r) + DOT(cx + ex, ey, eye_r)
     if mouth == "open":  # closed D-shape: unambiguously joyful
         msvg = P(f"M {cx - r * 0.22} {cy + r * 0.40} Q {cx} {cy + r * 0.80} {cx + r * 0.22} {cy + r * 0.40} Z", 3.5, "white")
     elif mouth == "none":
         msvg = ""
     else:  # narrow deep U (a wide flat arc reads as a smirk) — bearded faces too
-        msvg = P(f"M {cx - r * 0.24} {cy + r * 0.40} Q {cx} {cy + r * 0.70} {cx + r * 0.24} {cy + r * 0.40}", 4)
+        mw = r * 0.24 * smile_k
+        msvg = P(f"M {cx - mw:.1f} {cy + r * 0.40} Q {cx} {cy + r * 0.70} {cx + mw:.1f} {cy + r * 0.40}", 4)
     cheeksvg = ""
     if cheeks and extras and not freckles:  # under-jaw beard leaves cheeks free
         cheeksvg = C(cx - r * 0.56, cy + r * 0.34, r * 0.10, 2.5) + \
@@ -470,10 +495,12 @@ def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
 
 
 def face_traits(cx, cy, r, t, extras=True):
-    """face() driven by a character trait dict."""
+    """face() driven by a character trait dict. t["face_seed"] (or a name
+    via face_seed_for) gives the character its own consistent micro-face."""
+    seed = int(t.get("face_seed") or face_seed_for(t.get("name", "")) or 0)
     return face(cx, cy, r, hair=t.get("hair", "tousled"), glasses=t.get("glasses", False),
                 freckles=t.get("freckles", False), headband=t.get("headband", False),
-                beard=t.get("beard", False), extras=extras)
+                beard=t.get("beard", False), extras=extras, seed=seed)
 
 
 # ---------------------------------------------------------------- kid figures
@@ -4294,10 +4321,10 @@ def kid_run(t, outfit=None):
 def kid_jump(t, outfit=None):
     """Jumping/cheering kid: arms up, legs kicked out, motion ticks below."""
     out, sh, head_y = _kid_top(t, outfit, legs=False)
-    out.append(limb((-9, -70), (-20, -38), (-30, -8), w0=7, w1=4.5, sw=5))
-    out.append(limb((9, -70), (20, -38), (30, -8), w0=7, w1=4.5, sw=5))
-    out.append(LINE(-36, -4, -24, -4, 4.5))
-    out.append(LINE(24, -4, 36, -4, 4.5))
+    out.append(limb((-9, -70), (-22, -44), (-16, -18), w0=7, w1=4.5, sw=5))
+    out.append(limb((9, -70), (24, -46), (34, -24), w0=7, w1=4.5, sw=5))
+    out.append(LINE(-22, -16, -10, -14, 4.5))
+    out.append(LINE(28, -22, 40, -18, 4.5))
     out.append(_arm(sh[0], (-64, -207)))
     out.append(_arm(sh[1], (64, -207)))
     for dx in (-14, 0, 14):                                   # ground ticks
@@ -4323,8 +4350,11 @@ def kid_carry(t, outfit=None, box_w=74, box_h=54):
     out.append(_arm(sh[1], (47, -96)))
     bx, by = 0, -100
     out.append(rrect(bx - box_w / 2, by - box_h, box_w, box_h, 5, 4, "white"))
-    out.append(LINE(bx - box_w / 2, by - box_h / 2, bx + box_w / 2, by - box_h / 2, 3))
-    out.append(LINE(bx, by - box_h / 2, bx, by - box_h, 3))
+    out.append(LINE(bx - box_w / 2, by - box_h + 10, bx + box_w / 2,
+                    by - box_h + 10, 3))                       # flap fold
+    out.append(rrect(bx - 8, by - box_h + 14, 16, 12, 2, 2.5, "white"))  # tape
+    out.append(LINE(bx - box_w / 2, by - box_h / 2 + 6, bx + box_w / 2,
+                    by - box_h / 2 + 6, 3))
     for sx in (-1, 1):                                        # hands over box
         out.append(C(sx * 47, -96, 8, 4, "white", hand="1"))
     out.append(face_traits(0, head_y, 37, t))

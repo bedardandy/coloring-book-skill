@@ -194,8 +194,13 @@ def _heuristic_label(gray, mask, meta):
 def extract_ink(gray, style="clean", policy=None, subject_mask=None,
                 detail="medium"):
     """Binary ink mask (255 = line) from a grayscale photo."""
-    policy = policy or POLICIES["generic"]
+    policy = dict(policy or POLICIES["generic"])
     mult = DETAIL_MULT.get(detail, 1.0)
+    leveled = gray.mean() < 70
+    if leveled:                                # low-light auto-level
+        gray = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
+        # normalized low-light grain amplifies into texture: tighten policy
+        policy["edge_c"] = min(24, policy["edge_c"] * 1.8)
     smooth = cv2.bilateralFilter(gray, 7, 45, 45)
 
     if style == "sketch":
@@ -294,7 +299,7 @@ def _flow_dog(gray, policy, sigma=1.4, tau=1.0, iters=2,
     # adaptive ridge threshold: soft/blurry photos have weak ridges, crisp
     # ones strong — scale with the image's own ridge distribution
     pos = center[center > 0]
-    thr = max(1.0, float(np.percentile(pos, 88)) * 1.15) if pos.size else 9e9
+    thr = max(0.9, float(np.percentile(pos, 80)) * 1.1) if pos.size else 9e9
     line = np.where((center > thr) & (center > 1.25 * surround + 0.3),
                     255, 0).astype(np.uint8)
     line = cv2.morphologyEx(line, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
@@ -548,6 +553,14 @@ def _trace(photo_path, style, subject, detail, max_dim, overrides=None):
                        if k in policy})
     ink = extract_ink(gray, style=style, policy=policy,
                       subject_mask=mask, detail=detail)
+    # graceful degradation: sketch on an ultra-soft photo can find almost
+    # nothing — fall back to the clean extractor rather than an empty page
+    if style == "sketch":
+        n_comp, _labels, stats, _ = cv2.connectedComponentsWithStats(ink, 8)
+        solid = sum(1 for i in range(1, n_comp) if stats[i, 4] >= 40)
+        if solid < 3:
+            ink = extract_ink(gray, style="clean", policy=policy,
+                              subject_mask=mask, detail=detail)
     elements = vectorize(ink, policy=policy, detail=detail,
                          subject_mask=mask)
     return elements, label, policy, ink
@@ -578,7 +591,7 @@ def synthetic_photo(kind="animal", size=640):
         cv2.fillPoly(img, [pts], (90, 80, 150))
         cv2.rectangle(img, (int(size * 0.44), int(size * 0.55)),
                       (int(size * 0.56), size * 3 // 4), (60, 50, 40), -1)
-    else:  # car
+    elif kind == "car":
         cv2.rectangle(img, (int(size * 0.15), int(size * 0.5)),
                       (int(size * 0.85), int(size * 0.68)), (50, 60, 140), -1)
         pts = np.array([[size * 0.28, size * 0.5], [size * 0.38, size * 0.36],
@@ -589,9 +602,45 @@ def synthetic_photo(kind="animal", size=640):
                    int(size * 0.06), (30, 30, 30), -1)
         cv2.circle(img, (int(size * 0.70), int(size * 0.68)),
                    int(size * 0.06), (30, 30, 30), -1)
+    elif kind == "crisp_toy":
+        # difficulty tier 1: white background, hard edges, high contrast
+        img[:] = 235
+        cv2.rectangle(img, (int(size * 0.2), int(size * 0.3)),
+                      (int(size * 0.5), int(size * 0.7)), (40, 40, 200), -1)
+        cv2.circle(img, (int(size * 0.68), int(size * 0.5)),
+                   int(size * 0.16), (200, 60, 60), -1)
+        cv2.rectangle(img, (int(size * 0.6), int(size * 0.72)),
+                      (int(size * 0.8), int(size * 0.8)), (60, 160, 60), -1)
+    elif kind == "soft_portrait":
+        # difficulty tier 2: soft gradients, no hard edges (face-like)
+        cv2.ellipse(img, (size // 2, int(size * 0.52)), (int(size * 0.26),
+                    int(size * 0.34)), 0, 0, 360, (110, 105, 100), -1)
+        cv2.ellipse(img, (size // 2, int(size * 0.38)), (int(size * 0.27),
+                    int(size * 0.16)), 0, 0, 360, (60, 55, 50), -1)
+        for ex_ in (int(size * 0.42), int(size * 0.58)):
+            cv2.circle(img, (ex_, int(size * 0.48)), int(size * 0.025),
+                       (40, 40, 40), -1)
+        cv2.ellipse(img, (size // 2, int(size * 0.62)), (int(size * 0.07),
+                    int(size * 0.03)), 0, 0, 360, (40, 40, 40), -1)
+        img = cv2.GaussianBlur(img, (0, 0), 5)
+    elif kind == "textured_foliage":
+        # difficulty tier 3: high-frequency texture everywhere
+        for i in range(140):
+            cx_ = int(rng.integers(0, size))
+            cy_ = int(rng.integers(int(size * 0.15), size))
+            r_ = int(rng.integers(8, 30))
+            cv2.ellipse(img, (cx_, cy_), (r_, r_ // 2),
+                        int(rng.integers(0, 180)), 0, 360,
+                        (int(rng.integers(40, 110)), 90, 50), -1)
+        cv2.rectangle(img, (int(size * 0.46), int(size * 0.3)),
+                      (int(size * 0.54), size), (70, 60, 45), -1)
+    if kind == "low_light":
+        img = (img * 0.3 + 8).astype(np.float32)
+        grain = rng.normal(0, 10, img.shape).astype(np.float32)
+    else:
+        grain = rng.normal(0, 6, img.shape).astype(np.float32)
     # soft shadow + sensor grain
     img = cv2.GaussianBlur(img, (0, 0), 3)
-    grain = rng.normal(0, 6, img.shape).astype(np.float32)
     return np.clip(img + grain, 0, 255).astype(np.uint8)
 
 
