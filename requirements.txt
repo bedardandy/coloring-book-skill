@@ -1,0 +1,7 @@
+cairosvg
+numpy
+scipy
+pillow
+fonttools
+opencv-python-headless
+pytest

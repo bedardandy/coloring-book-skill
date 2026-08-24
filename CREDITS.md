@@ -18,6 +18,7 @@ recipes are our own prose expression of public techniques.
 
 | **Twemoji** (github.com/jdecked/twemoji) | CC-BY 4.0 | Proportion reference for the 2026-07 helper batch: rocket, elephant, fire/police/ambulance, rainbow, present, pumpkin, airplane, giraffe, penguin, ringed planet, balloon, pig, anchor, octopus, whale, shield. Ratios only; no path data copied. Attribution: "Includes proportions referenced from Twemoji (CC-BY 4.0)." (CC-BY 4.0 is one-way compatible with GPLv3-family licensing per Creative Commons.) |
 | **Phosphor Icons** (github.com/phosphor-icons/core) | MIT | Stroke skeleton reference for the excavator (bulldozer.svg). |
+| **Andika** (SIL International, via google/fonts) | SIL OFL 1.1 (`assets/fonts/OFL.txt`) | Glyph outlines for the colorable letters/words kit (`lib/letters.json`, built by `tools/build_font.py`). Andika is designed for early-literacy teaching. Outlines only are bundled; the font program itself ships alongside for regeneration. |
 
 Avoided entirely: OpenClipart (quality/provenance lottery), Streamline (terms
 forbid asset-library bundling), any CC-BY-SA source (OpenMoji and derivatives —
@@ -31,3 +32,11 @@ wikiHow).
 - Phosphor Icons (MIT): bulldozer/crane stroke skeletons.
 - Craft-rule research (line hierarchy, region floors, print specs) synthesized from
   public publisher/print guidance; methods and facts, no copied expression.
+
+## 2026-08 photo-pipeline additions
+- OpenCV (`opencv-python-headless`, Apache-2.0): GrabCut subject segmentation,
+  morphology, contour tracing for `lib/photolib.py`.
+- YuNet face detection model (opencv_zoo, Apache-2.0, `assets/models/`):
+  bundled ~230KB ONNX for local, offline face detection driving the
+  `face`/`person` photo policies. OpenCV 5 removed Haar cascades; YuNet is
+  the supported detector. No photo leaves the machine.

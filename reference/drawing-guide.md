@@ -1,5 +1,14 @@
 # Drawing guide — line-art rules & hard-won gotchas
 
+## These rules are now CODE
+Every numeric rule below is enforced by `lib/validate.py` (`python -m lib.validate
+pages/*.svg`): border clearance, connected-mass span (sky tokens excluded), figure/
+face size, caption-band + title-zone, text width, head kill-radius, hand/arm overlap,
+wheel tangency, parallel-line sliver floor, mat-swallowing (full erasure; partial halo
+nibbles still need tile eyes), duplicate pages. The prose stays for UNDERSTANDING the
+why — do not hand-audit what `lib.validate` already measures. Pages that are
+intentionally sparse take `spage(..., layout="activity")` or `"vignette"`.
+
 ## Age-band tuning
 | Age | main stroke | elements/page | notes |
 |---|---|---|---|
@@ -116,6 +125,33 @@ face the same way and the interaction reads rump-first.
   branches, platform planks) — a house floating inside a leaf blob drowns.
 - Ladders/ropes attach beside the trunk, never overlapping it (rails over the trunk
   crowd out its silhouette).
+
+## Three-layer composition recipe (default for scene pages)
+1. BACKGROUND: scene kit (ground line, hills/skyline, sky) — kits take
+   `variant=N` for deterministic layout variety and `midground=True`
+   (default) for depth anchors.
+2. MIDGROUND: kit anchors sit at y≈750-930 at reduced size (further away).
+3. FOREGROUND: characters/vehicles at scale 1.2-1.4 (~35-45% of page
+   height) standing ON the declared ground line. Scale 1.0 reads as a
+   distant figure — bump it or add midground so the page doesn't read
+   bottom-empty (the span checker flags this).
+Rotate `variant` between pages of the same setting so spreads don't repeat
+a layout; keep one variant per scene across a single book for coherence.
+
+## Vision-reviewed composition lessons (2026-08)
+- Scene-kit suns/clouds sit at y>=215: sky tokens at title height collide
+  with page titles (was a real defect in scene_meadow/street/beach/farm).
+- Speech bubbles with tail="down" need ~200px clearance above a standing
+  1.0-scale kid's head (bubble + tail vs head top at feet_y-196).
+- Thought bubbles trail from BESIDE the speaker's head, not over the back.
+- Traced-photo fragments draw BEFORE foreground figures (their white
+  silhouette fill otherwise covers a neighbouring kid's waving hand);
+  composite_page + manual G() placement: trace first, characters after.
+- kids_holding_hands separates partners by 48.5*s (pigtails reach 1.32r
+  and graze the partner's 1.3r face zone at 44*s).
+- G()/GM() scales are precision-formatted: rounding 0.95 to one decimal
+  silently changed figure sizes (and rounded a 0.044 glyph scale to 0.0,
+  vaporizing banner text — the _f() vs _fs() split exists for this).
 
 ## Publisher-grade craft (researched 2026-07, sources in repo history)
 - **Two-tier line hierarchy**: outer/silhouette contours 1.3-2.0x the interior detail

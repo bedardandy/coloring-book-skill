@@ -27,6 +27,34 @@ built end-to-end by the skill.*
   figures, so rug lines can't visually fuse with dress hems.
 - **Tile-based QA loop**: pages are re-rendered as overlapping zoom tiles and reviewed
   (by subagents when available) for collisions, floaters, and ambiguous shapes.
+- **Deterministic validation gate**: `python -m lib.validate pages/*.svg` turns every
+  numeric layout rule into exact arithmetic on the emitted SVG (border clearance,
+  connected-mass span, head clearance, mat-swallowing, ground tangency, text fit...)
+  and fails on HIGH findings — guarded by a pytest suite.
+- **Smooth organic figures + line vocabulary**: a Catmull-Rom→Bézier engine
+  (`smooth_path`, `limb`) rebuilds kid arms and animal silhouettes as tapered
+  G1-continuous outlines; `scallop_edge`, `hatch_region`, `echo` and friends replace
+  hand-drawn decoration.
+- **Colorable letters & words**: Andika (SIL OFL) glyph outlines baked to paths —
+  hollow colorable letters, dashed trace-style name pages with ruled guidelines,
+  banners auto-sized from glyph metrics. No font install needed at render time.
+- **Interest packs + scene kits**: 230+ helpers indexed by interest in
+  `reference/catalog.md` — vehicles, trains, planes, boats, space, flowers,
+  wild/farm animals, games, buildings — plus `lib/scenes.py` composite
+  backgrounds (meadow, street, beach, space, farm) with declared ground lines,
+  and landscape systems (mountains, roads, fences, skylines).
+- **Creativity layer**: blank speech bubbles, finish-the-symmetry and
+  finish-the-picture pages (dashed hints via per-element clip paths), pattern
+  menus to copy, design-your-own templates, sticker sheets — pages that invite
+  the child's own art, with validator-aware `layout="creative"` marking.
+- **People for every story**: run/jump/point/carry/sleep poses, hand-holding
+  pairs, toddler proportions, a wheelchair user, and cap/scarf/cape accessories.
+- **Photo mode**: `lib/photolib.py` turns photos into splinter-free colorable
+  outlines — flow-coherent line extraction, contour averaging, angle snapping,
+  subject-aware soft policies (faces protected, architecture squared up),
+  closed QA loop; feet-anchored fragments composite traced subjects into scene
+  kits beside charlib characters. Fully local (OpenCV + bundled Apache-2.0
+  YuNet face model).
 - **Model-tier aware**: the skill tells weaker models to run in a conservative
   helpers-only mode and when to escalate — calibrated by benchmarking the same build
   across three model tiers.

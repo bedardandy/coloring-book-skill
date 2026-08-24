@@ -1,0 +1,202 @@
+{
+ "animal|clean|strokes": [
+  0,
+  4
+ ],
+ "animal|clean|slivers": [
+  0,
+  2
+ ],
+ "animal|clean|ink_coverage_pct": [
+  2.7456,
+  3.4944
+ ],
+ "animal|clean|subject_hit_ratio": [
+  0.88,
+  1.12
+ ],
+ "animal|sketch|strokes": [
+  2,
+  6
+ ],
+ "animal|sketch|slivers": [
+  26,
+  30
+ ],
+ "animal|sketch|ink_coverage_pct": [
+  2.9744,
+  3.7855999999999996
+ ],
+ "animal|sketch|subject_hit_ratio": [
+  0.88,
+  1.12
+ ],
+ "house|clean|strokes": [
+  0,
+  4
+ ],
+ "house|clean|slivers": [
+  0,
+  3
+ ],
+ "house|clean|ink_coverage_pct": [
+  3.3615999999999997,
+  4.2783999999999995
+ ],
+ "house|clean|subject_hit_ratio": [
+  0.73832,
+  0.93968
+ ],
+ "house|sketch|strokes": [
+  4,
+  8
+ ],
+ "house|sketch|slivers": [
+  0,
+  2
+ ],
+ "house|sketch|ink_coverage_pct": [
+  2.1471999999999998,
+  2.7328
+ ],
+ "house|sketch|subject_hit_ratio": [
+  0.88,
+  1.12
+ ],
+ "car|clean|strokes": [
+  4,
+  8
+ ],
+ "car|clean|slivers": [
+  0,
+  3
+ ],
+ "car|clean|ink_coverage_pct": [
+  3.3264,
+  4.2336
+ ],
+ "car|clean|subject_hit_ratio": [
+  0.87736,
+  1.11664
+ ],
+ "car|sketch|strokes": [
+  11,
+  15
+ ],
+ "car|sketch|slivers": [
+  6,
+  10
+ ],
+ "car|sketch|ink_coverage_pct": [
+  2.5168,
+  3.2032
+ ],
+ "car|sketch|subject_hit_ratio": [
+  0.88,
+  1.12
+ ],
+ "crisp_toy|clean|strokes": [
+  1,
+  5
+ ],
+ "crisp_toy|clean|slivers": [
+  0,
+  4
+ ],
+ "crisp_toy|clean|ink_coverage_pct": [
+  3.0536000000000003,
+  3.8864
+ ],
+ "crisp_toy|clean|subject_hit_ratio": [
+  0.67672,
+  0.86128
+ ],
+ "crisp_toy|sketch|strokes": [
+  7,
+  11
+ ],
+ "crisp_toy|sketch|slivers": [
+  2,
+  6
+ ],
+ "crisp_toy|sketch|ink_coverage_pct": [
+  3.2824,
+  4.1776
+ ],
+ "crisp_toy|sketch|subject_hit_ratio": [
+  0.72952,
+  0.92848
+ ],
+ "soft_portrait|clean|strokes": [
+  2,
+  6
+ ],
+ "soft_portrait|clean|slivers": [
+  0,
+  3
+ ],
+ "soft_portrait|clean|ink_coverage_pct": [
+  3.2472,
+  4.1328
+ ],
+ "soft_portrait|sketch|strokes": [
+  2,
+  6
+ ],
+ "soft_portrait|sketch|slivers": [
+  0,
+  3
+ ],
+ "soft_portrait|sketch|ink_coverage_pct": [
+  3.2472,
+  4.1328
+ ],
+ "textured_foliage|clean|strokes": [
+  70,
+  74
+ ],
+ "textured_foliage|clean|slivers": [
+  7,
+  11
+ ],
+ "textured_foliage|clean|ink_coverage_pct": [
+  5.984,
+  7.616
+ ],
+ "textured_foliage|sketch|strokes": [
+  35,
+  39
+ ],
+ "textured_foliage|sketch|slivers": [
+  1,
+  5
+ ],
+ "textured_foliage|sketch|ink_coverage_pct": [
+  2.728,
+  3.472
+ ],
+ "low_light|clean|strokes": [
+  178,
+  182
+ ],
+ "low_light|clean|slivers": [
+  40,
+  44
+ ],
+ "low_light|clean|ink_coverage_pct": [
+  3.432,
+  4.368
+ ],
+ "low_light|sketch|strokes": [
+  55,
+  59
+ ],
+ "low_light|sketch|slivers": [
+  4,
+  8
+ ],
+ "low_light|sketch|ink_coverage_pct": [
+  2.4816,
+  3.1584
+ ]
+}
