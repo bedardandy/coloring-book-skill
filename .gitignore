@@ -9,3 +9,4 @@ examples/*/pages/*.pdf
 
 # tooling
 .DS_Store
+eval_report.md
