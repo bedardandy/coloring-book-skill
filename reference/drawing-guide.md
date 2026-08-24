@@ -126,6 +126,21 @@ face the same way and the interaction reads rump-first.
 - Ladders/ropes attach beside the trunk, never overlapping it (rails over the trunk
   crowd out its silhouette).
 
+## Vision-reviewed composition lessons (2026-08)
+- Scene-kit suns/clouds sit at y>=215: sky tokens at title height collide
+  with page titles (was a real defect in scene_meadow/street/beach/farm).
+- Speech bubbles with tail="down" need ~200px clearance above a standing
+  1.0-scale kid's head (bubble + tail vs head top at feet_y-196).
+- Thought bubbles trail from BESIDE the speaker's head, not over the back.
+- Traced-photo fragments draw BEFORE foreground figures (their white
+  silhouette fill otherwise covers a neighbouring kid's waving hand);
+  composite_page + manual G() placement: trace first, characters after.
+- kids_holding_hands separates partners by 48.5*s (pigtails reach 1.32r
+  and graze the partner's 1.3r face zone at 44*s).
+- G()/GM() scales are precision-formatted: rounding 0.95 to one decimal
+  silently changed figure sizes (and rounded a 0.044 glyph scale to 0.0,
+  vaporizing banner text — the _f() vs _fs() split exists for this).
+
 ## Publisher-grade craft (researched 2026-07, sources in repo history)
 - **Two-tier line hierarchy**: outer/silhouette contours 1.3-2.0x the interior detail
   stroke (e.g. outer 5-6 / interior 4 for ages 3-5; outer 4 / interior 3 for 5-7).

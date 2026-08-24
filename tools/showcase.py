@@ -101,7 +101,7 @@ def pages():
         "10-scenes-space": scenes.scene_space() + G(
             300, scenes.SPACE_GROUND, rocket(0, -105), 1.1),
         "11-scenes-farm": scenes.scene_farm() + G(
-            500, scenes.SCENE_GROUND, dog({"coat": "spots"}), 1.35),
+            500, scenes.SCENE_GROUND, dog({"coat": "spots"}), 1.4),
         "12-creativity": (
             speech_bubble(190, 300, tail="down", lines=True) +
             G(190, 440, kid_stand(T1, "wave"), 0.9) +

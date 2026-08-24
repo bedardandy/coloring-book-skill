@@ -55,10 +55,14 @@ def _norm_d(d):
 
 
 def _serialize(svg):
-    """Last-hop cleanup applied by page()/spage(): rounds any remaining long
-    floats (raw f-string geometry in helpers) so emitted files stay compact
-    and byte-diffable."""
-    return _NUM_RE.sub(lambda m: f"{round(float(m.group(0)), 1):g}", svg)
+    """Last-hop cleanup applied by page()/spage(): rounds long floats in
+    PATH DATA only (raw f-string geometry from helpers). Transform
+    attributes (glyph/placement scales) need sub-0.1 precision and are
+    emitted precisely at the call site — rounding them here would turn a
+    0.044 scale into 0.0 and vaporize the element."""
+    def _round_d(m):
+        return 'd="' + _NUM_RE.sub(lambda mm: f"{round(float(mm.group(0)), 1):g}", m.group(1)) + '"'
+    return re.sub(r'd="([^"]*)"', _round_d, svg)
 
 
 def C(cx, cy, r, sw=SW, fill="none", **meta):
@@ -83,6 +87,12 @@ def TXT(x, y, s, size=40, anchor="middle", weight="bold"):
             f'font-weight="{weight}" text-anchor="{anchor}" fill="black">{_xml_escape(s)}</text>')
 
 
+def _fs(v):
+    """Scale/precision formatter — 1-decimal rounding breaks small
+    transforms (a 0.027 glyph scale would round to 0.0 and vanish)."""
+    return f"{float(v):.6g}"
+
+
 def _meta(meta):
     """Render data-* metadata kwargs (validation hooks) as attributes."""
     out = ""
@@ -92,12 +102,12 @@ def _meta(meta):
 
 
 def G(x, y, inner, scale=1.0, rot=0):
-    return f'<g transform="translate({_f(x)},{_f(y)}) rotate({_f(rot)}) scale({_f(scale)})">{inner}</g>'
+    return f'<g transform="translate({_f(x)},{_f(y)}) rotate({_f(rot)}) scale({_fs(scale)})">{inner}</g>'
 
 
 def GM(x, y, inner, scale=1.0):
     """Mirror horizontally (flip left-right) WITHOUT turning upside-down."""
-    return f'<g transform="translate({_f(x)},{_f(y)}) scale(-{_f(scale)},{_f(scale)})">{inner}</g>'
+    return f'<g transform="translate({_f(x)},{_f(y)}) scale(-{_fs(scale)},{_fs(scale)})">{inner}</g>'
 
 
 # ---------------------------------------------------------------- curve engine & line vocabulary
@@ -2904,7 +2914,8 @@ def letter(ch, x, y_base, size=120, style="colorable", sw=4):
     dash = ' stroke-dasharray="9 8"' if style == "trace" else ""
     return (f'<path d="{L["d"]}" {fill} stroke="black" '
             f'stroke-width="{_f(sw / s)}"{dash} data-letter="{ch}" '
-            f'transform="translate({_f(x)},{_f(y_base)}) scale({_f(s)},-{_f(s)})"/>')
+            f'transform="translate({_f(x)},{_f(y_base)}) '
+            f'scale({_fs(s)},-{_fs(s)})"/>')
 
 
 def word_width(text, size=120, tracking=10):
@@ -4340,7 +4351,9 @@ def kids_holding_hands(t1, t2, cx, ground_y, s=1.0):
     """Two kids holding hands, centred at cx on ground_y. Left kid aims both
     arms right (hold_r), right kid is mirrored (hold_l) so the inner wrists
     meet at the centre; two overlapping hand circles anchor the clasp."""
-    half = 44 * s
+    # 48.5*s: pigtails (1.32r reach) must clear the partner's 1.3r face
+    # kill zone — at 44*s the clasp hands met but pigtails grazed faces
+    half = 48.5 * s
     out = [G(cx - half, ground_y, kid_stand(t1, "hold_r"), s),
            GM(cx + half, ground_y, kid_stand(t2, "hold_l"), s)]
     hy = ground_y - 106 * s

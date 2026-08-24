@@ -26,10 +26,10 @@ BEACH_GROUND = 900          # beach shoreline (sand ground)
 SPACE_GROUND = 930          # lunar surface line
 
 
-def scene_meadow(*, sun_at=(130, 140), hills=True, flowers=5):
+def scene_meadow(*, sun_at=(130, 225), hills=True, flowers=5):
     """Sunny meadow. Ground: SCENE_GROUND. Sky lane stays clear above y=300
     on the right for a title; flowers dot the foreground band."""
-    out = [sun(*sun_at, r=42), cloud(660, 170, 28), sparkle(560, 220, 8)]
+    out = [sun(*sun_at, r=42), cloud(660, 235, 28), sparkle(560, 250, 8)]
     if hills:
         out.append(hill(300, SCENE_GROUND, w=470, h=95))
         out.append(hill(645, SCENE_GROUND, w=320, h=70))
@@ -50,7 +50,7 @@ def scene_meadow(*, sun_at=(130, 140), hills=True, flowers=5):
 def scene_street(*, lampposts=True):
     """City street. Vehicle/figure ground: STREET_GROUND (road near edge)."""
     street_y = SCENE_GROUND - 120
-    out = [sun(120, 140, r=40), cloud(650, 170, 26),
+    out = [sun(120, 225, r=40), cloud(650, 235, 26),
            skyline(street_y - 8, 60, W - 60), road(50, W - 50, street_y),
            LINE(50, street_y + ROAD_H, W - 50, street_y + ROAD_H, 4)]
     if lampposts:
@@ -59,7 +59,7 @@ def scene_street(*, lampposts=True):
     return "".join(out)
 
 
-def scene_beach(*, sun_at=(720, 140), umbrella=True):
+def scene_beach(*, sun_at=(720, 235), umbrella=True):
     """Beach: waves + shoreline + shells. Ground: BEACH_GROUND (the sand)."""
     out = [sun(*sun_at, r=42), cloud(180, 170, 26),
            waves(BEACH_GROUND - 46, 50, W - 50, amp=10),
@@ -100,7 +100,7 @@ def scene_space(*, planet=True, ufo_target=None):
 
 def scene_farm(*, pond_too=True):
     """Farmyard: barn + ranch fence + grass. Ground: SCENE_GROUND."""
-    out = [sun(130, 140, r=40), cloud(620, 160, 26),
+    out = [sun(130, 225, r=40), cloud(620, 235, 26),
            hill(560, SCENE_GROUND, w=460, h=70)]
     out.append(G(200, SCENE_GROUND, barn(0, 0, w=230), 1.0))
     out.append(fence_ranch(360, 620, SCENE_GROUND, posts=5))
