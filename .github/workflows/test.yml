@@ -15,7 +15,7 @@ jobs:
       - name: Install system deps (ghostscript for PDF merge)
         run: sudo apt-get update && sudo apt-get install -y ghostscript libcairo2-dev
       - name: Install python deps
-        run: pip install cairosvg numpy scipy pillow fonttools pytest
+        run: pip install -r requirements.txt
       - name: Fast tests (deterministic, no raster QA)
         run: pytest -q -m "not slow"
       - name: Full example book build + validation
