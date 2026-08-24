@@ -16,6 +16,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ghostscript libcairo2-dev
       - name: Install python deps
         run: pip install -r requirements.txt
+      - name: PII gate (no personal data in tracked files or image EXIF)
+        run: python tools/pii_scan.py --gate
       - name: Fast tests (deterministic, no raster QA)
         run: pytest -q -m "not slow"
       - name: Photo-pipeline evaluation gate

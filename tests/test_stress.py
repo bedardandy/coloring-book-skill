@@ -208,3 +208,32 @@ def test_validation_is_fast_on_dense_page():
     t0 = time.time()
     validate_svg(svg, require_span=False)
     assert time.time() - t0 < 5.0
+
+
+def test_pii_scan_clean_and_detecting():
+    """The PII gate must find nothing in the repo AND still detect knowns."""
+    import os
+    import subprocess
+    import sys
+    REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = subprocess.run(
+        [sys.executable, os.path.join("tools", "pii_scan.py"), "--gate"],
+        capture_output=True, text=True, timeout=120, cwd=REPO)
+    assert r.returncode == 0, r.stdout + r.stderr
+    # engine self-test: every pattern kind fires on a known-bad line
+    sys.path.insert(0, os.path.join(REPO, "tools"))
+    import pii_scan
+    # runtime-assembled so this source file never contains matchable PII
+    # (the scanner scans tracked files, including this one)
+    cases = {
+        "email": "reach me at jane.doe" + "@" + "gmail" + ".com",
+        "phone": "call (555) 123-" + "4567",
+        "ssn": "ssn 123-45-" + "6789",
+        "street_address": "see 42 Maple " + "St",
+        "ip_address": "host 192.168.1." + "42",
+        "api_key": "sk-abcdef" + "ghijklmnopqrstuvwx123",
+        "personal_path": "/Users/" + "someone/x.png",
+        "generic_secret": "API_" + 'KEY = "supersecret' + 'value123"',
+    }
+    for kind, line in cases.items():
+        assert any(p.search(line) for p in pii_scan.PII_PATTERNS.values()), kind
