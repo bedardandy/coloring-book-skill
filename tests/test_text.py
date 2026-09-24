@@ -64,8 +64,10 @@ def test_rendered_png_byte_identical():
 
 
 def test_letters_json_matches_build_tool(tmp_path):
-    """lib/letters.json is exactly what tools/build_font.py produces."""
+    """lib/letters.json is exactly what tools/build_font.py produces
+    (needs the build-only deps: pip install -r requirements-dev.txt)."""
     pytest.importorskip("fontTools")
+    pytest.importorskip("pathops")
     sys.path.insert(0, os.path.join(ROOT, "tools"))
     try:
         import build_font

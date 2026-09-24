@@ -1,0 +1,2 @@
+skia-pathops==0.9.2   # tools/build_font.py only (glyph overlap removal); pinned: output must be byte-reproducible
+pytest

@@ -11,6 +11,13 @@ byte-identical on every machine and renders never depend on which fonts the
 host happens to have (the old <text> pages came out Helvetica on a Mac and
 DejaVu Sans on Linux).
 
+Overlapping contours are REMOVED first (fontTools removeOverlaps): Andika
+draws M/X/Y/K/W/N/A/... as overlapping strokes, invisible when filled but
+drawn as stray interior lines once a glyph is OUTLINED for coloring or
+tracing. That step needs skia-pathops — a BUILD-TIME-ONLY dependency
+(requirements-dev.txt, pinned so the output is byte-reproducible); pages
+never need it because lib/letters.json is committed.
+
 Path data uses ONLY absolute M/L/Q/C/Z commands (no H/V shorthands, no
 implicit repeats): lib/validate.py pairs path numbers even/odd to measure
 bboxes, which one-coordinate H/V commands would silently misalign.
@@ -23,6 +30,7 @@ Characters the font lacks are skipped with a note; charlib falls back to
 the unaccented base letter at draw time.
 
 Usage:
+    pip install -r requirements-dev.txt     # skia-pathops (build only)
     python tools/build_font.py [path/to/Andika-Regular.ttf]
 
 Deterministic output (sorted keys, fixed 1-decimal precision — TrueType
@@ -91,15 +99,40 @@ def _pen_class():
     return AbsPathPen
 
 
+def _remove_overlaps(font, names):
+    """Union each glyph's overlapping contours (Andika builds M, X, Y, K, W,
+    N, A, ... from overlapping strokes). A filled glyph hides overlaps, but
+    an OUTLINED one (charlib's colorable/trace letters) shows every hidden
+    contour as a stray interior line. Runs on the glyphs we bake plus the
+    components they reference; non-overlapping composites stay composite."""
+    try:
+        from fontTools.ttLib.removeOverlaps import removeOverlaps
+    except ImportError as exc:  # pathops missing
+        raise SystemExit(
+            "tools/build_font.py needs skia-pathops to remove glyph overlaps: "
+            "pip install -r requirements-dev.txt") from exc
+    glyf = font["glyf"]
+    todo, closure = list(names), set()
+    while todo:
+        g = todo.pop()
+        if g in closure:
+            continue
+        closure.add(g)
+        if glyf[g].isComposite():
+            todo.extend(c.glyphName for c in glyf[g].components)
+    removeOverlaps(font, sorted(closure))
+
+
 def main(ttf_path, out_path=OUT):
     from fontTools.ttLib import TTFont
     from fontTools.pens.boundsPen import BoundsPen
 
     AbsPathPen = _pen_class()
     font = TTFont(ttf_path)
-    glyph_set = font.getGlyphSet()
     cmap = font.getBestCmap()
     upem = font["head"].unitsPerEm
+    _remove_overlaps(font, [cmap[ord(c)] for c in CHARSET if ord(c) in cmap])
+    glyph_set = font.getGlyphSet()
 
     letters, missing = {}, []
     for ch in CHARSET:
