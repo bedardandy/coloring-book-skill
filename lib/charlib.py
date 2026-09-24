@@ -4404,20 +4404,56 @@ def windmill(cx, ground_y, h=240, sw=5):
 
 # ---------------------------------------------------------------- people expansion
 def _run_legs(out, s=1.0):
-    """Running legs: front leg striding forward, back leg kicking behind."""
-    out.append(limb((-8, -70), (12, -38), (26, -4), w0=7, w1=4.5, sw=5))
-    out.append(LINE(20, -2, 34, -2, 4.5))
-    out.append(limb((10, -70), (-8, -40), (-22, -14), w0=7, w1=4.5, sw=5))
-    out.append(LINE(-30, -12, -18, -8, 4.5))
+    """Running stride (legacy name kept): the NEAR leg drives forward with
+    the knee up (foot off the ground), the FAR leg pushes off behind, toe on
+    the ground line. Drawn before the torso so a dress hem covers thighs."""
+    # far leg: long diagonal push-off, heel up, toe on the ground behind
+    out.append(limb((-6, -72), (-30, -42), (-52, -16), w0=7, w1=4.5, sw=5))
+    out.append(P("M -55 -14 Q -54 -3 -44 -2 L -38 -2", 4.5))
+    # near leg: thigh driven forward-up, shin hanging below the knee
+    out.append(limb((8, -72), (44, -60), (42, -24), w0=7, w1=4.5, sw=5))
+    out.append(P("M 41 -22 Q 41 -14 49 -14 L 58 -14", 4.5))
 
 
-def kid_run(t, outfit=None):
-    """Running kid: leaning stride, pumping arms. Origin at feet center."""
-    out, sh, head_y = _kid_top(t, outfit, legs=False)
+def kid_run(t, outfit=None, lean=18):
+    """Running kid heading RIGHT (mirror with GM). Origin at feet center; the
+    push-off toe sits on the ground line. Silhouette = the running read at
+    thumbnail size: near leg knee-up forward, far leg extended behind, torso
+    leaning `lean` px forward at the shoulders, elbows bent ~90deg and
+    pumping in opposition to the legs (far arm drives forward-up, drawn
+    behind the torso; near arm swings back). Face/hair via face_traits,
+    front-facing like every pose."""
+    outfit = outfit or t.get("outfit", "tee")
+    out = []
     _run_legs(out)
-    out.append(_arm(sh[0], (-38, -108), bulge=-12, lift=2))
-    out.append(_arm(sh[1], (40, -128), bulge=12, lift=2))
-    out.append(face_traits(2, head_y, 37, t))
+
+    def sk(x, y):                                  # forward lean above the hips
+        return x + lean * max(0.0, (-70.0 - y) / 82.0), y
+
+    def poly(pts):
+        return " L ".join(f"{_f(x)} {_f(y)}" for x, y in pts)
+
+    if outfit == "dress":
+        sh = sk(-20, -150), sk(20, -150)
+        head_y = -196
+        # skirt drapes over the raised knee and trails back in the wind
+        body = (f"M {poly([sk(-18, -160), sk(18, -160), sk(30, -108), (60, -40)])} "
+                "Q 52 -50 42 -34 Q 32 -48 20 -30 Q 8 -44 -4 -28 Q -16 -42 -28 -28 "
+                f"Q -40 -42 -54 -32 L {poly([sk(-28, -108)])} Z")
+        extra = (LINE(*sk(-26, -100), *sk(26, -100), 4) +
+                 DOT(-18, -58, 3) + DOT(8, -44, 3) + DOT(30, -64, 3) + DOT(4, -76, 3))
+    else:
+        sh = sk(-18, -142), sk(18, -142)
+        head_y = -188
+        body = f"M {poly([sk(-18, -152), sk(18, -152), (26, -70), (-26, -70)])} Z"
+        extra = LINE(*sk(-22, -96), *sk(22, -96), 4)
+    # far arm (drawn behind the torso) drives forward: fist up at chin level
+    out.append(_arm(sh[1], (sh[1][0] + 42, -150), bulge=10, lift=-14))
+    out.append(P(body, 5, "white"))
+    out.append(extra)
+    # near arm swings back: elbow cocked behind, fist low
+    out.append(_arm(sh[0], (sh[0][0] - 34, -98), bulge=17, lift=16))
+    out.append(face_traits(sk(0, head_y + 30)[0], head_y, 37, t))
     return '<g data-el="figure">' + "".join(out) + "</g>"
 
 
@@ -4504,37 +4540,56 @@ def kids_holding_hands(t1, t2, cx, ground_y, s=1.0):
 
 
 def kid_wheelchair(t, outfit=None):
-    """Wheelchair user, origin at ground under the big wheel. Side view
-    facing right: seated kid, chair frame, big rear wheel + small caster."""
-    out, sh, head_y = _kid_top(t, outfit, legs=False)
-    del sh
-    hy = -150
-    # seated body (torso from _kid_top is standing-shaped; reuse torso only)
-    out.clear()
+    """Kid in a manual wheelchair, side view of the chair heading RIGHT with
+    the child seated upright and face front (like every pose). Origin on the
+    ground line under the chair (rear wheel tangent at x=-20). Parts: large
+    rear wheel + push rim + spokes (near side, in front of the hip), small
+    front caster, seat, backrest + push handle, footplate; near hand rests ON
+    the push rim, far hand on the lap. ~235 tall at scale 1."""
     outfit = outfit or t.get("outfit", "tee")
+    out = []
+    wx, wy, wr = -20, -50, 50               # rear wheel (tangent to y=0)
+    # ---- chair behind the child: backrest + handle, seat, frame, caster
+    out.append(LINE(-36, -64, -38, -152, 5))                  # backrest post
+    out.append(LINE(-38, -152, -60, -156, 5))                 # push handle
+    out.append(rrect(-48, -74, 90, 10, 4, 4.5, "white"))      # seat
+    out.append(LINE(34, -66, 40, -36, 4.5))                   # front post
+    out.append(LINE(40, -36, 40, -24, 4))                     # caster fork
+    out.append(C(40, -13, 13, 4.5, "white", ground=_f(0)))    # front caster
+    out.append(C(40, -13, 3.5, 2.5, "white"))
+    out.append(rrect(38, -42, 38, 8, 3, 4, "white"))          # footplate
+    # ---- child: legs first (thigh along the seat, shin down to the plate)
+    out.append(limb((-8, -80), (44, -80), (52, -46), w0=8, w1=5.5, sw=5))
+    out.append(P("M 50 -44 Q 50 -40 56 -40 L 70 -40", 4.5))   # shoe on plate
     if outfit == "dress":
-        out.append(P("M -14 -158 L 16 -158 L 26 -112 L 34 -74 L -22 -74 L -18 -114 Z", 5, "white"))
-        head_y = -196
+        head_y, top = -198, -160
+        out.append(P("M -18 -160 L 18 -160 L 22 -112 L 44 -92 Q 60 -86 56 -66 "
+                     "Q 46 -58 38 -66 Q 28 -58 18 -66 Q 6 -58 -4 -66 L -26 -70 "
+                     "L -24 -112 Z", 5, "white"))
+        out.append(LINE(-23, -104, 21, -104, 4))
+        out.append(DOT(10, -80, 3) + DOT(32, -80, 3) + DOT(-2, -92, 3))
+        sh = (-20, -150), (20, -150)
     else:
-        out.append(P("M -16 -150 L 16 -150 L 20 -76 L -20 -76 Z", 5, "white"))
-        head_y = -188
-    # lap + lower legs on footplate
-    out.append(limb((-6, -80), (16, -74), (34, -70), w0=6.5, w1=4, sw=5))
-    out.append(limb((-2, -78), (18, -66), (32, -48), w0=6, w1=4, sw=5))
-    out.append(LINE(24, -40, 48, -40, 4.5))                    # footplate
-    # chair frame
-    out.append(LINE(-30, -8, -30, -120, 4.5))                  # back post
-    out.append(LINE(-30, -120, -6, -128, 4))                   # push handle
-    out.append(LINE(-30, -74, 26, -74, 4))                     # seat rail
-    out.append(LINE(26, -74, 40, -40, 4))                      # front frame
-    out.append(C(-14, -36, 36, 5, "white", ground=_f(0)))      # big wheel
+        head_y, top = -190, -152
+        out.append(P("M -18 -152 L 18 -152 L 24 -72 L -24 -72 Z", 5, "white"))
+        out.append(LINE(-21, -100, 21, -100, 4))
+        sh = (-18, -142), (18, -142)
+    # far arm: hand resting on the lap
+    out.append(_arm(sh[1], (34, -88), bulge=8, lift=4))
+    # ---- near rear wheel in FRONT of the hip: tyre, push rim, spokes, hub
+    out.append(C(wx, wy, wr, 5, "white", ground=_f(0)))
+    out.append(C(wx, wy, wr - 13, 3.5))
     for i in range(6):
-        a = i * math.pi / 3
-        out.append(LINE(-14, -36, -14 + 30 * math.cos(a), -36 + 30 * math.sin(a), 2.5))
-    out.append(C(38, -12, 12, 4, "white", ground=_f(0)))       # caster
-    out.append(_arm((-14, -140), (30, -96), bulge=8))
-    out.append(_arm((-16, -142), (-34, -100), bulge=-8))
-    out.append(face_traits(2, head_y, 36, t))
+        a = math.pi / 6 + i * math.pi / 3
+        out.append(LINE(wx + 7 * math.cos(a), wy + 7 * math.sin(a),
+                        wx + (wr - 13) * math.cos(a), wy + (wr - 13) * math.sin(a), 2.5))
+    out.append(C(wx, wy, 7, 3.5, "white"))
+    # near arm down the torso side, elbow out, hand ON the top of the rim
+    ra = math.radians(-100)
+    rim = (wx + (wr - 13) * math.cos(ra), wy + (wr - 13) * math.sin(ra))
+    out.append(_arm(sh[0], rim, bulge=16, lift=4))
+    out.append(face_traits(0, head_y, 36, t))
+    del top
     return '<g data-el="figure">' + "".join(out) + "</g>"
 
 
