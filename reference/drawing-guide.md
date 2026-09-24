@@ -1,7 +1,7 @@
 # Drawing guide — line-art rules & hard-won gotchas
 
 ## These rules are now CODE
-Every numeric rule below is enforced by `lib/validate.py` (`python -m lib.validate
+Every numeric rule below is enforced by `lib/validate.py` (`python3 -m lib.validate
 pages/*.svg`): border clearance, scene extent (sky tokens and lone thin strokes
 excluded), mass distribution (hollow middle band — the three-layer recipe below, as
 arithmetic), figure/face size, caption-band + title-zone, text width, head
@@ -62,7 +62,11 @@ Two defenses, use both:
 2. Even with matting, don't run a closed background shape (full rug ellipse) through a
    crowd — prefer partial arcs behind groups, and keep ≥14px designed clearance between
    unrelated contours.
-3. **Dense matted clusters (3+ overlapping matted objects) can swallow a neighbor** —
+3. **Contact lines are not background.** A `matted()` halo also knocks out the ground
+   line under paws and dress hems, dashing it. Draw the ground line (or a short contact
+   segment) AFTER the matted figures — the r3 benchmark found the bundled example had
+   this artifact on every page.
+4. **Dense matted clusters (3+ overlapping matted objects) can swallow a neighbor** —
    a later object's white halo can fully erase an earlier small one (a dog's mat ate a
    dirt mound; another run's dog mat ate half an excavator). Draw a tight cluster as ONE
    `matted()` group, or keep ~2x-pad clearance between separately-matted objects. Verify
@@ -111,6 +115,17 @@ face the same way and the interaction reads rump-first.
 ## Print
 - `build()` renders letter-size vector PDF (612x792pt) — never rasterize pages.
 - One page per builder function; BUILDERS list + argv substring filter = partial rebuilds.
+
+## Custom poses (strong tier only)
+- Build from the PUBLIC parts, never by re-implementing the figure: `kid_top(t)` gives
+  head + torso + legs at the feet origin with `(parts, shoulders, head_y)`; add
+  `arm(shoulder, wrist)` / `limb(...)` for each arm and draw the head last.
+- A pose you KNOW is "kneeling" read as "a girl in a poofy dress" to three sets of blind
+  raters; the frontal "diamond" squat (knees above hips, shins angled in) read correctly.
+  Test every custom pose with the blind-rater protocol in `model-tiers.md`; if it fails,
+  change the pose TYPE, don't iterate the same one.
+- Pointy ears on a tilted dog head read as horns (one ear) or a cat (two spread ears);
+  keep a tucked pair and ≤22° tilt. Paired marks on a dirt pile read as a face.
 
 ## Costumes, facial accessories & props on figures (lessons from user pushback)
 - **Never stroke across the face interior.** An accessory edge crossing the face gets
