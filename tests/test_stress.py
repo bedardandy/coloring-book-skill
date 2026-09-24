@@ -182,10 +182,15 @@ def test_charlib_page_round_trip(fx, tmp_path):
 
 # ---------------------------------------------------------------- letters edge cases
 def test_word_unknown_chars_render_nothing():
+    import charlib
     from charlib import word_width
     w_before = word_width("AB", size=100)
-    w_after = word_width("AB€∫", size=100)
-    assert w_before < w_after  # unknown glyphs add tracking only, no crash
+    charlib._TEXT_WARNED.clear()
+    with pytest.warns(UserWarning, match="no Andika glyph"):
+        w_after = word_width("AB€∫", size=100)
+    # glyphs the font lacks are skipped (one-time warning) — no crash, no
+    # "?" box, no phantom tracking gap
+    assert w_after == pytest.approx(w_before)
 
 
 def test_banner_overlong_text_gets_flagged_not_broken():

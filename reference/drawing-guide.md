@@ -29,15 +29,18 @@ charlib default SW=5 suits the 3-6 middle. Detail strokes 2.5-3.5.
 5. **Adjacent rectangles (windows) must not overlap** — overlapping strokes render as solid
    black slabs. Keep ≥4px gaps.
 6. **Text in burst stars**: font-size ≤ 0.4 × star radius or it overflows the points.
-6b. **Text in any banner/box**: DejaVu Sans runs ≈ 0.55 × font-size per character (bold ≈ 0.62).
-   Container width must be ≥ text width + 2×18px padding — compute it, don't eyeball it
-   (a 29-char name banner at 24px needs ≥ 420px, not 340).
+6b. **Text in any banner/box**: page text is Andika glyph paths, so its width is EXACT —
+   `charlib.text_width(s, size)` (or `word_width()` for `word()`/`banner()`); no
+   per-character estimate needed (the old DejaVu ≈ 0.55 × size/char, bold ≈ 0.62 rule only
+   applies to legacy `TEXT_MODE="font"` output). Container width must be ≥ text width +
+   2×18px padding — compute it, don't eyeball it.
 6c. **Text in organic shapes (hearts, bursts, clouds)**: measure the shape's interior
    width AT THE TEXT'S y, not its widest point — a heart narrows fast above and below
    its lobes. Proven combo for back covers: heart s≈210 with "The End!" at ≤52px bold.
 6d. **Captions must wrap.** A 15-25-word story caption on ONE line overflows the border
-   (this bit two of six benchmark models). `charlib.page()` wraps captions automatically
-   at ~56 chars; if you render caption text yourself, wrap at ~55 chars per line.
+   (this bit two of six benchmark models). `charlib.page()`/`spage()` wrap captions
+   automatically on MEASURED width (~670px); if you render caption text yourself, use
+   `charlib.wrap_width(text, max_w, size)`.
 7. Background objects (sun, clouds, bunting) collide with tower/flag/head tops — check the
    sky lane before placing. Sun rays extend r+32 beyond the disc.
 8. Anchor everything to a ground line or tuft — floating animals/objects get flagged by kids
