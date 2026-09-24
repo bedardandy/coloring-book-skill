@@ -114,12 +114,67 @@ def _parse_transform(s):
     return m
 
 
+_PATH_TOK = re.compile(r"[MLQCZmlqcz]|-?\d+(?:\.\d+)?(?:e-?\d+)?")
+
+
+def _path_points(d, steps=12):
+    """Sample an absolute M/L/Q/C/Z path (charlib's only path grammar) into
+    points ON the curve. Control points are not extents: a heart's C-handles
+    reach ~1.5x past its lobes, and pairing raw numbers made border/band
+    checks fire on art that was visibly well inside the margin."""
+    toks = _PATH_TOK.findall(d)
+    pts, cur, start, cmd, i = [], (0.0, 0.0), (0.0, 0.0), "M", 0
+
+    def nums(n):
+        nonlocal i
+        vals = [float(v) for v in toks[i:i + n]]
+        i += n
+        return vals
+
+    while i < len(toks):
+        if toks[i].isalpha():
+            cmd = toks[i].upper()
+            i += 1
+            if cmd == "Z":
+                cur = start
+                continue
+        if i >= len(toks) or toks[i].isalpha():
+            continue
+        if cmd == "M":
+            x, y = nums(2)
+            cur = start = (x, y)
+            pts.append(cur)
+            cmd = "L"
+        elif cmd == "L":
+            x, y = nums(2)
+            cur = (x, y)
+            pts.append(cur)
+        elif cmd == "Q":
+            cx_, cy_, x, y = nums(4)
+            for k in range(1, steps + 1):
+                t = k / steps
+                u = 1 - t
+                pts.append((u * u * cur[0] + 2 * u * t * cx_ + t * t * x,
+                            u * u * cur[1] + 2 * u * t * cy_ + t * t * y))
+            cur = (x, y)
+        elif cmd == "C":
+            c1x, c1y, c2x, c2y, x, y = nums(6)
+            for k in range(1, steps + 1):
+                t = k / steps
+                u = 1 - t
+                pts.append((u ** 3 * cur[0] + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t ** 3 * x,
+                            u ** 3 * cur[1] + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t ** 3 * y))
+            cur = (x, y)
+        else:           # unknown command: skip a token so we always progress
+            i += 1
+    return pts
+
+
 def _local_bbox(el):
     """Conservative local bbox of an element, or None if not measurable.
 
-    Paths use ALL coordinate numbers paired even/odd — valid because charlib
-    only emits absolute M/L/Q/C/Z commands. Control points make path boxes a
-    slight superset of the true curve extent (conservative = safe here)."""
+    Paths are sampled ON the curve (charlib only emits absolute M/L/Q/C/Z
+    commands) — control-point boxes overshot curved art by up to ~50%."""
     tag = el.tag.replace(_SVG_NS, "")
     g = el.get
     try:
@@ -142,10 +197,11 @@ def _local_bbox(el):
             xs, ys = nums[0::2], nums[1::2]
             return (min(xs), min(ys), max(xs), max(ys))
         if tag == "path":
-            nums = [float(v) for v in _NUM_TOKEN_RE.findall(g("d", ""))]
-            xs, ys = nums[0::2], nums[1::2]
-            if not xs or not ys:
+            pts = _path_points(g("d", ""))
+            if not pts:
                 return None
+            xs = [p[0] for p in pts]
+            ys = [p[1] for p in pts]
             return (min(xs), min(ys), max(xs), max(ys))
     except (TypeError, ValueError):
         return None

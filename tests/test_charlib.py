@@ -147,3 +147,42 @@ def test_wheel_ground_tagged():
     from charlib import _wheel
     out = _wheel(100, 900, 24)
     assert 'data-ground="900"' in out
+
+
+# ---------------------------------------------------------------- fragment geometry
+def test_fragment_bbox_tight_transformed_and_mat_free():
+    from charlib import fragment_bbox, heart
+    # circle + stroke: r=10 grown by half the 4px stroke
+    assert fragment_bbox(C(0, 0, 10, 4)) == (-12, -12, 12, 12)
+    assert fragment_bbox(C(0, 0, 10, 4), stroke=False) == (-10, -10, 10, 10)
+    # nested G() scale/translate expanded to world space
+    bb = fragment_bbox(G(100, 50, C(0, 0, 10, 0), 2.0))
+    assert bb == (80, 30, 120, 70)
+    # knockout mats are invisible: the matted copy must not grow the box
+    assert fragment_bbox(matted(C(0, 0, 10, 4), pad=20)) == (-12, -12, 12, 12)
+    # curves are sampled ON the curve: a heart's C-handles reach 1.4s but
+    # the lobes only ~0.9s, so the box must be well inside the handles
+    x0, _y0, x1, _y1 = fragment_bbox(heart(0, 0, 50, 0))
+    assert 40 < x1 < 60 and -60 < x0 < -40
+    assert fragment_bbox("") is None
+
+
+def test_fit_fragment_centres_and_keeps_stroke_weight():
+    from charlib import fit_fragment, fragment_bbox
+    placed = fit_fragment(C(0, 0, 10, 4), 300, 400, 200, 200)
+    x0, y0, x1, y1 = fragment_bbox(placed)
+    assert abs((x0 + x1) / 2 - 300) < 1 and abs((y0 + y1) / 2 - 400) < 1
+    assert abs((x1 - x0) - 200) < 12          # fitted (stroke kept ~4px)
+    assert 'stroke-width="0.408"' in placed      # 4 / k(=196/20) restroked
+
+
+def test_sticker_sheet_motifs_fill_their_cells():
+    import re
+    from charlib import sticker_sheet, fragment_bbox, star, heart
+    svg = sticker_sheet([star(0, 0, 30, 4, "white"), heart(0, 0, 26, 4, "white")])
+    cells = re.findall(r'<rect x="([0-9.]+)" y="([0-9.]+)" width="([0-9.]+)" '
+                       r'height="[0-9.]+" rx="12"', svg)
+    assert cells and all(float(c[2]) + 16 >= 200 for c in cells)   # cells >=200
+    for frag in re.findall(r'(<g transform="translate[^"]*scale\([^)]*\)">.*?</g>)', svg):
+        x0, y0, x1, y1 = fragment_bbox(frag)
+        assert max(x1 - x0, y1 - y0) >= 0.6 * 200

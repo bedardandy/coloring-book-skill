@@ -1521,6 +1521,79 @@ def matted(inner, pad=9, scale=1.0):
     return f'<g data-mat="1" data-pad="{eff:.1f}">{mat}</g>' + inner
 
 
+# ---------------------------------------------------------------- fragment geometry
+def fragment_bbox(svg_fragment, stroke=True):
+    """Tight world-space bbox (x0, y0, x1, y1) of the VISIBLE art in an SVG
+    fragment (nested G()/GM() transforms expanded; matted() knockout copies
+    and text ignored). Curves are sampled on-curve, and stroke=True grows
+    each shape by half its (transformed) stroke width — the extent a child
+    actually sees. Returns None for an empty fragment. Use it to fit a
+    motif into a cell/page instead of guessing its size:
+        x0, y0, x1, y1 = fragment_bbox(dino(0, 0, s=0.9))"""
+    try:
+        import validate as _v
+    except ImportError:  # imported as lib.charlib — put lib/ on the path
+        import os
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import validate as _v
+    import xml.etree.ElementTree as _ET
+    root = _ET.fromstring('<svg xmlns="http://www.w3.org/2000/svg">'
+                          + svg_fragment + "</svg>")
+    items, _mats, _lay = _v._collect(root)
+    box = None
+    for it in items:
+        if it.in_mat or it.tag == "text" or it.wbbox is None:
+            continue
+        bb = it.wbbox
+        if stroke and it.el.get("stroke") not in (None, "none"):
+            try:
+                sw_ = float(it.el.get("stroke-width") or 0)
+            except ValueError:
+                sw_ = 0.0
+            det = abs(it.m[0] * it.m[3] - it.m[1] * it.m[2])
+            grow = sw_ * math.sqrt(det) / 2
+            bb = (bb[0] - grow, bb[1] - grow, bb[2] + grow, bb[3] + grow)
+        box = bb if box is None else (min(box[0], bb[0]), min(box[1], bb[1]),
+                                      max(box[2], bb[2]), max(box[3], bb[3]))
+    return box
+
+
+def restroke(svg_fragment, k):
+    """Divide every stroke-width (and dash length) in a fragment by k — pair
+    it with G(..., scale=k) so an auto-scaled motif keeps the page's stroke
+    weights instead of fattening (k>1) or hairlining (k<1)."""
+    k = float(k) or 1.0
+    out = re.sub(r'stroke-width="([0-9.]+)"',
+                 lambda m: f'stroke-width="{float(m.group(1)) / k:.3g}"', svg_fragment)
+    return re.sub(r'stroke-dasharray="([0-9. ]+)"',
+                  lambda m: 'stroke-dasharray="' + " ".join(
+                      f"{float(v) / k:.3g}" for v in m.group(1).split()) + '"', out)
+
+
+def fit_fragment(svg_fragment, cx, cy, max_w, max_h, keep_stroke=True):
+    """Scale a fragment (drawn around any origin) so its visible bbox fits
+    max_w x max_h, centred on (cx, cy). keep_stroke=True restrokes it so
+    lines keep their page weight at the new scale. Returns the placed
+    fragment (or "" for empty input)."""
+    bs = fragment_bbox(svg_fragment)
+    if bs is None:
+        return ""
+    if keep_stroke:
+        # geometry scales by k but the restroked line keeps its page width,
+        # so fit the GEOMETRY into the box minus the (constant) stroke margin
+        bg = fragment_bbox(svg_fragment, stroke=False)
+        ex_w = (bs[2] - bs[0]) - (bg[2] - bg[0])
+        ex_h = (bs[3] - bs[1]) - (bg[3] - bg[1])
+    else:
+        bg, ex_w, ex_h = bs, 0.0, 0.0
+    bw, bh = max(1e-6, bg[2] - bg[0]), max(1e-6, bg[3] - bg[1])
+    k = max(1e-3, min((max_w - ex_w) / bw, (max_h - ex_h) / bh))
+    inner = restroke(svg_fragment, k) if keep_stroke else svg_fragment
+    mx, my = (bg[0] + bg[2]) / 2, (bg[1] + bg[3]) / 2
+    return G(cx - mx * k, cy - my * k, inner, k)
+
+
 # ---------------------------------------------------------------- scene & prop library (harvested from production books, 2026-07)
 def dog_sit(t, long_nose=False, wink=False):
     """Sitting dog facing right, origin at ground. ~150 tall."""
@@ -4552,22 +4625,34 @@ def design_template(kind="tee", cx=None, ground_y=860, sw=5):
     return "".join(out)
 
 
-def sticker_sheet(motifs, title="Stickers!", num=None, cols=3, cell=170,
-                  x0=70, y0=200, caption=None):
+def sticker_sheet(motifs, title="Stickers!", num=None, cols=3, cell=None,
+                  x0=None, y0=None, caption=None, fill=0.70):
     """Cut-and-play sheet: dashed cells with one motif each. `motifs` is a
-    list of FRAGMENT STRINGS drawn around a LOCAL ORIGIN (e.g.
-    butterfly(0, 0, 1.6) or G(0, 0, dino(0, 0, s=0.9))) — the sheet places
-    and centres each one in its cell."""
+    list of FRAGMENT STRINGS drawn around any origin (e.g. butterfly(0, 0,
+    1.6) or dino(0, 0, s=0.9)). Each motif is MEASURED (fragment_bbox) and
+    auto-scaled so its larger side fills `fill` (~70%) of the cell, centred,
+    with strokes kept at page weight. Cells default to the largest square
+    (>=200 px) that fits the drawable band; the grid is centred on the page
+    unless x0/y0 pin its top-left corner."""
+    n = len(motifs)
+    rows = max(1, (n + cols - 1) // cols)
+    band_top, band_bot = 170, 985                  # below title, above caption
+    if cell is None:
+        cell = min(250.0, (W - 110) / cols, (band_bot - band_top) / rows)
+        cell = max(cell, 200.0) if cols <= 3 else cell
+    gx = (W - cols * cell) / 2 if x0 is None else x0
+    gy = ((band_top + band_bot) / 2 - rows * cell / 2) if y0 is None else y0
     out = []
-    rows = (len(motifs) + cols - 1) // cols
-    for i in range(len(motifs)):
+    for i, frag in enumerate(motifs):
         r_, c_ = divmod(i, cols)
-        cx_ = x0 + cell * (c_ + 0.5)
-        cy_ = y0 + cell * (r_ + 0.5)
+        cx_ = gx + cell * (c_ + 0.5)
+        cy_ = gy + cell * (r_ + 0.5)
         out.append(rrect(cx_ - cell / 2 + 8, cy_ - cell / 2 + 8, cell - 16, cell - 16,
-                         10, 3, "white")
+                         12, 3, "white")
                    .replace('stroke="black" stroke-width="3"',
                             'stroke="black" stroke-width="3" stroke-dasharray="9 8"'))
-        out.append(G(cx_, cy_ + 6, motifs[i]))
+        out.append(fit_fragment(frag, cx_, cy_, fill * cell, fill * cell))
     body = "".join(out)
     return spage(title, body, num=num, caption=caption, layout="creative")
+
+
