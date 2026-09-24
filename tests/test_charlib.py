@@ -204,3 +204,20 @@ def test_symmetry_page_motif_fills_the_page_width():
         width = 2 * (float(g.group(1)) - bb[0])        # solid half mirrored
         assert 0.52 * W <= width <= 0.68 * W, (motif, width)
         assert bb[1] >= 150 and bb[3] <= 1000, (motif, bb)
+
+
+def test_bubbles_speaker_top_tail_ends_above_the_head():
+    import re
+    from charlib import speech_bubble, thought_bubble, fragment_bbox
+    for tail in ("down", "left", "right"):
+        frag = speech_bubble(tail=tail, speaker_top=(400, 500))
+        # the tail triangle's apex is the only vertex at the tip y
+        tail_path = re.findall(r'<path d="M [^"]*L ([0-9.]+) ([0-9.]+) L', frag)[0]
+        tx, ty = float(tail_path[0]), float(tail_path[1])
+        assert (tx, ty) == (400, 480), (tail, tx, ty)
+        # the balloon sits entirely above the tip — never over the head
+        assert fragment_bbox(frag)[3] <= 480 + 3, tail
+    tb = thought_bubble(speaker_top=(400, 500))
+    assert fragment_bbox(tb, stroke=False)[3] <= 480.5   # last puff ends 20px above
+    # legacy positional call unchanged
+    assert speech_bubble(200, 300).startswith('<rect x="95.0" y="250.0"')

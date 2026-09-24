@@ -4472,19 +4472,45 @@ _CLIP_L = '<clipPath id="{i}L"><rect x="-440" y="-560" width="440" height="1120"
 _CLIP_R = '<clipPath id="{i}R"><rect x="0" y="-560" width="440" height="1120"/></clipPath>'
 
 
-def speech_bubble(cx, cy, w=210, h=100, tail="down", lines=False, sw=4):
+def speech_bubble(cx=None, cy=None, w=210, h=100, tail="down", lines=False, sw=4,
+                  speaker_top=None, gap=20):
     """BLANK speech balloon (draw the word/picture inside). tail points at
-    the speaker: "down" | "left" | "right"."""
+    the speaker: "down" | "left" | "right".
+    speaker_top=(x, y) — the TOP of the speaker's head/hair in page coords —
+    places the bubble for you: the tail tip ends `gap` (~20) px above that
+    point, the balloon sits above it ("down") or up-beside it ("left" puts
+    the balloon to the speaker's right, "right" to the left), clamped inside
+    the page. cx/cy then only nudge the balloon (cx = its centre x).
+    Without speaker_top, (cx, cy) is the balloon centre as before."""
+    tip = None
+    if speaker_top is not None:
+        sx, sy = speaker_top
+        tip = (sx, sy - gap)
+        if tail == "down":
+            cx = sx if cx is None else cx
+            cy = tip[1] - 30 - h / 2
+        elif tail == "left":             # balloon up and to the speaker's right
+            cx = tip[0] + 30 + w / 2
+            cy = tip[1] - 16 - h / 2
+        else:                            # balloon up and to the speaker's left
+            cx = tip[0] - 30 - w / 2
+            cy = tip[1] - 16 - h / 2
+        cx = min(max(cx, 52 + w / 2), W - 52 - w / 2)
     out = [rrect(cx - w / 2, cy - h / 2, w, h, 22, sw, "white")]
     if tail == "down":
-        out.append(P(f"M {_f(cx - 12)} {_f(cy + h / 2 - 2)} L {_f(cx + 2)} {_f(cy + h / 2 + 26)} "
-                     f"L {_f(cx + 16)} {_f(cy + h / 2 - 2)} Z", sw, "white"))
-    elif tail == "left":
-        out.append(P(f"M {_f(cx - w / 2 + 2)} {_f(cy - 10)} L {_f(cx - w / 2 - 26)} {_f(cy)} "
-                     f"L {_f(cx - w / 2 + 2)} {_f(cy + 12)} Z", sw, "white"))
-    else:
-        out.append(P(f"M {_f(cx + w / 2 - 2)} {_f(cy - 10)} L {_f(cx + w / 2 + 26)} {_f(cy)} "
-                     f"L {_f(cx + w / 2 - 2)} {_f(cy + 12)} Z", sw, "white"))
+        if tip is None:
+            tip = (cx + 2, cy + h / 2 + 26)
+        bx = min(max(tip[0], cx - w / 2 + 34), cx + w / 2 - 34)   # tail root
+        out.append(P(f"M {_f(bx - 14)} {_f(cy + h / 2 - 2)} L {_f(tip[0])} {_f(tip[1])} "
+                     f"L {_f(bx + 14)} {_f(cy + h / 2 - 2)} Z", sw, "white"))
+    elif tail in ("left", "right"):
+        sgn = -1 if tail == "left" else 1
+        edge = cx + sgn * (w / 2 - 2)
+        if tip is None:
+            tip = (cx + sgn * (w / 2 + 26), cy)
+        by = min(max(tip[1] - 6, cy - h / 2 + 22), cy + h / 2 - 22)
+        out.append(P(f"M {_f(edge)} {_f(by - 11)} L {_f(tip[0])} {_f(tip[1])} "
+                     f"L {_f(edge)} {_f(by + 11)} Z", sw, "white"))
     if lines:
         for i in range(2):
             ly = cy - 10 + i * 24
@@ -4492,12 +4518,28 @@ def speech_bubble(cx, cy, w=210, h=100, tail="down", lines=False, sw=4):
     return "".join(out)
 
 
-def thought_bubble(cx, cy, w=190, h=95, sw=4):
-    """Cloud-style thought bubble with trailing puffs (blank inside)."""
-    out = [cloud(cx, cy, w * 0.34, sw)]
-    for dx, dy, r in ((-w * 0.30, h * 0.62, 8), (-w * 0.20, h * 0.85, 5.5)):
-        out.append(C(cx + dx, cy + dy, r, 3, "white"))
-    return "".join(out)
+def thought_bubble(cx=None, cy=None, w=190, h=95, sw=4, speaker_top=None,
+                   side=1, gap=20):
+    """Cloud-style thought bubble with trailing puffs (blank inside).
+    speaker_top=(x, y) (top of the speaker's head in page coords) places it:
+    the smallest puff ends `gap` (~20) px above that point and the cloud
+    rises BESIDE the head on `side` (+1 right, -1 left) — thought bubbles
+    trail from beside the head, never over the back of it. Without
+    speaker_top, (cx, cy) is the cloud's base centre as before."""
+    s = w * 0.34
+    if speaker_top is None:
+        out = [cloud(cx, cy, s, sw)]
+        for dx, dy, r in ((-w * 0.30, h * 0.62, 8), (-w * 0.20, h * 0.85, 5.5)):
+            out.append(C(cx + dx, cy + dy, r, 3, "white"))
+        return "".join(out)
+    sx, sy = speaker_top
+    p1 = (sx + side * 14, sy - gap - 6)                  # small puff by the head
+    p2 = (sx + side * 40, sy - gap - 38)                 # bigger puff
+    base_y = p2[1] - 22                                  # cloud's flat base
+    ccx = sx + side * 1.05 * s if cx is None else cx
+    ccx = min(max(ccx, 52 + 1.6 * s), W - 52 - 1.7 * s)
+    return (cloud(ccx, base_y, s, sw) + C(p2[0], p2[1], 10, 3, "white") +
+            C(p1[0], p1[1], 6, 3, "white"))
 
 
 def _mirror_pts(pts):
