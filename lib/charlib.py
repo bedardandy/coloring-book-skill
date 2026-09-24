@@ -3736,20 +3736,20 @@ def cow(cx, ground_y, w=240, sw=5):
     # tail + tuft (body caps the root)
     out.append(P(f"M {_f(X(0.13))} {_f(Y(0.47))} Q {_f(X(0.03))} {_f(Y(0.45))} "
                  f"{_f(X(0.05))} {_f(Y(0.26))}", sw - 1))
-    out.append(smooth_path([(X(0.05), Y(0.275)), (X(0.078), Y(0.225)),
-                            (X(0.06), Y(0.175)), (X(0.033), Y(0.19)),
-                            (X(0.022), Y(0.235))], dsw + 0.5, closed=True, fill="white"))
+    out.append(smooth_path([(X(0.05), Y(0.28)), (X(0.088), Y(0.225)),
+                            (X(0.068), Y(0.16)), (X(0.028), Y(0.175)),
+                            (X(0.014), Y(0.235))], dsw + 0.5, closed=True, fill="white"))
     # legs: sturdy posts with a hoof band (body caps the tops)
     lw = 0.085 * w
     for lx in (0.20, 0.34, 0.56, 0.70):
         out.append(rrect(X(lx) - lw / 2, Y(0.30), lw, 0.30 * w, lw * 0.3, sw - 0.5, "white"))
-        out.append(LINE(X(lx) - lw / 2, Y(0.055), X(lx) + lw / 2, Y(0.055), dsw))
+        out.append(LINE(X(lx) - lw / 2, Y(0.075), X(lx) + lw / 2, Y(0.075), dsw))
     # udder hint between the leg pairs (behind the belly)
-    out.append(P(f"M {_f(X(0.395))} {_f(Y(0.235))} Q {_f(X(0.40))} {_f(Y(0.15))} "
-                 f"{_f(X(0.45))} {_f(Y(0.15))} Q {_f(X(0.50))} {_f(Y(0.15))} "
-                 f"{_f(X(0.505))} {_f(Y(0.235))} Z", sw - 1, "white"))
-    for tx in (0.43, 0.47):
-        out.append(LINE(X(tx), Y(0.155), X(tx), Y(0.12), dsw))
+    out.append(P(f"M {_f(X(0.385))} {_f(Y(0.235))} Q {_f(X(0.385))} {_f(Y(0.13))} "
+                 f"{_f(X(0.45))} {_f(Y(0.13))} Q {_f(X(0.515))} {_f(Y(0.13))} "
+                 f"{_f(X(0.515))} {_f(Y(0.235))} Z", sw - 1, "white"))
+    for tx in (0.425, 0.475):
+        out.append(LINE(X(tx), Y(0.135), X(tx), Y(0.10), dsw))
     # body: long rounded barrel
     out.append(smooth_path([(X(0.12), Y(0.27)), (X(0.095), Y(0.40)), (X(0.15), Y(0.505)),
                             (X(0.40), Y(0.525)), (X(0.64), Y(0.51)), (X(0.77), Y(0.43)),
@@ -3769,11 +3769,11 @@ def cow(cx, ground_y, w=240, sw=5):
     # head, turned to the viewer: horns + ears behind, then head, muzzle
     hx, hy = X(0.80), Y(0.56)
     for sx in (-1, 1):
-        out.append(smooth_path([(hx + sx * 0.045 * w, hy - 0.085 * w),
-                                (hx + sx * 0.10 * w, hy - 0.13 * w),
-                                (hx + sx * 0.105 * w, hy - 0.185 * w),
-                                (hx + sx * 0.125 * w, hy - 0.13 * w),
-                                (hx + sx * 0.085 * w, hy - 0.065 * w)],
+        out.append(smooth_path([(hx + sx * 0.035 * w, hy - 0.09 * w),
+                                (hx + sx * 0.09 * w, hy - 0.135 * w),
+                                (hx + sx * 0.10 * w, hy - 0.20 * w),
+                                (hx + sx * 0.14 * w, hy - 0.13 * w),
+                                (hx + sx * 0.095 * w, hy - 0.06 * w)],
                                dsw + 0.5, closed=True, fill="white"))       # horn
         out.append(smooth_path([(hx + sx * 0.085 * w, hy - 0.07 * w),
                                 (hx + sx * 0.16 * w, hy - 0.075 * w),
@@ -3911,7 +3911,7 @@ def monkey(cx, ground_y, w=180, sw=4.5, banana=False):
                             (cx - 0.415 * w, g - 0.385 * w)], sw))
     # feet, body, belly
     for sx in (-1, 1):
-        out.append(E(cx + sx * 0.13 * w, g - 0.04 * w, 0.085 * w, 0.04 * w, sw - 0.5, "white"))
+        out.append(E(cx + sx * 0.165 * w, g - 0.05 * w, 0.095 * w, 0.05 * w, sw - 0.5, "white"))
     out.append(smooth_path([(cx, g - 0.02 * w), (cx - 0.15 * w, g - 0.05 * w),
                             (cx - 0.19 * w, g - 0.20 * w), (cx - 0.13 * w, g - 0.40 * w),
                             (cx, g - 0.45 * w), (cx + 0.13 * w, g - 0.40 * w),
@@ -3921,7 +3921,7 @@ def monkey(cx, ground_y, w=180, sw=4.5, banana=False):
     # arms (bent, elbows out); hands overlap the wrist ends
     out.append(limb((cx - 0.12 * w, g - 0.36 * w), (cx - 0.27 * w, g - 0.25 * w),
                     (cx - 0.20 * w, g - 0.10 * w), w0=0.045 * w, w1=0.03 * w, sw=sw - 0.5,
-                    hand_r=0.042 * w))
+                    hand_r=0.052 * w))
     if banana:
         bx, by = cx + 0.36 * w, g - 0.40 * w           # right hand, raised
         out.append(limb((cx + 0.12 * w, g - 0.36 * w), (cx + 0.29 * w, g - 0.26 * w),
@@ -3932,15 +3932,20 @@ def monkey(cx, ground_y, w=180, sw=4.5, banana=False):
                         tip, w0=0.042 * w, w1=0.022 * w, sw=sw - 0.5))
         out.append(LINE(tip[0], tip[1] - 0.01 * w, tip[0] - 0.012 * w, tip[1] - 0.045 * w,
                         sw - 0.5))
-        out.append(C(bx, by, 0.042 * w, max(3.5, sw - 1), "white", hand="1"))
+        out.append(C(bx, by, 0.052 * w, max(3.5, sw - 1), "white", hand="1"))
     else:
         out.append(limb((cx + 0.12 * w, g - 0.36 * w), (cx + 0.27 * w, g - 0.25 * w),
                         (cx + 0.20 * w, g - 0.10 * w), w0=0.045 * w, w1=0.03 * w,
-                        sw=sw - 0.5, hand_r=0.042 * w))
+                        sw=sw - 0.5, hand_r=0.052 * w))
     # ears (outer + inner, head caps the inside), head, face disc
     for sx in (-1, 1):
-        out.append(C(hx + sx * 0.235 * w, hy + 0.01 * w, 0.085 * w, sw, "white"))
-        out.append(C(hx + sx * 0.25 * w, hy + 0.01 * w, 0.042 * w, dsw, "white"))
+        ex_ = hx + sx * 0.235 * w
+        out.append(C(ex_, hy + 0.01 * w, 0.085 * w, sw, "white"))
+        # inner ear: an OPEN arc, so the ear stays one >=3mm region (a
+        # closed inner circle left only a sliver ring at catalog sizes)
+        out.append(P(f"M {_f(ex_ + sx * 0.005 * w)} {_f(hy - 0.035 * w)} "
+                     f"Q {_f(ex_ + sx * 0.055 * w)} {_f(hy + 0.01 * w)} "
+                     f"{_f(ex_ + sx * 0.005 * w)} {_f(hy + 0.055 * w)}", dsw))
     out.append(C(hx, hy, R, sw, "white"))
     out.append(smooth_path([(hx, hy - 0.075 * w), (hx + 0.075 * w, hy - 0.13 * w),
                             (hx + 0.15 * w, hy - 0.06 * w), (hx + 0.155 * w, hy + 0.05 * w),
@@ -4102,8 +4107,10 @@ def cactus(cx, ground_y, h=180, sw=4.5, pot=False):
         return ex, ytip - aw / 2
 
     aw = 0.17 * h
-    tipL = arm(-1, base - 0.42 * h, 0.13 * h, 0.22 * h, aw)   # lower arm, left
-    tipR = arm(1, base - 0.60 * h, 0.12 * h, 0.20 * h, aw)    # higher arm, right
+    # reach > aw/2 + 0.09h: the gap between an arm and the trunk stays a
+    # colorable >=3mm band instead of a sliver slot
+    tipL = arm(-1, base - 0.42 * h, 0.19 * h, 0.22 * h, aw)   # lower arm, left
+    tipR = arm(1, base - 0.60 * h, 0.18 * h, 0.20 * h, aw)    # higher arm, right
     # trunk: straight sides, domed top (drawn over the arm roots)
     out.append(P(f"M {_f(cx - T)} {_f(base)} L {_f(cx - T)} {_f(top + T)} "
                  f"C {_f(cx - T)} {_f(top + T - T * k)} {_f(cx - T * k)} {_f(top)} {_f(cx)} {_f(top)} "
@@ -4115,14 +4122,14 @@ def cactus(cx, ground_y, h=180, sw=4.5, pot=False):
                      f"Q {_f(cx + rx * T)} {_f(top + T * 0.45)} {_f(cx + rx * T * 0.55)} {_f(top + T * 0.30)}",
                      dsw - 0.5))
     # sparse spine ticks OUTSIDE the silhouette, staggered heights
-    for sx, fy in ((-1, 0.14), (1, 0.25), (-1, 0.66), (1, 0.84), (-1, 0.90)):
+    for sx, fy in ((-1, 0.14), (1, 0.22), (-1, 0.25), (1, 0.40), (-1, 0.84)):
         yy = base - fy * h
         out.append(LINE(cx + sx * T, yy, cx + sx * (T + 0.05 * h), yy - 0.025 * h, 2.2))
     for (tx, ty), sx in ((tipL, -1), (tipR, 1)):
         out.append(LINE(tx + sx * aw / 2, ty + 0.12 * h, tx + sx * (aw / 2 + 0.045 * h),
                         ty + 0.10 * h, 2.2))
     # bloom on the dome
-    bs = max(1.25, h / 170)                     # petals stay >= 3mm regions
+    bs = max(1.9, h / 110)                      # petals stay >= 3mm regions
     out.append(flower(cx + 0.2 * T, top - 3 * bs, s=bs, sw=dsw - 0.5))
     if pot:
         pw = 0.62 * (h / 0.80) * 0.62
