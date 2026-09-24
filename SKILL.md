@@ -134,13 +134,16 @@ the bundled YuNet face model (Apache-2.0) never phones home.
 After building, run the DETERMINISTIC gate first: `python -m lib.validate
 pages/*.svg` (exit 1 on any HIGH finding). It checks, with exact arithmetic on
 the emitted SVG's embedded geometry: border clearance (>=12px), scene mass span
-(>=55% of page height from CONNECTED art, sky tokens excluded), figure/face
+(>=55% of page height from CONNECTED art, sky tokens excluded), mass
+distribution (MED when the middle third is hollow or only sky sits above the
+page midline — add a midground anchor reaching y~450-550), figure/face
 sizes, caption-band + title-zone intrusion, text width vs page, head-kill-radius
 prop clearance, hand/arm overlap, wheel ground tangency, near-parallel sliver
 gaps, knockout-mat halo swallowing, duplicate pages (`lib.validate.lint_book`).
 Fix every HIGH by moving/scaling per the message; MEDs need a look; LOWs are lint.
-Non-scene pages opt out of the span rule via `spage(..., layout="activity")`
-(name tracing / find-the-X) or `layout="vignette"` (back cover).
+Non-scene pages opt out of the span and mass rules via `spage(...,
+layout="activity")` (name tracing / find-the-X) or `layout="vignette"` (back
+cover).
 
 Then Read every page PNG yourself and fix obvious collisions/floaters. Then run
 tile QA: `render_tiles(svg, qa_dir, name)` per page and review the overlapping tiles

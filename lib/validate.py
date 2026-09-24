@@ -7,9 +7,21 @@ world-space affine matrix, and runs EXACT ARITHMETIC versions of the numeric
 rules that reference/drawing-guide.md previously asked models to eyeball:
 
   border_clearance   every element >= CLEARANCE px inside the border rect
-  scene_span         connected scene mass spans >=55% of page height
-                     (data-sky tokens excluded — a corner sun + high cloud
-                     must NOT make the arithmetic pass)
+  scene_span         scene mass spans >=55% of page height (data-sky tokens
+                     excluded — a corner sun + high cloud must NOT make the
+                     arithmetic pass). Min/max arithmetic: ONE thin element
+                     high up satisfies it, hence mass_distribution
+  mass_distribution  WHERE the ink sits: non-sky coverage (filled shapes by
+                     world bbox, unfilled strokes by traced stroke, unioned on
+                     a 5px grid) in three equal bands between TITLE_Y and
+                     CAPTION_Y. MED "hollow middle" when the middle band holds
+                     < MID_RATIO (0.40) of the heavier outer band's ink (the
+                     hourglass: sky/props on top, a figure strip on the ground
+                     line); MED "sky-only top" when scene_span's top is carried
+                     by a thin prop / untagged sun ray and < SKY_TOP_MIN (2%)
+                     ink sits above the drawable midline (y~570). Per-band
+                     numbers land in report["mass"]; layout=activity/vignette/
+                     creative pages are measured but not judged
   figure_size        figures >= MIN_FIG_H px tall; faces r >= MIN_FACE_R
   caption_band       no art intrudes into the caption band (y > CAPTION_Y)
   title_band         no art intrudes into the title zone (y < TITLE_Y)
@@ -55,6 +67,18 @@ SLIVER_GAP = 11.0          # ~3-4mm parallel-line gap floor @100dpi
 GROUND_TOL = 2.0           # wheel tangency tolerance (px)
 TEXT_W_REGULAR = 0.55      # DejaVu Sans avg advance per char (per drawing-guide)
 TEXT_W_BOLD = 0.62
+MASS_CELL = 5              # coverage-grid pitch (px); 855/3 = 285 = 57 cells
+MID_RATIO = 0.40           # middle-band ink must reach >= 40% of the heavier
+                           # outer band (calibrated: hourglass pages <= 0.30,
+                           # three-layer recipe pages >= 0.54; see
+                           # tests/test_validate.py mass_distribution tests)
+MASS_MIN_BAND = 5.0        # below this % in EVERY band the page is sparse, not
+                           # hourglass-shaped (scene_span owns that failure)
+SKY_TOP_MIN = 2.0          # % ink required above the drawable midline (y~570)
+                           # once the span arithmetic claims the top is reached
+FG_FIG_H = 300             # ~kid_stand at scale 1.2 (hair + raised hand) — the
+                           # recipe's foreground size; smaller figures get the
+                           # "scale figures 1.2-1.4" advice
 
 _SVG_NS = "{http://www.w3.org/2000/svg}"
 _SHAPE_TAGS = ("path", "circle", "ellipse", "rect", "line",
@@ -255,6 +279,173 @@ def _collect(root):
     return items, mats, layouts
 
 
+_PATH_TOKEN_RE = re.compile(r"[A-Za-z]|-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+
+
+def _flatten_path(d):
+    """Absolute M/L/H/V/Q/C/Z path data -> list of local polylines.
+
+    Curves are flattened by sampling, so an open hill arc covers its real
+    crest (ground-h) instead of its control point (ground-2h). Returns None
+    for anything else (relative/arc commands) so callers fall back to bbox."""
+    toks = _PATH_TOKEN_RE.findall(d or "")
+    polys, cur = [], []
+    x = y = sx = sy = 0.0
+    cmd, i = None, 0
+    try:
+        while i < len(toks):
+            t = toks[i]
+            if t.isalpha():
+                cmd = t
+                i += 1
+                if cmd in ("Z", "z"):
+                    if cur:
+                        cur.append((sx, sy))
+                        polys.append(cur)
+                    cur = [(sx, sy)]
+                    x, y = sx, sy
+                continue
+            if cmd == "M":
+                if len(cur) > 1:
+                    polys.append(cur)
+                x, y = float(toks[i]), float(toks[i + 1])
+                sx, sy = x, y
+                cur = [(x, y)]
+                i += 2
+                cmd = "L"          # implicit lineto after a moveto pair
+            elif cmd == "L":
+                x, y = float(toks[i]), float(toks[i + 1])
+                cur.append((x, y))
+                i += 2
+            elif cmd == "H":
+                x = float(toks[i])
+                cur.append((x, y))
+                i += 1
+            elif cmd == "V":
+                y = float(toks[i])
+                cur.append((x, y))
+                i += 1
+            elif cmd in ("Q", "C"):
+                n = 4 if cmd == "Q" else 6
+                v = [float(t_) for t_ in toks[i:i + n]]
+                if len(v) < n:
+                    return None
+                pts = [(x, y)] + [(v[k], v[k + 1]) for k in range(0, n, 2)]
+                ctrl = sum(math.hypot(pts[k + 1][0] - pts[k][0],
+                                      pts[k + 1][1] - pts[k][1])
+                           for k in range(len(pts) - 1))
+                steps = max(2, min(48, int(ctrl / 12) + 1))
+                for s in range(1, steps + 1):
+                    u = s / steps
+                    if cmd == "Q":
+                        a, b, c = (1 - u) ** 2, 2 * (1 - u) * u, u * u
+                        px = a * pts[0][0] + b * pts[1][0] + c * pts[2][0]
+                        py = a * pts[0][1] + b * pts[1][1] + c * pts[2][1]
+                    else:
+                        a, b = (1 - u) ** 3, 3 * (1 - u) ** 2 * u
+                        c, e = 3 * (1 - u) * u * u, u ** 3
+                        px = (a * pts[0][0] + b * pts[1][0] + c * pts[2][0]
+                              + e * pts[3][0])
+                        py = (a * pts[0][1] + b * pts[1][1] + c * pts[2][1]
+                              + e * pts[3][1])
+                    cur.append((px, py))
+                x, y = pts[-1]
+                i += n
+            else:
+                return None
+    except (IndexError, ValueError):
+        return None
+    if len(cur) > 1:
+        polys.append(cur)
+    return polys
+
+
+def _stroke_polylines(it):
+    """World-space polylines tracing an UNFILLED element's stroke, or None
+    when the geometry can't be traced (caller falls back to its bbox)."""
+    g = it.el.get
+    tag = it.tag
+    try:
+        if tag == "line":
+            local = [[(float(g("x1")), float(g("y1"))),
+                      (float(g("x2")), float(g("y2")))]]
+        elif tag == "path":
+            local = _flatten_path(g("d"))
+        elif tag in ("circle", "ellipse"):
+            cx, cy = float(g("cx")), float(g("cy"))
+            rx = float(g("r") if tag == "circle" else g("rx"))
+            ry = float(g("r") if tag == "circle" else g("ry"))
+            n = max(12, min(96, int(2 * math.pi * max(rx, ry) / 10)))
+            local = [[(cx + rx * math.cos(2 * math.pi * k / n),
+                       cy + ry * math.sin(2 * math.pi * k / n))
+                      for k in range(n + 1)]]
+        elif tag == "rect":
+            x0, y0 = float(g("x", 0)), float(g("y", 0))
+            x1, y1 = x0 + float(g("width")), y0 + float(g("height"))
+            local = [[(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]]
+        elif tag in ("polygon", "polyline"):
+            nums = [float(v) for v in _NUM_TOKEN_RE.findall(g("points", ""))]
+            pts = list(zip(nums[0::2], nums[1::2]))
+            if tag == "polygon" and pts:
+                pts.append(pts[0])
+            local = [pts]
+        else:
+            return None
+    except (TypeError, ValueError):
+        return None
+    if not local:
+        return None
+    return [[_apply(it.m, px, py) for px, py in poly] for poly in local]
+
+
+def _mass_profile(items, top_y, bot_y):
+    """Per-row ink coverage (fraction of the drawable width) between top_y
+    and bot_y on a MASS_CELL grid — a union, so overlapping shapes never
+    double-count. FILLED shapes occupy their world bbox (they read as solid
+    objects); UNFILLED strokes (lines, open arcs, door outlines, ropes)
+    occupy only the cells their traced stroke passes through, so a big
+    hollow outline or a diagonal rope cannot masquerade as mass."""
+    x_lo, x_hi = BORDER_INSET, W - BORDER_INSET
+    ncols = int(math.ceil((x_hi - x_lo) / MASS_CELL))
+    nrows = int(round((bot_y - top_y) / MASS_CELL))
+    grid = bytearray(nrows * ncols)
+    ones = b"\x01" * ncols
+
+    def mark_pt(px, py):
+        r = int((py - top_y) // MASS_CELL)
+        c = int((px - x_lo) // MASS_CELL)
+        if 0 <= r < nrows and 0 <= c < ncols:
+            grid[r * ncols + c] = 1
+
+    def mark_box(bb):
+        if bb[3] < top_y or bb[1] > bot_y or bb[2] < x_lo or bb[0] > x_hi:
+            return
+        r0 = max(0, int((bb[1] - top_y) // MASS_CELL))
+        r1 = min(nrows - 1, int((bb[3] - top_y) // MASS_CELL))
+        c0 = max(0, int((bb[0] - x_lo) // MASS_CELL))
+        c1 = min(ncols - 1, int((bb[2] - x_lo) // MASS_CELL))
+        for r in range(r0, r1 + 1):
+            grid[r * ncols + c0:r * ncols + c1 + 1] = ones[:c1 - c0 + 1]
+
+    step = MASS_CELL / 2.0
+    for it in items:
+        fill = it.el.get("fill")
+        unfilled = it.tag in ("line", "polyline") or fill in (None, "none")
+        polys = _stroke_polylines(it) if unfilled else None
+        if polys is None:
+            mark_box(it.wbbox)
+            continue
+        for poly in polys:
+            if len(poly) == 1:
+                mark_pt(*poly[0])
+            for (ax, ay), (bx, by) in zip(poly, poly[1:]):
+                n = max(1, int(math.hypot(bx - ax, by - ay) / step))
+                for k in range(n + 1):
+                    u = k / n
+                    mark_pt(ax + (bx - ax) * u, ay + (by - ay) * u)
+    return [sum(grid[r * ncols:(r + 1) * ncols]) / ncols for r in range(nrows)]
+
+
 def _faces(items):
     """World-space face circles from data-face attrs, with document order."""
     out = []
@@ -313,9 +504,17 @@ def _line_endpoints(items):
 def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
                  span_bottom=SPAN_BOTTOM, min_fig_h=MIN_FIG_H,
                  min_face_r=MIN_FACE_R, caption_y=CAPTION_Y, title_y=TITLE_Y,
-                 require_span=True):
+                 require_span=True, mid_ratio=MID_RATIO):
     """Validate one serialized page SVG. Returns a report dict:
-    {ok, findings: [{severity, check, msg}], counts}."""
+    {ok, findings: [{severity, check, msg}], counts, mass}.
+
+    `mass` is the mass_distribution measurement (always computed, even when
+    a layout opt-out or require_span=False suppresses the finding):
+    {bands: {top, mid, bottom}, mid_upper, mid_lower, upper_half, edges,
+    judged, skip} — percentages of the band area covered by non-sky scene
+    ink; `skip` names why a page was not judged (layout opt-out, ...).
+    require_span=False skips both composition checks (scene_span and
+    mass_distribution)."""
     findings = []
 
     def add(sev, check, msg):
@@ -340,10 +539,24 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
                 f"{it.tag} at {[round(v) for v in bb]} crosses the "
                 f"{clearance}px interior margin {list(inner_border)}")
 
+    # world bbox per figure group (figure_size + mass_distribution advice)
+    figs = {}
+    for it in visible:
+        if it.figure is not None and it.wbbox:
+            k = id(it.figure)
+            cur = figs.get(k)
+            figs[k] = it.wbbox if cur is None else (
+                min(cur[0], it.wbbox[0]), min(cur[1], it.wbbox[1]),
+                max(cur[2], it.wbbox[2]), max(cur[3], it.wbbox[3]))
+    tallest = max((b[3] - b[1] for b in figs.values()), default=0.0)
+
     # ---- scene span (sky tokens excluded) ----------------------------------
-    mass = [it.wbbox for it in visible
-            if not it.chrome and it.tag != "text"
-            and it.el.get("data-sky") != "1" and it.wbbox]
+    mass_items = [it for it in visible
+                  if not it.chrome and it.tag != "text"
+                  and it.el.get("data-sky") != "1" and it.wbbox]
+    mass = [it.wbbox for it in mass_items]
+    span_high = False        # scene_span already failed the page outright
+    span_top_item = None     # element whose top satisfied the <=span_top rule
     if mass and require_span:
         top = min(b[1] for b in mass)
         bot = max(b[3] for b in mass)
@@ -355,6 +568,7 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
                     f"scene mass spans {span:.0f}px (fine for an "
                     f"data-layout=activity page)")
             else:
+                span_high = True
                 add("HIGH", "scene_span",
                     f"scene mass spans {span:.0f}px ({top:.0f}..{bot:.0f}); "
                     f"need >= {need:.0f}px — add midground anchors, not sky "
@@ -363,24 +577,82 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
             if top > span_top:
                 add("MED", "scene_span",
                     f"scene top y={top:.0f} (want <= {span_top}): bottom-crammed")
+            else:
+                span_top_item = min(mass_items, key=lambda it_: it_.wbbox[1])
             if bot < span_bottom:
                 add("MED", "scene_span",
                     f"scene bottom y={bot:.0f} (want >= {span_bottom}): "
                     f"scene floats above the caption band")
 
+    # ---- mass distribution (hourglass / hollow-middle guard) ---------------
+    # scene_span is min/max arithmetic: ANY element near y<=450 satisfies it
+    # (the scene kits' sun rays at y~151 are not sky-tagged, so every kit page
+    # passes), while the art sits in a strip on the ground line. Measure WHERE
+    # the ink is: three equal bands between the title zone and caption band.
+    band_h = (caption_y - title_y) / 3.0
+    edges = [title_y + k * band_h for k in range(4)]
+    prof = _mass_profile(mass_items, title_y, caption_y)
+    nr = len(prof)
+    cut = [round(k * nr / 3) for k in range(4)]
+    mid_half = (cut[1] + cut[2]) // 2
+
+    def pct(r0, r1):
+        return round(100.0 * sum(prof[r0:r1]) / max(1, r1 - r0), 1)
+
+    b_top, b_mid, b_bot = (pct(cut[k], cut[k + 1]) for k in range(3))
+    mass_rep = {
+        "bands": {"top": b_top, "mid": b_mid, "bottom": b_bot},
+        "mid_upper": pct(cut[1], mid_half), "mid_lower": pct(mid_half, cut[2]),
+        "upper_half": pct(0, mid_half),
+        "edges": [round(e_) for e_ in edges],
+        "judged": False, "skip": None,
+    }
+    opt_out = sorted(layouts & {"activity", "vignette", "creative"})
+    if not require_span:
+        mass_rep["skip"] = "require_span=False"
+    elif opt_out:
+        mass_rep["skip"] = f"layout={opt_out[0]}"
+    elif not mass_items:
+        mass_rep["skip"] = "no scene mass"
+    elif span_high:
+        mass_rep["skip"] = "scene_span HIGH already fired"
+    else:
+        mass_rep["judged"] = True
+    if mass_rep["judged"]:
+        heavy_name, heavy = max((("top", b_top), ("bottom", b_bot)),
+                                key=lambda kv: kv[1])
+        anchor = ("add a midground anchor (tree/house/furniture/shelf) whose "
+                  "top reaches y~450-550")
+        if tallest >= FG_FIG_H:
+            fix = (f"figures are already foreground-sized ({tallest:.0f}px), "
+                   f"so {anchor}")
+        elif tallest > 0:
+            fix = (f"{anchor}, and/or scale foreground figures to 1.2-1.4 "
+                   f"(tallest figure {tallest:.0f}px; want >= {FG_FIG_H})")
+        else:
+            fix = f"{anchor}, and/or scale the foreground subject 1.2-1.4"
+        if heavy >= MASS_MIN_BAND and b_mid < mid_ratio * heavy:
+            add("MED", "mass_distribution",
+                f"middle band (y {edges[1]:.0f}-{edges[2]:.0f}) {b_mid:.1f}% "
+                f"ink vs {heavy_name} band {heavy:.1f}% (ratio "
+                f"{b_mid / heavy:.2f} < {mid_ratio:.2f}): hollow middle — "
+                f"{fix}")
+        if (span_top_item is not None
+                and mass_rep["upper_half"] < SKY_TOP_MIN):
+            tb = span_top_item.wbbox
+            add("MED", "mass_distribution",
+                f"sky-only top: scene_span's top y={tb[1]:.0f} is a lone "
+                f"{tb[2] - tb[0]:.0f}x{tb[3] - tb[1]:.0f}px {span_top_item.tag} "
+                f"(thin prop or untagged sky decoration, e.g. sun rays) and "
+                f"only {mass_rep['upper_half']:.1f}% ink sits above "
+                f"y={title_y + mid_half * MASS_CELL:.0f} (need >= "
+                f"{SKY_TOP_MIN:.0f}%): the scene is a strip on the ground "
+                f"line — {fix}")
+
     # ---- figure size & faces -------------------------------------------------
-    figs = {}
-    for it in visible:
-        if it.figure is not None and it.wbbox:
-            k = id(it.figure)
-            cur = figs.get(k)
-            figs[k] = it.wbbox if cur is None else (
-                min(cur[0], it.wbbox[0]), min(cur[1], it.wbbox[1]),
-                max(cur[2], it.wbbox[2]), max(cur[3], it.wbbox[3]))
     if figs:
         # the rule gates the page's MAIN figure (the tallest); secondary
         # background characters may legitimately be smaller
-        tallest = max(b[3] - b[1] for b in figs.values())
         if tallest < min_fig_h:
             sev = "MED" if (is_activity or is_vignette) else "HIGH"
             add(sev, "figure_size",
@@ -663,7 +935,8 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
     counts = {"HIGH": 0, "MED": 0, "LOW": 0}
     for f_ in findings:
         counts[f_["severity"]] += 1
-    return {"ok": counts["HIGH"] == 0, "findings": findings, "counts": counts}
+    return {"ok": counts["HIGH"] == 0, "findings": findings, "counts": counts,
+            "mass": mass_rep}
 
 
 # ------------------------------------------------------------------ file/book API
@@ -732,6 +1005,11 @@ if __name__ == "__main__":
     for pth in paths:
         rep = validate_file(pth)
         print(f"== {pth}: {'OK' if rep['ok'] else 'FAIL'} {rep['counts']}")
+        mb = rep["mass"]
+        print(f"   mass bands top/mid/bottom {mb['bands']['top']:.1f}/"
+              f"{mb['bands']['mid']:.1f}/{mb['bands']['bottom']:.1f}% "
+              f"(above midline {mb['upper_half']:.1f}%)"
+              + ("" if mb["judged"] else f" [not judged: {mb['skip']}]"))
         for f_ in rep["findings"]:
             print(f"   [{f_['severity']}] {f_['check']}: {f_['msg']}")
         bad += rep["counts"]["HIGH"]

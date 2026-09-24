@@ -2,12 +2,14 @@
 
 ## These rules are now CODE
 Every numeric rule below is enforced by `lib/validate.py` (`python -m lib.validate
-pages/*.svg`): border clearance, connected-mass span (sky tokens excluded), figure/
-face size, caption-band + title-zone, text width, head kill-radius, hand/arm overlap,
-wheel tangency, parallel-line sliver floor, mat-swallowing (full erasure; partial halo
-nibbles still need tile eyes), duplicate pages. The prose stays for UNDERSTANDING the
-why — do not hand-audit what `lib.validate` already measures. Pages that are
-intentionally sparse take `spage(..., layout="activity")` or `"vignette"`.
+pages/*.svg`): border clearance, connected-mass span (sky tokens excluded), mass
+distribution (hollow middle band / sky-only top — the three-layer recipe below, as
+arithmetic), figure/face size, caption-band + title-zone, text width, head
+kill-radius, hand/arm overlap, wheel tangency, parallel-line sliver floor,
+mat-swallowing (full erasure; partial halo nibbles still need tile eyes), duplicate
+pages. The prose stays for UNDERSTANDING the why — do not hand-audit what
+`lib.validate` already measures. Pages that are intentionally sparse take
+`spage(..., layout="activity")`, `"vignette"` or `"creative"`.
 
 ## Age-band tuning
 | Age | main stroke | elements/page | notes |
@@ -131,10 +133,24 @@ face the same way and the interaction reads rump-first.
    `variant=N` for deterministic layout variety and `midground=True`
    (default) for depth anchors.
 2. MIDGROUND: kit anchors sit at y≈750-930 at reduced size (further away).
+   They add depth but do NOT fill the middle band — add one anchor of your
+   own (tree/house/furniture) whose top reaches y≈450-550.
 3. FOREGROUND: characters/vehicles at scale 1.2-1.4 (~35-45% of page
    height) standing ON the declared ground line. Scale 1.0 reads as a
    distant figure — bump it or add midground so the page doesn't read
-   bottom-empty (the span checker flags this).
+   bottom-empty.
+
+The validator's `mass_distribution` check measures this recipe: ink coverage
+(non-sky) in three equal bands between the title (y145) and caption (y1000).
+MED **hollow middle** when the middle band (y430-715) holds < 40% of the heavier
+outer band's ink; MED **sky-only top** when the span's top is carried by a thin
+prop or an untagged sun ray and < 2% ink sits above y≈570. A kit page with one
+1.0-scale kid on the ground line scores ~1% middle vs ~27% bottom; the recipe
+(midground tree whose top reaches y≈450-550 + kid at 1.3) scores ~41% vs ~43%.
+A big figure alone does not fix it (kid at 1.4 on a bare kit still flags) — the
+midground anchor is what fills the middle band. Report numbers are in
+`validate_svg(...)["mass"]` and printed by the CLI.
+
 Rotate `variant` between pages of the same setting so spreads don't repeat
 a layout; keep one variant per scene across a single book for coherence.
 
