@@ -1,7 +1,8 @@
 """Deterministic layout validation for charlib pages.
 
 charlib embeds semantic metadata (data-face / data-sky / data-ground /
-data-hand / data-el="figure" / data-mat / data-chrome) into the SVG it emits.
+data-hand / data-el="figure" / data-mat / data-chrome / data-text) into the
+SVG it emits.
 This module parses that SVG, expands every nested G()/GM() transform into a
 world-space affine matrix, and runs EXACT ARITHMETIC versions of the numeric
 rules that reference/drawing-guide.md previously asked models to eyeball:
@@ -25,8 +26,11 @@ rules that reference/drawing-guide.md previously asked models to eyeball:
   figure_size        figures >= MIN_FIG_H px tall; faces r >= MIN_FACE_R
   caption_band       no art intrudes into the caption band (y > CAPTION_Y)
   title_band         no art intrudes into the title zone (y < TITLE_Y)
-  text_fit           text width estimated from DejaVu metrics must fit the
-                     page with margin (the 0.55x/0.62x rule, computed)
+  text_fit           text must fit the page with margin: glyph-path text
+                     (<g data-text="1">, charlib's default) is checked with
+                     its EXACT measured width (data-w, summed Andika
+                     advances); legacy <text> falls back to the DejaVu
+                     per-char estimate (the 0.55x/0.62x rule)
   head_clearance     no foreign element inside a face's 1.3r kill radius
                      (heads draw LAST and silently cover props)
   hand_arm           hand circles must OVERLAP some line endpoint (a 2px gap
@@ -38,6 +42,10 @@ rules that reference/drawing-guide.md previously asked models to eyeball:
   mat_swallow        a later knockout mat fully covering an earlier element
                      (the documented "dog's halo ate the mound" failure)
   float_noise        leftover long decimals (should be impossible post-serialize)
+
+Text is never scene art: <text> elements and every glyph path inside a
+<g data-text="1"> group are excluded from border/span/figure/band/head/hand/
+mat checks alike and judged only by text_fit.
 
 Usage:
     from validate import validate_svg, validate_file, full_qa, lint_book
@@ -65,8 +73,8 @@ TITLE_Y = 145              # title baseline+underline zone
 HEAD_KILL = 1.3            # prop clearance radius multiplier (head+hair)
 SLIVER_GAP = 11.0          # ~3-4mm parallel-line gap floor @100dpi
 GROUND_TOL = 2.0           # wheel tangency tolerance (px)
-TEXT_W_REGULAR = 0.55      # DejaVu Sans avg advance per char (per drawing-guide)
-TEXT_W_BOLD = 0.62
+TEXT_W_REGULAR = 0.55      # legacy <text> only: DejaVu Sans avg advance/char
+TEXT_W_BOLD = 0.62         # (glyph-path text carries its exact data-w)
 MASS_CELL = 5              # coverage-grid pitch (px); 855/3 = 285 = 57 cells
 MID_RATIO = 0.40           # middle-band ink must reach >= 40% of the heavier
                            # outer band (calibrated: hourglass pages <= 0.30,
@@ -85,6 +93,7 @@ _SHAPE_TAGS = ("path", "circle", "ellipse", "rect", "line",
                "polygon", "polyline")
 _TRANSFORM_RE = re.compile(r"(translate|rotate|scale)\(\s*([^)]*)\)")
 _NUM_TOKEN_RE = re.compile(r"-?\d+(?:\.\d+)?")
+_TEXT_RUN_RE = re.compile(r'<g data-text="1"[^>]*>.*?</g>', re.S)
 
 
 # ------------------------------------------------------------------ geometry
@@ -210,9 +219,10 @@ def _disk_hits_bbox(cx, cy, r, bb):
 # ------------------------------------------------------------------ collection
 class _El:
     __slots__ = ("el", "tag", "m", "wbbox", "figure", "chrome",
-                 "in_mat", "mat_owner", "idx")
+                 "in_mat", "mat_owner", "idx", "text")
 
-    def __init__(self, el, m, figure, chrome, in_mat, mat_owner, idx):
+    def __init__(self, el, m, figure, chrome, in_mat, mat_owner, idx,
+                 text=False):
         self.el = el
         self.tag = el.tag.replace(_SVG_NS, "")
         self.m = m
@@ -221,7 +231,23 @@ class _El:
         self.in_mat = in_mat      # inside a knockout-mat copy (invisible)
         self.mat_owner = mat_owner
         self.idx = idx            # document order among collected items
+        # page TEXT, not art: a <text> element OR a glyph path inside a
+        # <g data-text="1"> run — every check treats the two forms alike
+        self.text = text or self.tag == "text"
         self.wbbox = None
+
+
+class _TextRun:
+    """One <g data-text="1"> glyph-path run (charlib.text_path). `m` is the
+    PARENT matrix: data-x0/data-y/data-w are in the parent's coordinates."""
+    __slots__ = ("node", "m", "chrome", "in_mat", "items")
+
+    def __init__(self, node, m, chrome, in_mat):
+        self.node = node
+        self.m = m
+        self.chrome = chrome
+        self.in_mat = in_mat
+        self.items = []
 
 
 class _Mat:
@@ -234,17 +260,19 @@ class _Mat:
         self.boxes = []
 
 
-def _collect(root):
-    """Single document-order walk. Returns (visible_items, mats_in_order, layout)."""
+def _collect(root, runs=None):
+    """Single document-order walk. Returns (visible_items, mats_in_order, layout).
+    If `runs` is a list, every <g data-text="1"> glyph run is appended to it
+    as a _TextRun (for text_fit)."""
     items, mats = [], []
     layouts = set()
     counter = [0]
 
-    def walk(node, m, figure, chrome, in_mat, mat_owner):
+    def walk(node, m, figure, chrome, in_mat, mat_owner, run):
         tag = node.tag.replace(_SVG_NS, "")
         if tag == "svg":
             for child in node:
-                walk(child, m, figure, chrome, in_mat, mat_owner)
+                walk(child, m, figure, chrome, in_mat, mat_owner, run)
             return
         if tag == "g":
             lay = node.get("data-layout")
@@ -258,21 +286,29 @@ def _collect(root):
                 mt = _Mat(node, nm, float(node.get("data-pad") or 9))
                 mats.append(mt)
                 nin_mat, nowner = True, mt
+            nrun = run
+            if node.get("data-text") == "1" and run is None:
+                nrun = _TextRun(node, m, nchrome, in_mat)
+                if runs is not None:
+                    runs.append(nrun)
             for child in node:
-                walk(child, nm, nfig, nchrome, nin_mat, nowner)
+                walk(child, nm, nfig, nchrome, nin_mat, nowner, nrun)
             return
         if tag in _SHAPE_TAGS or tag == "text":
             nm = _mmul(m, _parse_transform(node.get("transform")))
             nchrome = chrome or (node.get("data-chrome") == "1")
-            it = _El(node, nm, figure, nchrome, in_mat, mat_owner, counter[0])
+            it = _El(node, nm, figure, nchrome, in_mat, mat_owner, counter[0],
+                     text=run is not None)
             counter[0] += 1
             items.append(it)
-            if in_mat and mat_owner is not None and tag != "text":
+            if run is not None:
+                run.items.append(it)
+            if in_mat and mat_owner is not None and not it.text:
                 wb = _world_bbox(node, nm)
                 if wb:
                     mat_owner.boxes.append(wb)
 
-    walk(root, _mat(), None, False, False, None)
+    walk(root, _mat(), None, False, False, None, None)
     for it in items:
         if not it.in_mat:
             it.wbbox = _world_bbox(it.el, it.m)
@@ -477,7 +513,7 @@ def _line_endpoints(items):
     eps = []
     path_pts = []  # (all coord pairs per path) — closed limb outlines reach
     for it in items:  # the wrist mid-path, so endpoints alone miss them
-        if it.chrome or it.in_mat:
+        if it.chrome or it.in_mat or it.text:
             continue
         try:
             if it.tag == "line":
@@ -521,7 +557,8 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
         findings.append({"severity": sev, "check": check, "msg": msg})
 
     root = ET.fromstring(svg_str)
-    items, mats, layouts = _collect(root)
+    runs = []
+    items, mats, layouts = _collect(root, runs)
     is_activity = "activity" in layouts
     is_vignette = "vignette" in layouts
     visible = [it for it in items if not it.in_mat]
@@ -530,7 +567,7 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
 
     # ---- border clearance --------------------------------------------------
     for it in visible:
-        if it.chrome or it.tag == "text" or not it.wbbox:
+        if it.chrome or it.text or not it.wbbox:
             continue
         bb = it.wbbox
         if (bb[0] < inner_border[0] or bb[1] < inner_border[1]
@@ -542,7 +579,7 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
     # world bbox per figure group (figure_size + mass_distribution advice)
     figs = {}
     for it in visible:
-        if it.figure is not None and it.wbbox:
+        if it.figure is not None and it.wbbox and not it.text:
             k = id(it.figure)
             cur = figs.get(k)
             figs[k] = it.wbbox if cur is None else (
@@ -552,7 +589,7 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
 
     # ---- scene span (sky tokens excluded) ----------------------------------
     mass_items = [it for it in visible
-                  if not it.chrome and it.tag != "text"
+                  if not it.chrome and not it.text
                   and it.el.get("data-sky") != "1" and it.wbbox]
     mass = [it.wbbox for it in mass_items]
     span_high = False        # scene_span already failed the page outright
@@ -665,7 +702,7 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
 
     # ---- caption / title bands ------------------------------------------------
     for it in visible:
-        if it.chrome or it.tag == "text" or not it.wbbox:
+        if it.chrome or it.text or not it.wbbox:
             continue
         if it.wbbox[3] > caption_y:
             add("HIGH", "caption_band",
@@ -677,6 +714,37 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
                 f"zone (< {title_y})")
 
     # ---- text fit ---------------------------------------------------------------
+    # glyph-path runs: EXACT measured width (data-w) in parent coordinates,
+    # mapped to world space through the run's parent matrix
+    for run in runs:
+        if run.in_mat:
+            continue
+        g = run.node
+        label = g.get("aria-label") or ""
+        try:
+            x0, y = float(g.get("data-x0")), float(g.get("data-y"))
+            p0 = _apply(run.m, x0, y)
+            p1 = _apply(run.m, x0 + float(g.get("data-w")), y)
+            left, right = min(p0[0], p1[0]), max(p0[0], p1[0])
+            wy, how = p0[1], "measured"
+        except (TypeError, ValueError):
+            # hand-authored run without data-w: fall back to the glyph ink
+            boxes = [it.wbbox for it in run.items if it.wbbox]
+            if not boxes:
+                continue
+            left = min(b[0] for b in boxes)
+            right = max(b[2] for b in boxes)
+            wy, how = max(b[3] for b in boxes), "ink"
+        if right - left <= 0:
+            continue
+        if left < inner_border[0] or right > inner_border[2]:
+            add("HIGH", "text_fit",
+                f"text '{label[:26]}' {how} {right - left:.0f}px wide "
+                f"overflows the page (spans {left:.0f}..{right:.0f}, limit "
+                f"{inner_border[0]}..{inner_border[2]})")
+        if not run.chrome and (wy > H - BORDER_INSET or wy < BORDER_INSET + 20):
+            add("MED", "text_fit", f"text baseline y={wy:.0f} outside safe area")
+    # legacy <text> elements: per-char width ESTIMATE
     for it in visible:
         if it.tag != "text":
             continue
@@ -717,7 +785,8 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
     for fx, fy, fr, owner, fidx in _faces(visible):
         kill_r = fr * HEAD_KILL
         for it in visible:
-            if it.chrome or it.el.get("data-sky") == "1" or not it.wbbox:
+            if (it.chrome or it.text or it.el.get("data-sky") == "1"
+                    or not it.wbbox):
                 continue
             if it.figure is owner:
                 continue     # own hair/glasses legitimately live there
@@ -752,7 +821,8 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
     # Chrome/page-background shapes excluded (they contain everything).
     solid_boxes = [
         it.wbbox for it in visible
-        if it.wbbox and not it.chrome and it.el.get("fill") == "white"
+        if it.wbbox and not it.chrome and not it.text
+        and it.el.get("fill") == "white"
         and it.tag in ("circle", "ellipse", "rect", "path", "polygon")
         and (it.wbbox[2] - it.wbbox[0]) < W * 0.5
         and (it.wbbox[3] - it.wbbox[1]) < H * 0.5]
@@ -856,6 +926,8 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
             for ch in node:
                 order(ch, in_mat)
         elif tag == "g":
+            if node.get("data-text") == "1":
+                return   # glyph runs are text, never mat-swallowable art
             im = in_mat or (node.get("data-mat") == "1")
             if im and not in_mat:
                 seq.append(("mat", node))
@@ -968,6 +1040,8 @@ def lint_book(page_svgs, density_mean_tol=6):
     seen = {}
 
     def complexity(svg):
+        # glyph-path text runs are not drawing complexity (like <text>)
+        svg = _TEXT_RUN_RE.sub("", svg)
         return len(re.findall(
             rf"<(?:{'|'.join(_SHAPE_TAGS)})[\s>]", svg))
 

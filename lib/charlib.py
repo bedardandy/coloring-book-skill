@@ -83,8 +83,159 @@ def LINE(x1, y1, x2, y2, sw=SW):
 
 
 def TXT(x, y, s, size=40, anchor="middle", weight="bold"):
+    """Page text at (x, baseline y). Delegates to text_path() (glyph
+    outlines, renders identically on every machine); TEXT_MODE = "font"
+    restores the legacy fontconfig-dependent <text> element."""
+    if TEXT_MODE == "font":
+        return _txt_font(x, y, s, size, anchor, weight)
+    return text_path(x, y, s, size=size, anchor=anchor, weight=weight)
+
+
+def _txt_font(x, y, s, size=40, anchor="middle", weight="bold"):
     return (f'<text x="{_f(x)}" y="{_f(y)}" font-family="DejaVu Sans" font-size="{_f(size)}" '
             f'font-weight="{weight}" text-anchor="{anchor}" fill="black">{_xml_escape(s)}</text>')
+
+
+# ---------------------------------------------------------------- page text engine
+# ALL page text — titles, captions, page numbers, labels — is drawn as filled
+# glyph OUTLINES of the bundled Andika font (SIL OFL), baked into
+# lib/letters.json by tools/build_font.py. A <text> element is resolved by the
+# host's fontconfig at render time, so the same SVG came out as Helvetica on
+# a Mac and DejaVu Sans on Linux; glyph paths need no installed font, render
+# the same everywhere, and their widths are EXACT (sum of glyph advances —
+# Andika has no kerning), so wrapping and the validator's text_fit need no
+# estimates.
+#   TEXT_MODE = "path"  (default) glyph outlines via text_path()
+#   TEXT_MODE = "font"  legacy <text font-family="DejaVu Sans"> + char-count
+#                       caption wrapping (e.g. to get selectable PDF text back)
+TEXT_MODE = "path"
+BOLD_STROKE = 0.04          # fake-bold outline stroke, as a fraction of size
+CAPTION_MAX_W = W - 2 * 90  # measured caption line width limit (px)
+
+# close typographic stand-ins tried before the NFKD base-letter fallback
+_TEXT_SUBS = {"\u2010": "-", "\u2011": "-", "\u2012": "\u2013", "\u2015": "\u2014",
+              "\u2212": "-", "\u201a": ",", "\u201e": "\u201c", "\u2032": "'",
+              "\u2033": '"', "\u2039": "<", "\u203a": ">", "\u2027": "\u00b7",
+              "\u2219": "\u2022", "\u25cf": "\u2022"}
+_TEXT_WARNED = set()
+_LETTERS_CACHE = None
+
+
+def _letters():
+    global _LETTERS_CACHE
+    if _LETTERS_CACHE is None:
+        import json as _json
+        import os as _os
+        p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                          "letters.json")
+        with open(p, encoding="utf-8") as fh:
+            _LETTERS_CACHE = _json.load(fh)
+    return _LETTERS_CACHE
+
+
+def _resolve_text(s):
+    """Map s onto characters letters.json can draw: exact glyph, else a
+    typographic stand-in, else the unaccented base letter (NFKD: "ő" -> "o"),
+    else whitespace -> space; anything left is skipped with a ONE-TIME
+    warning per character (never a "?" box, never a crash)."""
+    import unicodedata
+    L = _letters()["letters"]
+    out = []
+    for ch in str(s):
+        if ch in L:
+            out.append(ch)
+            continue
+        sub = _TEXT_SUBS.get(ch)
+        if sub is None:
+            sub = " " if ch.isspace() else "".join(
+                c for c in unicodedata.normalize("NFKD", ch)
+                if not unicodedata.combining(c))
+        if sub and all(c in L for c in sub):
+            out.append(sub)
+            continue
+        if ch not in _TEXT_WARNED:
+            _TEXT_WARNED.add(ch)
+            import warnings
+            warnings.warn(f"charlib text: no Andika glyph for {ch!r} "
+                          f"(U+{ord(ch):04X}); skipped", stacklevel=3)
+    return "".join(out)
+
+
+def _is_bold(weight):
+    w = str(weight).strip().lower()
+    return w in ("bold", "bolder") or (w.isdigit() and int(w) >= 600)
+
+
+def text_width(s, size=40):
+    """EXACT rendered width (px) of text_path(s, size): sum of the glyph
+    advances. Weight does not change it (fake-bold strokes the same glyphs)."""
+    L = _letters()["letters"]
+    return (sum(L[c]["adv"] for c in _resolve_text(s))
+            * size / _letters()["upem"])
+
+
+def text_path(x, y, s, size=40, anchor="middle", weight="bold", fill="black"):
+    """Text as filled Andika glyph paths, (x, y) = anchor point ON THE
+    BASELINE (same contract as SVG <text>). anchor: start | middle | end.
+    weight="bold" = fake-bold: the fill plus a same-color outline stroke of
+    BOLD_STROKE*size on the same paths (no second font file is bundled).
+    Emits <g data-text="1" data-x0 data-y data-w data-size aria-label>: the
+    validator treats it exactly like a <text> element and reads the measured
+    width from data-w."""
+    run = _resolve_text(s)
+    if not run.strip():
+        return ""
+    F = _letters()
+    L, upem = F["letters"], F["upem"]
+    k = size / upem
+    w = sum(L[c]["adv"] for c in run) * k
+    x0 = x - w / 2 if anchor == "middle" else (x - w if anchor == "end" else x)
+    paint = f'fill="{fill}"'
+    if _is_bold(weight):
+        # stroke-width is in FONT units (the group is scaled by k)
+        paint += (f' stroke="{fill}" stroke-width="{_f(BOLD_STROKE * upem)}" '
+                  f'stroke-linejoin="round"')
+    glyphs, pen = [], 0
+    for c in run:
+        g = L[c]
+        if g["d"]:
+            tr = f' transform="translate({_f(pen)},0)"' if pen else ""
+            glyphs.append(f'<path{tr} d="{g["d"]}"/>')
+        pen += g["adv"]
+    label = _xml_escape(str(s), {'"': "&quot;"})
+    return (f'<g data-text="1" data-x0="{_f(x0)}" data-y="{_f(y)}" '
+            f'data-w="{_f(w)}" data-size="{_f(size)}" aria-label="{label}" '
+            f'{paint} transform="translate({_f(x0)},{_f(y)}) '
+            f'scale({_fs(k)},{_fs(-k)})">' + "".join(glyphs) + "</g>")
+
+
+def wrap_width(text, max_w=CAPTION_MAX_W, size=22):
+    """Greedy word wrap on MEASURED glyph advances: every line's
+    text_width(line, size) <= max_w and no line is empty. A single word
+    wider than max_w is hard-split between characters rather than allowed
+    to overflow."""
+    lines, cur = [], ""
+    for wd in str(text).split():
+        if text_width(wd, size) > max_w:
+            if cur:
+                lines.append(cur)
+            cur = ""
+            for ch in wd:
+                if cur and text_width(cur + ch, size) > max_w:
+                    lines.append(cur)
+                    cur = ch
+                else:
+                    cur += ch
+            continue
+        cand = wd if not cur else cur + " " + wd
+        if text_width(cand, size) <= max_w:
+            cur = cand
+        else:
+            lines.append(cur)
+            cur = wd
+    if cur:
+        lines.append(cur)
+    return lines
 
 
 def _fs(v):
@@ -800,19 +951,11 @@ def page(title, body, num=None, caption=None):
         chrome.append(P(f"M {W/2-260} 122 Q {W/2} 138 {W/2+260} 122", 4))
     parts.append(body)
     if caption:
-        # wrap long captions — a single line overflows the border past ~55 chars
-        words, lines, cur = caption.split(), [], ""
-        for w_ in words:
-            if len(cur) + len(w_) + 1 <= 56:
-                cur = (cur + " " + w_).strip()
-            else:
-                lines.append(cur); cur = w_
-        if cur:
-            lines.append(cur)
+        # wrap on MEASURED widths: one line at 24px if it fits, else 22px lines
+        lines, size = _caption_lines(caption, 24, 22, legacy_chars=56)
         start = (H - 48) - (len(lines) - 1) * 27
         for i, ln in enumerate(lines):
-            chrome.append(TXT(W / 2, start + i * 27, ln, 24 if len(lines) == 1 else 22,
-                              weight="normal"))
+            chrome.append(TXT(W / 2, start + i * 27, ln, size, weight="normal"))
     if num:
         chrome.append(TXT(70, H - 42, str(num), 20, weight="normal"))
     if chrome:
@@ -879,6 +1022,8 @@ def render_tiles(svg_path, outdir, name, grid=(3, 2), overlap=150,
 FLOOR = 960  # default scene floor for room helpers
 
 def wrap_words(text, maxchars=54):
+    """Legacy CHARACTER-COUNT wrap (kept for callers that pass maxchars).
+    page()/spage() use wrap_width(), which measures real glyph advances."""
     words, lines, cur = text.split(), [], ""
     for w in words:
         if len(cur) + len(w) + 1 <= maxchars:
@@ -888,6 +1033,20 @@ def wrap_words(text, maxchars=54):
     if cur:
         lines.append(cur)
     return lines
+
+
+def _caption_lines(caption, one_line_size, multi_size, legacy_chars):
+    """(lines, size) for a page caption. Path mode: measured wrap to
+    CAPTION_MAX_W — the larger size if the caption fits on ONE line, else
+    multi_size lines. Font mode keeps the legacy character-count wrap (the
+    host font's metrics are unknown)."""
+    if TEXT_MODE == "font":
+        lines = wrap_words(caption, legacy_chars)
+    else:
+        lines = wrap_width(caption, CAPTION_MAX_W, one_line_size)
+        if len(lines) > 1 and multi_size != one_line_size:
+            lines = wrap_width(caption, CAPTION_MAX_W, multi_size)
+    return lines, (one_line_size if len(lines) == 1 else multi_size)
 
 
 def spage(title, body, num=None, caption=None, title_size=42, layout=None):
@@ -906,10 +1065,10 @@ def spage(title, body, num=None, caption=None, title_size=42, layout=None):
         chrome.append(P(f"M {W/2-270} 124 Q {W/2} 142 {W/2+270} 124", 4))
     parts.append(body)
     if caption:
-        lines = wrap_words(caption, 54)
+        lines, size = _caption_lines(caption, 22, 22, legacy_chars=54)
         start = 1058 - (len(lines) - 1) * 28
         for i, ln in enumerate(lines):
-            chrome.append(TXT(W / 2, start + i * 28, ln, 22, weight="normal"))
+            chrome.append(TXT(W / 2, start + i * 28, ln, size, weight="normal"))
     if num:
         chrome.append(TXT(72, 1058, str(num), 20, weight="normal"))
     if chrome:
@@ -1055,10 +1214,17 @@ def rrect(x, y, w, h, r=8, sw=SW, fill="white"):
 
 
 def otext(x, y, s, size, sw=3, anchor="middle"):
-    """Hollow (outline) block letters for tracing."""
-    return (f'<text x="{x}" y="{y}" font-family="DejaVu Sans" font-size="{size}" '
-            f'font-weight="bold" text-anchor="{anchor}" fill="white" stroke="black" '
-            f'stroke-width="{sw}" letter-spacing="10">{s}</text>')
+    """Hollow (outline) letters for tracing/coloring: white-filled Andika
+    glyph outlines via word() (colorable art, exact width), anchored like
+    SVG text at (x, baseline y). TEXT_MODE = "font" restores the legacy
+    fontconfig-dependent DejaVu <text> element."""
+    if TEXT_MODE == "font":
+        return (f'<text x="{x}" y="{y}" font-family="DejaVu Sans" font-size="{size}" '
+                f'font-weight="bold" text-anchor="{anchor}" fill="white" stroke="black" '
+                f'stroke-width="{sw}" letter-spacing="10">{_xml_escape(str(s))}</text>')
+    tw = word_width(s, size, tracking=10)
+    xc = x + tw / 2 if anchor == "start" else (x - tw / 2 if anchor == "end" else x)
+    return word(s, xc, y, size, tracking=10, style="colorable", sw=sw)
 
 
 def window(x, y, w=150, h=120):
@@ -2917,19 +3083,7 @@ dog = _smooth_dog
 # must be installed anywhere), and every glyph is a real closed path a child
 # can color. Widths come from GLYPH ADVANCES, so containers can be sized
 # numerically — the drawing-guide banner rule is satisfied by construction.
-_LETTERS_CACHE = None
-
-
-def _letters():
-    global _LETTERS_CACHE
-    if _LETTERS_CACHE is None:
-        import json as _json
-        import os as _os
-        p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
-                          "letters.json")
-        with open(p) as fh:
-            _LETTERS_CACHE = _json.load(fh)
-    return _LETTERS_CACHE
+# (_letters() loader + the page-text engine live near TXT() at the top.)
 
 
 def letter(ch, x, y_base, size=120, style="colorable", sw=4):
@@ -2943,7 +3097,8 @@ def letter(ch, x, y_base, size=120, style="colorable", sw=4):
     fill = 'fill="none"' if style == "trace" else 'fill="white"'
     dash = ' stroke-dasharray="9 8"' if style == "trace" else ""
     return (f'<path d="{L["d"]}" {fill} stroke="black" '
-            f'stroke-width="{_f(sw / s)}"{dash} data-letter="{ch}" '
+            f'stroke-width="{_f(sw / s)}"{dash} '
+            f'data-letter="{_xml_escape(ch, {chr(34): "&quot;"})}" '
             f'transform="translate({_f(x)},{_f(y_base)}) '
             f'scale({_fs(s)},-{_fs(s)})"/>')
 
@@ -2951,8 +3106,9 @@ def letter(ch, x, y_base, size=120, style="colorable", sw=4):
 def word_width(text, size=120, tracking=10):
     """Exact rendered width of word() from glyph advances."""
     L = _letters()["letters"]
-    adv = sum(L.get(c, {}).get("adv", 0) for c in text)
-    return adv * size / _letters()["upem"] + tracking * max(0, len(text) - 1)
+    run = _resolve_text(text)
+    adv = sum(L[c]["adv"] for c in run)
+    return adv * size / _letters()["upem"] + tracking * max(0, len(run) - 1)
 
 
 def word(text, x_center, y_base, size=120, tracking=10, style="colorable",
@@ -2960,11 +3116,12 @@ def word(text, x_center, y_base, size=120, tracking=10, style="colorable",
     """A run of glyphs centered on x_center, sitting on y_base."""
     total = word_width(text, size, tracking)
     out, pen = [], x_center - total / 2
-    for ch in text:
+    for ch in _resolve_text(text):   # accents fall back like text_path()
         out.append(letter(ch, pen, y_base, size, style=style, sw=sw))
-        pen += (_letters()["letters"].get(ch, {}).get("adv", 0)
+        pen += (_letters()["letters"][ch]["adv"]
                 * size / _letters()["upem"] + tracking)
-    return '<g data-word="' + _xml_escape(text) + '">' + "".join(out) + "</g>"
+    return ('<g data-word="' + _xml_escape(text, {'"': "&quot;"}) + '">'
+            + "".join(out) + "</g>")
 
 
 def banner(text, cy, size=64, sw=SW, pad_x=28, style="colorable",
