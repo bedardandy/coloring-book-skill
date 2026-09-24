@@ -53,7 +53,7 @@ def test_gm_mirrors_x_only():
 
 
 # ---------------------------------------------------------------- figures
-@pytest.mark.parametrize("pose", ["wave", "up", "down", "hold"])
+@pytest.mark.parametrize("pose", ["wave", "up", "down", "hold", "wave_high", "cheer"])
 @pytest.mark.parametrize("outfit", ["tee", "dress"])
 def test_kid_stand_all_poses_parse(pose, outfit):
     import xml.etree.ElementTree as ET
@@ -239,3 +239,17 @@ def test_finish_page_object_straddles_axis_and_fills_width():
         x0, y0, x1, y1 = fragment_bbox(body)
         assert x0 < ax - 150 and x1 > ax + 150, (kind, x0, x1, ax)
         assert x1 - x0 >= 0.5 * W and y0 >= 150 and y1 <= 1000, kind
+
+
+@pytest.mark.parametrize("pose", ["wave_high", "cheer"])
+def test_wide_hair_safe_poses_keep_hands_outside_pigtails(pose):
+    """Pigtails reach |x|~63 (1.7*r); the stock wave/up hands land inside and
+    are covered by the head (drawn last). The wide-hair-safe poses keep every
+    hand circle centre outside that silhouette."""
+    import re
+    from charlib import _KID_POSES
+    for wx, _ in _KID_POSES[pose]:
+        if wx > -60:                      # left "wave" hand is low, not near hair
+            assert abs(wx) >= 66 or _KID_POSES[pose][0] == (-54, -94)
+    right = _KID_POSES[pose][1]
+    assert abs(right[0]) >= 66 and right[1] <= -200

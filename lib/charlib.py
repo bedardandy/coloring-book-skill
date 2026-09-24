@@ -754,6 +754,16 @@ def _legacy_kid_stand(t, pose="wave", outfit=None, accessories=()):
         out.append(C(-47, -96, 8, 4, "white", hand="1"))
         out.append(P(f"M {rsx} {rsy} Q 44 -128 46 -102", 5))
         out.append(C(47, -96, 8, 4, "white", hand="1"))
+    elif pose == "wave_high":  # right hand high beside the head, clear of wide hair
+        out.append(P(f"M {lsx} {lsy} Q -44 -128 -46 -102", 5))
+        out.append(C(-47, -96, 8, 4, "white"))
+        out.append(P(f"M {rsx} {rsy} Q 54 -172 66 -204", 5))
+        out.append(C(72, -212, 8, 4, "white"))
+    elif pose == "cheer":  # both arms up-and-out wide, clear of wide hair
+        out.append(P(f"M {lsx} {lsy} Q -55 -172 -73 -202", 5))
+        out.append(C(-79, -210, 8, 4, "white"))
+        out.append(P(f"M {rsx} {rsy} Q 55 -172 73 -202", 5))
+        out.append(C(79, -210, 8, 4, "white"))
     if "wand" in accessories:
         out.append(wand(58, -190 if pose == "wave" else -100, 55, 55, 4, 15))
     out.append(face_traits(0, head_y, 37, t))
@@ -777,6 +787,11 @@ _KID_POSES = {
     "hold": ((-47, -96), (47, -96)),
     "hold_r": ((30, -100), (44, -106)),   # both arms to the RIGHT
     "hold_l": ((-30, -100), (-44, -106)),  # both arms to the LEFT
+    # wide-hair-safe poses: pigtails reach |x|~63 and long_wavy ~54, which
+    # swallows the stock wave/up hands (heads draw last). These wrists sit
+    # outside every hair silhouette.
+    "wave_high": ((-54, -94), (72, -212)),   # right hand high beside the head
+    "cheer": ((-79, -210), (79, -210)),      # both arms up-and-out wide
 }
 
 
@@ -827,7 +842,9 @@ def _kid_top(t, outfit=None, legs=True):
 
 def _smooth_kid_stand(t, pose="wave", outfit=None, accessories=()):
     """Standing kid, origin at feet center, ~250 tall * t.get('height',1.0).
-    pose: wave | up | down | hold | hold_r | hold_l  — outfit: dress | tee
+    pose: wave | up | down | hold | hold_r | hold_l | wave_high | cheer
+    — outfit: dress | tee. Wide hairstyles (pigtails, long_wavy) swallow the
+    stock wave/up hands; use wave_high/cheer for those characters.
     accessories: subset of {crown, wand, cap, scarf, cape}. Scale externally
     with G(). Smooth rebuild: arms are tapered two-segment outlines through
     the exact wrist targets (solid limbs, no wire arcs); head/hair/faces and
@@ -2236,8 +2253,11 @@ def candy_cane(cx, gy, h=120, sw=5):
 def ferris_wheel(cx, cy, r=110):
     out = [C(cx, cy, r, 4.5), C(cx, cy, 8, 4, "white")]
     import math as m
+    # gondolas are phase-shifted 30deg off the spokes' 0deg start so none sits
+    # on the two support-leg lines (legs run hub-to-ground through the lower
+    # rim; a gondola at 60deg/120deg gets visually "skewered" by the leg)
     for i in range(6):
-        a = i * m.pi / 3
+        a = m.pi / 6 + i * m.pi / 3
         gx, gy2 = cx + r * m.cos(a), cy + r * m.sin(a)
         out.append(LINE(cx, cy, gx, gy2, 3))
         out.append(P(f"M {gx-12} {gy2} Q {gx-12} {gy2+16} {gx} {gy2+16} Q {gx+12} {gy2+16} {gx+12} {gy2} Z", 3.5, "white"))
