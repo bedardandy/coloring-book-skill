@@ -121,6 +121,22 @@ def test_creativity_pack():
         _check(f"creativity:{name}", svg)
 
 
+def test_dog_dig_pose():
+    """dog_dig: digging dog on a meadow ground line, both dirt settings and
+    traits, mirrored with GM, next to a standing kid — validates clean."""
+    from charlib import dog_dig, kid_stand, GM, matted
+    for dirt in (True, False):
+        for t in ({}, {"coat": "patch"}, {"coat": "spots", "floppy_ears": False}):
+            frag = dog_dig(t, long_nose=bool(t), dirt=dirt)
+            assert frag.startswith('<g data-el="figure">')
+            ET.fromstring(f'<svg xmlns="http://www.w3.org/2000/svg">{frag}</svg>')
+    assert len(dog_dig({}, dirt=True)) > len(dog_dig({}, dirt=False))
+    body = (G(200, G_, kid_stand({"outfit": "tee"}, "down"), 1.2) +
+            matted(G(500, G_, dog_dig({"coat": "patch"}), 1.4)) +
+            GM(640, 500, dog_dig({}, dirt=False), 1.0))
+    _check("dog_dig", spage("Digging", body, layout="activity"))
+
+
 def test_landscape_pack():
     body = (sun(120, 140, r=40) + cloud(650, 160, 26) +
             mountain_range(310, G_, peaks=3, w=440) +

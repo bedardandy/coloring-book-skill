@@ -19,7 +19,7 @@ import cairosvg  # noqa: E402
 import scenes  # noqa: E402
 from charlib import (W, G, spage, kid_stand, kid_run, kid_jump,          # noqa: E402
                      kid_point, kid_carry, kids_holding_hands, kid_wheelchair,
-                     kid_toddler, kid_in_bed, dog, fish, turtle,
+                     kid_toddler, kid_in_bed, dog, dog_dig, fish, turtle,
                      snail, rabbit, duck, cow, sheep, chicken, owl, monkey,
                      frog, tulip, sunflower, apple_tree, potted_plant, cactus,
                      kite, scooter, tricycle, seesaw, sandbox,
@@ -129,13 +129,12 @@ def meadow_kite():
             cloud(380, 300, 22) +
             tree_round(652, g, h=380) +          # midground anchor, top ~y575
             matted(G(kx, g, kid_stand(flyer, "wave"), s)) +
-            matted(G(425, g + 26, dog({"coat": "patch"}), 1.2)) +     # a step in front
-            grass_tuft(318, g + 24) + grass_tuft(514, g + 24) +
+            matted(G(470, g + 26, dog_dig({"coat": "patch"}), 1.1)) +  # a step in front
+            grass_tuft(610, g + 24) +
             LINE(hand[0], hand[1], corner[0], corner[1], 2.5) +
             kite(corner[0] + kw / 2, corner[1], w=kw) +
             sunflower(712, g, h=150) + tulip(768, g, h=104) +
-            G(532, g - 12, flower(0, 0, s=1.3)) + LINE(532, g - 12, 532, g, 3) +
-            grass_tuft(560, g - 2) + grass_tuft(676, g - 2))
+            grass_tuft(676, g - 2))
 
 
 def street_busstop():

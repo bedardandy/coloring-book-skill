@@ -1852,6 +1852,94 @@ def dog_sleep(t, long_nose=False, zzz=True):
     return "".join(out)
 
 
+def dog_dig(t, long_nose=False, dirt=True):
+    """Dog DIGGING, facing right, origin at ground contact (GM() to flip).
+    Rump HIGH on long braced hind legs, back sloping steeply down to low
+    shoulders, head down over the hole, near front paw IN the hollow and the
+    far paw scraping at its rim, tail up with wag ticks.
+    The hole sits at x~+84 on the ground line and reads as a hole, not a
+    bowl: bumpy dug rim, dark inner wall arcs, a near lip that swallows the
+    paw, rim clods (dirt_hole vocabulary). dirt=True adds the spray: dirt
+    flung back under the belly and out between the hind legs (motion arcs
+    ending in clods) onto a dug pile behind. Traits as dog(): coat, collar,
+    floppy_ears."""
+    t = t or {}
+    out = []
+    hx0 = 84                                           # hole centre on ground
+    if dirt:
+        # dug pile behind (drawn first: behind the hind legs)
+        out.append(P("M -168 0 Q -150 -46 -120 -42 Q -100 -46 -84 0 Z", 4, "white"))
+        out.append(P("M -148 -18 Q -140 -26 -130 -22", 2.5))   # one mark only:
+    if dirt:
+        # spray: from the paws back under the belly, out between the hind legs
+        for (x1, y1), (qx, qy), (x2, y2) in (
+                ((40, -12), (-30, -4), (-104, -92)),
+                ((46, -6), (-26, 8), (-128, -70)),
+                ((34, -18), (-24, -30), (-86, -120))):
+            out.append(P(f"M {x1} {y1} Q {qx} {qy} {x2} {y2}", 3))
+        for cx_, cy_, r_ in ((-110, -104, 8), (-138, -80, 7), (-92, -134, 6),
+                             (-124, -128, 5), (-156, -104, 5)):
+            out.append(smooth_path([(cx_ - r_, cy_), (cx_, cy_ - r_ * 0.9),
+                                    (cx_ + r_, cy_ - r_ * 0.1), (cx_ + r_ * 0.4, cy_ + r_),
+                                    (cx_ - r_ * 0.7, cy_ + r_ * 0.7)],
+                                   3, closed=True, fill="white"))
+    # hind legs: long and braced so the rump sits high
+    for hx, fx in ((-56, -66), (-34, -40)):
+        out.append(limb((hx, -76), (hx - 4, -38), (fx, -5), w0=8, w1=5, sw=4.5))
+        out.append(P(f"M {fx - 7} 0 Q {fx - 7} -9 {fx} -9 L {fx + 8} -7 "
+                     f"Q {fx + 12} -2 {fx + 10} 0 Z", 3.5, "white"))
+    # tail: up and wagging
+    out.append(P("M -64 -104 Q -80 -130 -70 -150 Q -60 -146 -60 -132 "
+                 "Q -60 -118 -52 -108 Z", 4, "white"))
+    out.append(P("M -56 -160 Q -48 -164 -42 -158", 3))           # wag tick
+    # the hollow: dug rim (bumps) + dark inner wall, drawn before the paws
+    out.append(P(f"M {hx0 - 50} 0 Q {hx0 - 46} -16 {hx0 - 30} -14 Q {hx0 - 20} -24 "
+                 f"{hx0 - 4} -18 Q {hx0 + 12} -26 {hx0 + 26} -16 Q {hx0 + 44} -18 "
+                 f"{hx0 + 50} 0 Z", 4, "white"))
+    out.append(E(hx0, -2, 38, 10, 4, "white"))
+    out.append(P(f"M {hx0 - 26} -4 Q {hx0} -12 {hx0 + 26} -4", 2.5))       # inner wall
+    # far front leg: scraping at the near rim of the hole
+    out.append(limb((26, -42), (44, -30), (54, -12), w0=7, w1=5, sw=4.5))
+    out.append(E(55, -10, 8, 6, 3.5, "white"))
+    # body: rump high, back sloping steeply down to low shoulders
+    out.append(smooth_path([(-66, -80), (-64, -100), (-46, -112), (-14, -96),
+                            (22, -70), (42, -52), (38, -32), (16, -30),
+                            (-16, -46), (-50, -64)], 4.5, closed=True, fill="white"))
+    coat = t.get("coat", "plain")
+    if coat == "spots":
+        out.append(E(-36, -92, 11, 8, 3) + E(0, -70, 8, 6, 3))
+    # near front leg: reaching down INTO the hollow
+    out.append(limb((30, -40), (58, -30), (78, -2), w0=7.5, w1=5, sw=4.5))
+    # near lip swallows the paw tip; rim clods
+    out.append(P(f"M {hx0 - 38} -2 Q {hx0} 14 {hx0 + 38} -2 "
+                 f"Q {hx0} 5 {hx0 - 38} -2 Z", 4, "white"))
+    for cx_, cy_ in ((hx0 - 58, -8), (hx0 + 58, -6)):
+        out.append(smooth_path([(cx_ - 6, cy_), (cx_, cy_ - 6), (cx_ + 6, cy_ - 1),
+                                (cx_ + 2, cy_ + 5), (cx_ - 5, cy_ + 4)],
+                               3, closed=True, fill="white"))
+    # head down over the hole: dog()'s head, tipped nose-down
+    head = [C(0, 0, 25, 4.5, "white")]
+    if long_nose:
+        head.append(P("M 20 4 Q 42 6 40 18 Q 30 24 14 18", 4, "white"))
+        head.append(DOT(37, 11, 3.5))
+    else:
+        head.append(P("M 20 4 Q 34 6 32 16 Q 24 22 14 18", 4, "white"))
+        head.append(DOT(30, 10, 3.5))
+    head.append(DOT(6, -6, 3))                                          # eye
+    head.append(P("M 18 20 Q 14 26 8 24", 3.5))                         # mouth
+    if coat == "patch":
+        head.append(E(-2, -8, 10, 12, 3))
+    if t.get("floppy_ears", True):
+        head.append(P("M -12 -18 Q -26 -28 -30 -8 Q -30 8 -18 12 Q -12 0 -10 -12",
+                      4, "white"))
+    else:
+        head.append(P("M -12 -20 L -18 -38 L -4 -28 Z", 4, "white"))
+    out.append(G(60, -52, "".join(head), 1.0, 22))
+    if t.get("collar", True):
+        out.append(P("M 30 -66 Q 40 -54 38 -36", 3.5))
+    return '<g data-el="figure">' + "".join(out) + "</g>"
+
+
 def sock(cx, cy, s=1.0, rot=0):
     d = (f"M {-9*s} {-22*s} L {9*s} {-22*s} L {9*s} {2*s} Q {9*s} {12*s} {0} {14*s} "
          f"Q {-14*s} {16*s} {-15*s} {6*s} Q {-15*s} {0} {-9*s} {-2*s} Z")
