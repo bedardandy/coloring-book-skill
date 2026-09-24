@@ -174,6 +174,9 @@ def test_fit_fragment_centres_and_keeps_stroke_weight():
     assert abs((x0 + x1) / 2 - 300) < 1 and abs((y0 + y1) / 2 - 400) < 1
     assert abs((x1 - x0) - 200) < 12          # fitted (stroke kept ~4px)
     assert 'stroke-width="0.408"' in placed      # 4 / k(=196/20) restroked
+    # anchor="bottom": geometry stands ON (cx, cy) — grids of grounded items
+    stood = fit_fragment(C(0, 0, 10, 4), 300, 400, 200, 200, anchor="bottom")
+    assert abs(fragment_bbox(stood, stroke=False)[3] - 400) < 0.5
 
 
 def test_sticker_sheet_motifs_fill_their_cells():

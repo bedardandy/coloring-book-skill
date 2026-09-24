@@ -130,9 +130,12 @@ def scene_space(*, planet=True, midground=True, variant=0):
     return "".join(out)
 
 
-def scene_farm(*, pond_too=True, sky_fill=True, midground=True, variant=0):
+def scene_farm(*, pond_too=True, sky_fill=True, midground=True, variant=0,
+               fence=True):
     """Farmyard: barn + ranch fence + grass. Ground: SCENE_GROUND.
-    variant=N flips the barn side and re-lays fence/pond."""
+    variant=N flips the barn side and re-lays fence/pond. fence=False drops
+    the ranch fence — posts showing between a foreground animal's legs read
+    as extra legs."""
     v = variant % 2
     out = [sun(130 + v * 560, 225, r=40), cloud(620 - v * 460, 235, 26),
            hill(560 - v * 180, SCENE_GROUND, w=460, h=70)]
@@ -141,8 +144,9 @@ def scene_farm(*, pond_too=True, sky_fill=True, midground=True, variant=0):
     if midground:
         out.append(tree_pine(740 - v * 620, SCENE_GROUND, h=150))
     out.append(G(200 + v * 430, SCENE_GROUND, barn(0, 0, w=230), 1.0))
-    out.append(fence_ranch(360 - v * 290, 650 - v * 290, SCENE_GROUND,
-                           posts=5 + v))
+    if fence:
+        out.append(fence_ranch(360 - v * 290, 650 - v * 290, SCENE_GROUND,
+                               posts=5 + v))
     if pond_too:
         out.append(pond(700 - v * 540, SCENE_GROUND - 4, w=170))
     for i in range(4):

@@ -1571,11 +1571,14 @@ def restroke(svg_fragment, k):
                       f"{float(v) / k:.3g}" for v in m.group(1).split()) + '"', out)
 
 
-def fit_fragment(svg_fragment, cx, cy, max_w, max_h, keep_stroke=True):
+def fit_fragment(svg_fragment, cx, cy, max_w, max_h, keep_stroke=True,
+                 anchor="center"):
     """Scale a fragment (drawn around any origin) so its visible bbox fits
-    max_w x max_h, centred on (cx, cy). keep_stroke=True restrokes it so
-    lines keep their page weight at the new scale. Returns the placed
-    fragment (or "" for empty input)."""
+    max_w x max_h. anchor="center" centres it on (cx, cy); anchor="bottom"
+    stands its geometry ON (cx, cy) — the bottom-centre, i.e. a ground line
+    — for grids of grounded objects. keep_stroke=True restrokes it so lines
+    keep their page weight at the new scale. Returns the placed fragment
+    (or "" for empty input)."""
     bs = fragment_bbox(svg_fragment)
     if bs is None:
         return ""
@@ -1590,7 +1593,8 @@ def fit_fragment(svg_fragment, cx, cy, max_w, max_h, keep_stroke=True):
     bw, bh = max(1e-6, bg[2] - bg[0]), max(1e-6, bg[3] - bg[1])
     k = max(1e-3, min((max_w - ex_w) / bw, (max_h - ex_h) / bh))
     inner = restroke(svg_fragment, k) if keep_stroke else svg_fragment
-    mx, my = (bg[0] + bg[2]) / 2, (bg[1] + bg[3]) / 2
+    mx = (bg[0] + bg[2]) / 2
+    my = bg[3] if anchor == "bottom" else (bg[1] + bg[3]) / 2
     return G(cx - mx * k, cy - my * k, inner, k)
 
 
