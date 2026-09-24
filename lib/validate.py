@@ -498,8 +498,20 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
     #       paints over facial features.
     # Large shapes merely PASSING behind a head (fences, furniture, rugs) are
     # normal depth layering and must not fire.
+    # white-filled closed shapes, for "detail of a larger background object"
+    # tests below (a window on a building behind a kid's head)
+    containers = [it for it in visible
+                  if it.wbbox and not it.chrome and it.el.get("fill") == "white"
+                  and it.tag in ("rect", "path", "circle", "ellipse", "polygon")
+                  and (it.wbbox[2] - it.wbbox[0]) < W * 0.9]
     for fx, fy, fr, owner, fidx in _faces(visible):
         kill_r = fr * HEAD_KILL
+
+        def _pokes_out(bb, kill_r=kill_r, fx=fx, fy=fy):
+            return any(math.hypot(px - fx, py - fy) > kill_r
+                       for px, py in ((bb[0], bb[1]), (bb[2], bb[1]),
+                                      (bb[0], bb[3]), (bb[2], bb[3])))
+
         for it in visible:
             if it.chrome or it.el.get("data-sky") == "1" or not it.wbbox:
                 continue
@@ -514,6 +526,14 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
                            for px, py in corners)
             small = max(bb[2] - bb[0], bb[3] - bb[1]) <= 1.6 * kill_r
             if fully_in and small:
+                # a detail INSIDE an earlier, larger background shape that
+                # extends beyond the kill disk (building window, rug stripe)
+                # is ordinary depth layering behind a foreground figure —
+                # only a standalone prop swallowed by the head is the bug
+                if any(c.idx < it.idx and c.figure is not owner
+                       and _contains(c.wbbox, bb, tol=0.5)
+                       and _pokes_out(c.wbbox) for c in containers):
+                    continue
                 add("HIGH", "head_clearance",
                     f"{it.tag} at {[round(v) for v in bb]} sits fully inside "
                     f"face ({fx:.0f},{fy:.0f}) kill radius — the white head "

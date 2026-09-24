@@ -171,3 +171,20 @@ def test_good_page_passes_clean():
             G(760, 950, grass_tuft(0, 0)))
     rep = V.validate_svg(spage("Park", body))
     assert rep["ok"], [f for f in rep["findings"] if f["severity"] == "HIGH"]
+
+
+def test_head_clearance_ignores_details_of_background_objects():
+    # a building's windows hidden behind a foreground kid's head are normal
+    # depth layering (street scenes), not a swallowed prop
+    from charlib import rrect, kid_stand, matted
+    building = rrect(240, 480, 200, 300, 3, 4, "white") + "".join(
+        rrect(254 + 26 * i, 500 + 26 * j, 14, 14, 2, 2.5, "white")
+        for i in range(7) for j in range(10))
+    kid = matted(G(330, 800, kid_stand({"outfit": "tee"}), 1.2))
+    rep = V.validate_svg(svg_of(building + kid))
+    assert not [f for f in rep["findings"]
+                if f["check"] == "head_clearance" and f["severity"] == "HIGH"]
+    # ...but a standalone prop at the face is still the documented bug
+    prop = G(330, 580, rrect(-7, -7, 14, 14, 2, 2.5, "white"))
+    rep = V.validate_svg(svg_of(prop + kid))
+    assert _first(rep, "head_clearance")["severity"] == "HIGH"
