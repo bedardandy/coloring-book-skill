@@ -17,7 +17,8 @@ CRITICAL GOTCHAS (learned the hard way):
 
 VALIDATION HOOKS (consumed by lib/validate.py — see reference/drawing-guide.md):
 - Semantic metadata travels in the SVG itself as data-* attributes:
-  data-face="cx,cy,r" (head circles), data-sky="1" (sun/cloud/sparkle),
+  data-face="cx,cy,r" (head circles), data-sky="1" (every part of sun/
+  moon/cloud/sparkle/shooting_star/star_field — see sky()),
   data-ground="y" (wheels tangent to a declared ground line),
   data-hand="1" (hand circles), data-el="figure" (character groups),
   data-mat="1" (invisible knockout-mat copies), data-chrome="1"
@@ -398,6 +399,18 @@ def star(cx, cy, r, sw=SW, fill="none"):
     return f'<polygon points="{" ".join(pts)}" fill="{fill}" stroke="black" stroke-width="{sw}" stroke-linejoin="round"/>'
 
 
+_SKY_TAG_RE = re.compile(
+    r"<(circle|ellipse|line|path|polygon|polyline|rect)\b(?![^>]*data-sky)")
+
+
+def sky(fragment):
+    """Tag EVERY shape in `fragment` data-sky="1" — sky decoration, excluded
+    from the validator's scene-mass arithmetic. Tag whole motifs, never just
+    their main shape: untagged sun rays at y~151 used to satisfy scene_span
+    on every scene-kit page."""
+    return _SKY_TAG_RE.sub(r'<\1 data-sky="1"', fragment)
+
+
 def sparkle(cx, cy, r=10, sw=3.5):
     return LINE(cx - r, cy, cx + r, cy, sw).replace("<line ", '<line data-sky="1" ', 1) + \
            LINE(cx, cy - r, cx, cy + r, sw).replace("<line ", '<line data-sky="1" ', 1)
@@ -418,12 +431,12 @@ def cloud(cx, cy, s, sw=SW):
 
 
 def sun(cx, cy, r=42, sw=SW):
-    s = C(cx, cy, r, sw, "white", sky="1")
+    s = C(cx, cy, r, sw, "white")
     for i in range(8):
         a = i * math.pi / 4
         s += LINE(cx + (r + 12) * math.cos(a), cy + (r + 12) * math.sin(a),
                   cx + (r + 32) * math.cos(a), cy + (r + 32) * math.sin(a), sw)
-    return s
+    return sky(s)                       # disc AND rays
 
 
 def strawberry(cx, cy, s, sw=4):
@@ -3876,7 +3889,8 @@ def star_field(x0, y0, x1, y1, n=14, sw=2.5):
 
 
 def moon(cx, cy, r=85, sw=5):
-    """Moon disc with asymmetric craters (unpaired heights)."""
+    """Moon disc with asymmetric craters (unpaired heights). Sky decoration
+    like sun(): every part tagged data-sky."""
     out = [C(cx, cy, r, sw, "white")]
     for dx, dy, cr in ((-0.35, -0.25, 0.16), (0.30, -0.05, 0.11),
                        (-0.10, 0.38, 0.13), (0.42, 0.42, 0.08)):
@@ -3884,7 +3898,7 @@ def moon(cx, cy, r=85, sw=5):
         out.append(P(f"M {_f(cx + dx * r - cr * r * 0.6)} {_f(cy + dy * r - cr * r * 0.35)} "
                      f"Q {_f(cx + dx * r)} {_f(cy + dy * r - cr * r * 0.7)} "
                      f"{_f(cx + dx * r + cr * r * 0.6)} {_f(cy + dy * r - cr * r * 0.35)}", 2.5))
-    return "".join(out)
+    return sky("".join(out))
 
 
 def crater_ground(y, x0=60, x1=None, sw=4):
@@ -3970,13 +3984,14 @@ def telescope(cx, ground_y, h=190, sw=4.5):
 
 
 def shooting_star(cx, cy, s=1.0, sw=4):
-    """Comet: star head + three swoosh trails up-left."""
+    """Comet: star head + three swoosh trails up-left. Sky decoration: head
+    and trails all tagged data-sky."""
     out = [star(cx, cy, 16 * s, sw, "white")]
     for i, (dx, dy, ln) in enumerate(((1.6, 1.0, 60), (1.9, 0.55, 78), (1.3, 1.35, 46))):
         out.append(LINE(cx + dx * 14 * s, cy + dy * 14 * s,
                         cx + dx * 14 * s + ln * s * 0.55, cy + dy * 14 * s + ln * s * 0.35,
-                        sw - i * 0.5).replace("<line ", '<line data-sky="1" ', 1))
-    return "".join(out)
+                        sw - i * 0.5))
+    return sky("".join(out))
 
 
 # ---------------------------------------------------------------- nature pack

@@ -1,4 +1,5 @@
 import math
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -173,11 +174,13 @@ def test_good_page_passes_clean():
     assert rep["ok"], [f for f in rep["findings"] if f["severity"] == "HIGH"]
 
 
-# ---------------------------------------------------------------- mass distribution
-# Calibration (tests/test_validate.py fixtures + the bundled examples):
-#   hourglass pages  middle/heavier-band ratio <= 0.30 (kit + 1.0 kid: 0.03)
-#   recipe pages     ratio >= 0.54 (kit + midground tree to y~500 + kid 1.3: 0.95)
-# MID_RATIO = 0.40 sits in that gap; see lib/validate.py.
+# ---------------------------------------------------------------- span + mass
+# Ownership: scene_span owns the scene's vertical EXTENT (HIGH: a strip on the
+# ground line, or a floating scene); mass_distribution owns WHERE the ink
+# sits inside it (MED: hollow middle). Calibration (showcase + fixtures):
+#   extent  strip fixture 246px (22%)  <  SPAN_MIN 330  <  photo/beach/recipe
+#           pages 407-444px (37-40%)
+#   ratio   hourglass pages <= 0.30  <  MID_RATIO 0.40  <  recipe pages >= 0.49
 import importlib.util  # noqa: E402
 import os  # noqa: E402
 
@@ -191,9 +194,12 @@ def _mass_findings(rep, kind=None):
     hits = [f for f in rep["findings"] if f["check"] == "mass_distribution"]
     if kind == "hollow":
         hits = [f for f in hits if "hollow middle" in f["msg"]]
-    elif kind == "sky":
-        hits = [f for f in hits if f["msg"].startswith("sky-only top")]
     return hits
+
+
+def _span(rep, sev=None):
+    return [f for f in rep["findings"] if f["check"] == "scene_span"
+            and (sev is None or f["severity"] == sev)]
 
 
 def _ratio(rep):
@@ -209,92 +215,144 @@ def bottom_crammed_body():
 
 def three_layer_recipe_body():
     """drawing-guide recipe: kit background + midground tree whose top
-    reaches y~480 + foreground kid at 1.3 on the declared ground line."""
+    reaches y~500 + foreground kid at 1.3 on the declared ground line."""
     from charlib import kid_stand, tree_round
     return (scenes.scene_meadow(midground=False) +
             tree_round(595, SG - 4, h=455) +
             G(330, SG, kid_stand(T_KID, "wave"), 1.3))
 
 
-def test_mass_distribution_flags_bottom_crammed_page():
+def hourglass_body():
+    """Props up top, a 1.0 kid strip on the ground, nothing between: the
+    extent passes, the distribution does not."""
+    from charlib import hot_air_balloon
+    return bottom_crammed_body() + G(640, 330, hot_air_balloon(0, 0), 0.85)
+
+
+def test_strip_page_is_scene_span_high():
     rep = V.validate_svg(svg_of(bottom_crammed_body()))
+    assert not rep["ok"]
+    high = _span(rep, "HIGH")
+    assert high and "strip on the ground line" in high[0]["msg"]
+    assert rep["span"]["px"] < V.SPAN_MIN - 60          # calibration margin
+    # the sun (disc AND rays) is sky: it no longer reaches the span's top
+    assert rep["span"]["raw_top"] > 600
+    # one failure, one owner: mass_distribution stands down
+    assert rep["mass"]["skip"] == "scene_span HIGH already fired"
+    assert not _mass_findings(rep)
+
+
+def test_three_layer_recipe_passes_both_checks():
+    rep = V.validate_svg(svg_of(three_layer_recipe_body()))
+    assert rep["ok"], rep["findings"]
+    assert not _span(rep), _span(rep)                    # no finding at all
+    assert not _mass_findings(rep), _mass_findings(rep)
+    assert rep["mass"]["judged"]
+    assert rep["span"]["px"] >= V.SPAN_MIN + 60         # calibration margin
+    assert _ratio(rep) >= 0.54
+
+
+def test_hourglass_page_flags_hollow_middle():
+    rep = V.validate_svg(svg_of(hourglass_body()))
     assert rep["ok"]                       # MED only: CI keeps passing
+    assert not _span(rep, "HIGH")
     hollow = _mass_findings(rep, "hollow")
     assert hollow and hollow[0]["severity"] == "MED"
     msg = hollow[0]["msg"]
     assert "middle band" in msg and "bottom band" in msg and "%" in msg
-    assert "midground anchor" in msg and "1.2-1.4" in msg
+    assert "midground anchor" in msg and "kid_stand 1.2-1.5" in msg
     b = rep["mass"]["bands"]
     assert b["mid"] < 5 and b["bottom"] > 20
     assert _ratio(rep) <= 0.30             # calibration gap, low side
-    # the blind spot this closes: scene_span is satisfied by the sun's rays
-    assert not [f for f in rep["findings"] if f["check"] == "scene_span"]
-    assert _mass_findings(rep, "sky")
 
 
-def test_mass_distribution_passes_three_layer_recipe():
-    rep = V.validate_svg(svg_of(three_layer_recipe_body()))
-    assert rep["ok"], rep["findings"]
-    assert not _mass_findings(rep), _mass_findings(rep)
-    assert rep["mass"]["judged"]
-    assert _ratio(rep) >= 0.54             # calibration gap, high side
-    assert rep["mass"]["upper_half"] >= 2 * V.SKY_TOP_MIN
-
-
-def test_mass_report_shape():
+def test_span_and_mass_report_shape():
     rep = V.validate_svg(svg_of(three_layer_recipe_body()))
     m = rep["mass"]
     assert set(m["bands"]) == {"top", "mid", "bottom"}
     assert m["edges"] == [145, 430, 715, 1000]
     assert all(0 <= v <= 100 for v in m["bands"].values())
     assert m["skip"] is None
+    assert set(rep["span"]) == {"top", "bottom", "px", "raw_top"}
+    assert rep["span"]["px"] == rep["span"]["bottom"] - rep["span"]["top"]
 
 
 def test_big_figure_alone_does_not_fill_the_middle():
     from charlib import kid_stand
     body = scenes.scene_meadow() + G(430, SG, kid_stand(T_KID, "wave"), 1.4)
-    hollow = _mass_findings(V.validate_svg(svg_of(body)), "hollow")
+    rep = V.validate_svg(svg_of(body))
+    assert not _span(rep, "HIGH")          # one 351px figure clears the floor
+    hollow = _mass_findings(rep, "hollow")
     assert hollow
     # figure is already foreground-sized, so the advice is the anchor only
     assert "already foreground-sized" in hollow[0]["msg"]
 
 
-def test_sky_only_top_fires_on_thin_prop():
-    """A lone flagpole reaching y=300 satisfies scene_span's top rule while
-    nothing but sky sits above the page midline."""
-    from charlib import kid_stand, LINE
-    pole = LINE(700, SG, 700, 300, 5) + P("M 700 300 L 760 322 L 700 344 Z", 4,
-                                          "white")
-    body = (LINE(50, SG, 800, SG, 4) +
-            G(330, SG, kid_stand(T_KID, "wave"), 1.2) +
-            G(500, SG, kid_stand({"hair": "buzz", "outfit": "tee"}), 1.2) +
-            pole)
-    rep = V.validate_svg(svg_of(body))
-    sky = _mass_findings(rep, "sky")
-    assert sky and sky[0]["severity"] == "MED"
-    assert "y=300" in sky[0]["msg"]
-    assert rep["mass"]["upper_half"] < V.SKY_TOP_MIN
+def test_thin_prop_cannot_carry_the_span():
+    """A lone pole reaching y=300 used to satisfy the span arithmetic; rows
+    with a single stroke carry no mass, so the strip is still a strip."""
+    from charlib import LINE as L
+    pole = L(700, SG, 700, 300, 5)
+    rep = V.validate_svg(svg_of(bottom_crammed_body() + pole))
+    high = _span(rep, "HIGH")
+    assert high and "thin stroke reaching y=300" in high[0]["msg"]
+    assert rep["span"]["raw_top"] == 300 and rep["span"]["top"] > 600
+    # a real (if small) object up there is mass: the span passes and the
+    # hollow middle becomes mass_distribution's MED
+    flag = P("M 700 300 L 760 322 L 700 344 Z", 4, "white")
+    rep = V.validate_svg(svg_of(bottom_crammed_body() + pole + flag))
+    assert not _span(rep, "HIGH") and _mass_findings(rep, "hollow")
 
 
-def test_street_strip_flags_sky_only_top():
-    """showcase 08: skyline fills the LOWER half of the middle band, so the
-    band ratio passes — the guard that catches it is sky-only top."""
+def test_old_kit_street_strip_is_high():
+    """pre-recomposition showcase 08: skyline to y~560 + a 0.9 bus. Its
+    extent passed only on the sun's rays."""
     from charlib import school_bus, ROAD_H
     body = scenes.scene_street() + G(
         400, SG - 120 + ROAD_H, school_bus(0, 0, w=190), 0.9)
     rep = V.validate_svg(svg_of(body))
-    assert _mass_findings(rep, "sky")
-    assert rep["mass"]["mid_upper"] < 2 < rep["mass"]["mid_lower"]
+    assert _span(rep, "HIGH")
 
 
-def test_beach_scene_page_flags():
-    """showcase 09: kit + one 1.0 kid on the sand."""
+def test_old_kit_beach_strip_is_high():
+    """pre-recomposition showcase 09: kit + one 1.0 kid on the sand."""
     from charlib import kid_stand
     body = scenes.scene_beach() + G(
         300, scenes.BEACH_GROUND, kid_stand({"hair": "buzz", "outfit": "tee"},
                                             "up"), 1.0)
     rep = V.validate_svg(svg_of(body))
-    assert rep["ok"] and _mass_findings(rep)
+    assert _span(rep, "HIGH")
+
+
+def test_floating_scene_bottom_is_high():
+    from charlib import kid_stand, tree_round
+    body = G(330, 840, kid_stand(T_KID, "wave"), 1.3) + tree_round(
+        595, 836, h=455)
+    rep = V.validate_svg(svg_of(body))
+    assert any("floats" in f["msg"] for f in _span(rep, "HIGH"))
+
+
+def test_sky_motifs_tagged_in_every_part():
+    import re
+    from charlib import sun, moon, shooting_star, cloud, sparkle, star_field
+    for frag in (sun(200, 250), moon(200, 250, r=40), shooting_star(200, 250),
+                 cloud(200, 250, 30), sparkle(200, 250),
+                 star_field(60, 170, 790, 600, n=9)):
+        shapes = re.findall(r"<(?:circle|ellipse|line|path|polygon|rect)\b[^>]*>",
+                            frag)
+        assert shapes and all('data-sky="1"' in sh for sh in shapes), frag[:80]
+
+
+def test_sky_decoration_colliding_with_title_is_flagged():
+    from charlib import sun
+    rep = V.validate_svg(spage("A Long Page Title", sun(560, 100) +
+                               three_layer_recipe_body()))
+    hits = [f for f in rep["findings"] if f["check"] == "title_band"
+            and "sky decoration" in f["msg"]]
+    assert hits and hits[0]["severity"] == "MED"
+    # the kit sun at y=225 clears the title ink
+    rep = V.validate_svg(svg_of(three_layer_recipe_body()))
+    assert not [f for f in rep["findings"] if f["check"] == "title_band"]
 
 
 def test_unfilled_outline_is_not_mass():
@@ -316,7 +374,35 @@ def test_flatten_path_uses_curve_not_control_point():
     polys = V._flatten_path("M 100 940 Q 300 700 500 940")
     ys = [p[1] for p in polys[0]]
     assert abs(min(ys) - 820) < 1.0
-    assert V._flatten_path("M 0 0 a 5 5 0 0 1 10 0") is None  # arcs -> bbox
+
+
+def _bbox_of(d):
+    return V._local_bbox(ET.fromstring(
+        f'<path xmlns="http://www.w3.org/2000/svg" d="{d}"/>'))
+
+
+def test_bbox_reads_h_v_and_relative_commands():
+    # H/V take ONE number; even/odd pairing used to misread (or drop) them
+    assert _bbox_of("M 10 10 H 50 V 80") == (10, 10, 50, 80)
+    assert _bbox_of("m 10 10 h 40 v 70 h -40 z") == (10, 10, 50, 80)
+    # relative curves are offsets from the current point
+    bb = _bbox_of("M 100 100 c 0 -40 60 -40 60 0 l 0 20")
+    assert bb[0] == 100 and bb[2] == 160 and abs(bb[1] - 70) < 0.5
+    assert bb[3] == 120
+    # smooth curves reflect the previous control point
+    bb = _bbox_of("M 0 100 Q 50 0 100 100 T 200 100")
+    assert abs(bb[1] - 50) < 0.5 and abs(bb[3] - 150) < 0.5
+    # arcs are sampled on the curve: a sweep=1 semicircle bulges UP (y-down)
+    bb = _bbox_of("M 0 0 a 5 5 0 0 1 10 0")
+    assert abs(bb[1] + 5) < 0.1 and bb[3] == 0
+
+
+def test_border_clearance_sees_h_commands():
+    # the H segment runs past the right margin; the old parser dropped it
+    rep = V.validate_svg(svg_of(P("M 700 500 H 815", 5) +
+                                three_layer_recipe_body()))
+    f = _first(rep, "border_clearance")
+    assert f and f["severity"] == "HIGH"
 
 
 @pytest.mark.parametrize("layout", ["activity", "vignette", "creative"])

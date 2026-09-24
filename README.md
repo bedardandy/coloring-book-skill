@@ -30,7 +30,7 @@ built end-to-end by the skill.*
   (meadow, street, beach, space, farm) with declared ground lines; the drawing guide's
   three-layer recipe (background kit → midground anchor → foreground figures at
   300-380 px) is what keeps pages from reading bottom-crammed.
-- **Deterministic validation gate.** `python -m lib.validate pages/*.svg` turns every
+- **Deterministic validation gate.** `python3 -m lib.validate pages/*.svg` turns every
   numeric layout rule into exact arithmetic on the emitted SVG — border clearance,
   scene span, **mass distribution** (a hollow middle third or a sky-only top is
   flagged even when the bounding-box arithmetic passes), figure and face sizes, head
@@ -123,9 +123,10 @@ non-negotiable, and skipping them is why hand-rolled attempts come out rough:
 2. **White fills, back-to-front.** Every solid shape is drawn with `fill="white"` over
    what's behind it, in depth order, and figures get `matted()` halos. Outline-only
    drawing produces transparent shapes whose strokes all cross each other.
-3. **Run the validator** (`python -m lib.validate pages/*.svg`) after every build and
-   fix what it reports by moving or scaling elements. Every model bottom-crams first
-   drafts; arithmetic catches it when eyeballing doesn't.
+3. **Run the validator** (`python3 -m lib.validate pages/*.svg`) after every build and
+   fix what it reports by moving or scaling elements: scene at least 330 px tall with a
+   filled middle band, nothing within 12 px of the border, main figures at least 180 px.
+   Every model bottom-crams first drafts; arithmetic catches it when eyeballing doesn't.
 
 If your environment can't run Python, the honest move is to say so rather than
 approximate — the output difference is not subtle.

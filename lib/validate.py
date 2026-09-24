@@ -10,21 +10,23 @@ world-space affine matrix, and runs EXACT ARITHMETIC versions of the numeric
 rules that reference/drawing-guide.md previously asked models to eyeball:
 
   border_clearance   every element >= CLEARANCE px inside the border rect
-  scene_span         scene mass spans >=55% of page height (data-sky tokens
-                     excluded — a corner sun + high cloud must NOT make the
-                     arithmetic pass). Min/max arithmetic: ONE thin element
-                     high up satisfies it, hence mass_distribution
-  mass_distribution  WHERE the ink sits: non-sky coverage (filled shapes by
-                     world bbox, unfilled strokes by traced stroke, unioned on
-                     a 5px grid) in three equal bands between TITLE_Y and
-                     CAPTION_Y. MED "hollow middle" when the middle band holds
-                     < MID_RATIO (0.40) of the heavier outer band's ink (the
-                     hourglass: sky/props on top, a figure strip on the ground
-                     line); MED "sky-only top" when scene_span's top is carried
-                     by a thin prop / untagged sun ray and < SKY_TOP_MIN (2%)
-                     ink sits above the drawable midline (y~570). Per-band
-                     numbers land in report["mass"]; layout=activity/vignette/
-                     creative pages are measured but not judged
+  scene_span         the scene's vertical EXTENT: from the first row carrying
+                     >= ROW_INK_MIN (2%, ~16px) of non-sky ink to the lowest
+                     ink. HIGH when < SPAN_MIN (330px, ~one foreground figure:
+                     a strip on the ground line) or the bottom floats above
+                     SPAN_FLOAT (880); MED when the bottom is above 900.
+                     data-sky tokens (every part of sun/moon/cloud/...) and
+                     lone thin strokes (poles, kite strings) cannot carry it
+  mass_distribution  WHERE the ink sits within that extent: non-sky coverage
+                     (filled shapes by world bbox, unfilled strokes by traced
+                     stroke, unioned on a 5px grid) in three equal bands
+                     between TITLE_Y and CAPTION_Y. MED "hollow middle" when
+                     the middle band holds < MID_RATIO (0.40) of the heavier
+                     outer band's ink (the hourglass: decor/props on top, a
+                     figure strip on the ground line). Per-band numbers land
+                     in report["mass"] (extent in report["span"]);
+                     layout=activity/vignette/creative pages are measured
+                     but not judged
   figure_size        figures >= MIN_FIG_H px tall; faces r >= MIN_FACE_R
   caption_band       no art intrudes into the caption band (y > CAPTION_Y)
   title_band         no art intrudes into the title zone (y < TITLE_Y)
@@ -66,8 +68,14 @@ import xml.etree.ElementTree as ET
 W, H = 850, 1100
 BORDER_INSET = 28          # page()/spage() border rect inset
 CLEARANCE = 12             # guide rule: keep elements >=12px inside the border
-SPAN_TOP = 450             # guide rule: connected mass top <=450 ...
-SPAN_BOTTOM = 900          # ... and bottom >=900 (>=55% of page height)
+SPAN_MIN = 330             # scene extent floor (px, 30% of the page ~= one
+                           # kid_stand at 1.3): a scene shorter than one
+                           # foreground figure is a strip -> HIGH
+SPAN_FLOAT = 880           # scene bottom above this floats (HIGH) ...
+SPAN_BOTTOM = 900          # ... above this reads ungrounded (MED)
+ROW_INK_MIN = 0.02         # a row joins the extent only with >= 2% of the
+                           # drawable width (~16px) inked: a lone pole, kite
+                           # string or ray (one 5px cell per row) cannot carry it
 MIN_FIG_H = 180            # main figures >=180px tall
 MIN_FACE_R = 28.0          # faces r>=28 or trait features crowd
 CAPTION_Y = 1000           # caption band starts ~y1000 ("keep art above it")
@@ -80,12 +88,10 @@ TEXT_W_BOLD = 0.62         # (glyph-path text carries its exact data-w)
 MASS_CELL = 5              # coverage-grid pitch (px); 855/3 = 285 = 57 cells
 MID_RATIO = 0.40           # middle-band ink must reach >= 40% of the heavier
                            # outer band (calibrated: hourglass pages <= 0.30,
-                           # three-layer recipe pages >= 0.54; see
-                           # tests/test_validate.py mass_distribution tests)
+                           # composed scene pages >= 0.49; see the span + mass
+                           # tests in tests/test_validate.py)
 MASS_MIN_BAND = 5.0        # below this % in EVERY band the page is sparse, not
                            # hourglass-shaped (scene_span owns that failure)
-SKY_TOP_MIN = 2.0          # % ink required above the drawable midline (y~570)
-                           # once the span arithmetic claims the top is reached
 FG_FIG_H = 300             # ~kid_stand at scale 1.2 (hair + raised hand) — the
                            # recipe's foreground size; smaller figures get the
                            # "scale figures 1.2-1.4" advice
@@ -149,67 +155,166 @@ def _parse_transform(s):
     return m
 
 
-_PATH_TOK = re.compile(r"[MLQCZmlqcz]|-?\d+(?:\.\d+)?(?:e-?\d+)?")
+_PATH_TOK = re.compile(
+    r"[MmLlHhVvQqTtCcSsAaZz]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+_PATH_ARGS = {"M": 2, "L": 2, "H": 1, "V": 1, "Q": 4, "T": 2, "C": 6, "S": 4,
+              "A": 7}
+
+
+def _arc_points(p0, rx, ry, phi_deg, large, sweep, p1, steps):
+    """Endpoint-parameterized elliptical arc (SVG spec F.6.5) sampled ON the
+    curve, excluding p0."""
+    (x1, y1), (x2, y2) = p0, p1
+    rx, ry = abs(rx), abs(ry)
+    if rx == 0 or ry == 0 or (x1, y1) == (x2, y2):
+        return [(x2, y2)]
+    phi = math.radians(phi_deg)
+    cp, sp = math.cos(phi), math.sin(phi)
+    dx, dy = (x1 - x2) / 2, (y1 - y2) / 2
+    x1p, y1p = cp * dx + sp * dy, -sp * dx + cp * dy
+    lam = x1p ** 2 / rx ** 2 + y1p ** 2 / ry ** 2
+    if lam > 1:
+        rx, ry = rx * math.sqrt(lam), ry * math.sqrt(lam)
+    num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p
+    den = rx * rx * y1p * y1p + ry * ry * x1p * x1p
+    co = math.sqrt(max(0.0, num / den)) if den else 0.0
+    if bool(large) == bool(sweep):
+        co = -co
+    cxp, cyp = co * rx * y1p / ry, -co * ry * x1p / rx
+    cx = cp * cxp - sp * cyp + (x1 + x2) / 2
+    cy = sp * cxp + cp * cyp + (y1 + y2) / 2
+    ux, uy = (x1p - cxp) / rx, (y1p - cyp) / ry
+    vx, vy = (-x1p - cxp) / rx, (-y1p - cyp) / ry
+    th1 = math.atan2(uy, ux)
+    dth = math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
+    if not sweep and dth > 0:
+        dth -= 2 * math.pi
+    elif sweep and dth < 0:
+        dth += 2 * math.pi
+    if steps is None:
+        steps = max(2, min(48, int(max(rx, ry) * abs(dth) / 12) + 1))
+    out = []
+    for k in range(1, steps + 1):
+        t = th1 + dth * k / steps
+        ex, ey = rx * math.cos(t), ry * math.sin(t)
+        out.append((cx + cp * ex - sp * ey, cy + sp * ex + cp * ey))
+    return out
+
+
+def _path_polylines(d, steps=None):
+    """Full SVG path grammar -> list of local polylines sampled ON the curve.
+
+    Absolute AND relative M/L/H/V/Q/T/C/S/A/Z (charlib emits absolute
+    M/L/Q/C/Z only, but hand-authored or imported art uses the rest, and
+    pairing raw numbers even/odd misreads H/V's single argument). Control
+    points are not extents: a heart's C-handles reach ~1.5x past its lobes.
+    steps=None samples each curve adaptively (~12px chords); an int fixes it."""
+    toks = _PATH_TOK.findall(d or "")
+    polys, cur = [], []
+    x = y = sx = sy = 0.0
+    cmd, prev_ctrl, prev_kind = None, None, None
+    i, n = 0, len(toks)
+
+    def nsteps(ctrl_len):
+        return steps or max(2, min(48, int(ctrl_len / 12) + 1))
+
+    while i < n:
+        t = toks[i]
+        if t.isalpha():
+            cmd = t
+            i += 1
+            if cmd in "Zz":
+                if cur:
+                    cur.append((sx, sy))
+                    polys.append(cur)
+                cur = [(sx, sy)]
+                x, y, prev_kind = sx, sy, None
+            continue
+        up = cmd.upper() if cmd else None
+        k = _PATH_ARGS.get(up)
+        if k is None or i + k > n or any(v.isalpha() for v in toks[i:i + k]):
+            i += 1                          # malformed: always make progress
+            continue
+        v = [float(a) for a in toks[i:i + k]]
+        i += k
+        rel = cmd != up
+        ox, oy = (x, y) if rel else (0.0, 0.0)
+        if not cur:
+            cur = [(x, y)]
+        kind = None
+        if up == "M":
+            if len(cur) > 1:
+                polys.append(cur)
+            x, y = ox + v[0], oy + v[1]
+            sx, sy = x, y
+            cur = [(x, y)]
+            cmd = "l" if rel else "L"       # implicit lineto after a moveto
+        elif up == "L":
+            x, y = ox + v[0], oy + v[1]
+            cur.append((x, y))
+        elif up == "H":
+            x = ox + v[0]
+            cur.append((x, y))
+        elif up == "V":
+            y = oy + v[0]
+            cur.append((x, y))
+        elif up in "QT":
+            if up == "Q":
+                c, e = (ox + v[0], oy + v[1]), (ox + v[2], oy + v[3])
+            else:
+                c = ((2 * x - prev_ctrl[0], 2 * y - prev_ctrl[1])
+                     if prev_kind == "Q" else (x, y))
+                e = (ox + v[0], oy + v[1])
+            m_ = nsteps(math.hypot(c[0] - x, c[1] - y)
+                        + math.hypot(e[0] - c[0], e[1] - c[1]))
+            for s_ in range(1, m_ + 1):
+                u = s_ / m_
+                a, b, cc = (1 - u) ** 2, 2 * (1 - u) * u, u * u
+                cur.append((a * x + b * c[0] + cc * e[0],
+                            a * y + b * c[1] + cc * e[1]))
+            x, y = e
+            prev_ctrl, kind = c, "Q"
+        elif up in "CS":
+            if up == "C":
+                c1, c2 = (ox + v[0], oy + v[1]), (ox + v[2], oy + v[3])
+                e = (ox + v[4], oy + v[5])
+            else:
+                c1 = ((2 * x - prev_ctrl[0], 2 * y - prev_ctrl[1])
+                      if prev_kind == "C" else (x, y))
+                c2, e = (ox + v[0], oy + v[1]), (ox + v[2], oy + v[3])
+            m_ = nsteps(math.hypot(c1[0] - x, c1[1] - y)
+                        + math.hypot(c2[0] - c1[0], c2[1] - c1[1])
+                        + math.hypot(e[0] - c2[0], e[1] - c2[1]))
+            for s_ in range(1, m_ + 1):
+                u = s_ / m_
+                a, b = (1 - u) ** 3, 3 * (1 - u) ** 2 * u
+                cc, dd = 3 * (1 - u) * u * u, u ** 3
+                cur.append((a * x + b * c1[0] + cc * c2[0] + dd * e[0],
+                            a * y + b * c1[1] + cc * c2[1] + dd * e[1]))
+            x, y = e
+            prev_ctrl, kind = c2, "C"
+        elif up == "A":
+            e = (ox + v[5], oy + v[6])
+            cur.extend(_arc_points((x, y), v[0], v[1], v[2], v[3], v[4], e,
+                                   steps))
+            x, y = e
+        prev_kind = kind
+    if len(cur) > 1:
+        polys.append(cur)
+    return polys
 
 
 def _path_points(d, steps=12):
-    """Sample an absolute M/L/Q/C/Z path (charlib's only path grammar) into
-    points ON the curve. Control points are not extents: a heart's C-handles
-    reach ~1.5x past its lobes, and pairing raw numbers made border/band
-    checks fire on art that was visibly well inside the margin."""
-    toks = _PATH_TOK.findall(d)
-    pts, cur, start, cmd, i = [], (0.0, 0.0), (0.0, 0.0), "M", 0
-
-    def nums(n):
-        nonlocal i
-        vals = [float(v) for v in toks[i:i + n]]
-        i += n
-        return vals
-
-    while i < len(toks):
-        if toks[i].isalpha():
-            cmd = toks[i].upper()
-            i += 1
-            if cmd == "Z":
-                cur = start
-                continue
-        if i >= len(toks) or toks[i].isalpha():
-            continue
-        if cmd == "M":
-            x, y = nums(2)
-            cur = start = (x, y)
-            pts.append(cur)
-            cmd = "L"
-        elif cmd == "L":
-            x, y = nums(2)
-            cur = (x, y)
-            pts.append(cur)
-        elif cmd == "Q":
-            cx_, cy_, x, y = nums(4)
-            for k in range(1, steps + 1):
-                t = k / steps
-                u = 1 - t
-                pts.append((u * u * cur[0] + 2 * u * t * cx_ + t * t * x,
-                            u * u * cur[1] + 2 * u * t * cy_ + t * t * y))
-            cur = (x, y)
-        elif cmd == "C":
-            c1x, c1y, c2x, c2y, x, y = nums(6)
-            for k in range(1, steps + 1):
-                t = k / steps
-                u = 1 - t
-                pts.append((u ** 3 * cur[0] + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t ** 3 * x,
-                            u ** 3 * cur[1] + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t ** 3 * y))
-            cur = (x, y)
-        else:           # unknown command: skip a token so we always progress
-            i += 1
-    return pts
+    """Every on-curve sample point of a path (bbox extents)."""
+    return [pt for poly in _path_polylines(d, steps) for pt in poly]
 
 
 def _local_bbox(el):
     """Conservative local bbox of an element, or None if not measurable.
 
-    Paths are sampled ON the curve (charlib only emits absolute M/L/Q/C/Z
-    commands) — control-point boxes overshot curved art by up to ~50%."""
+    Paths are sampled ON the curve via the full path grammar (H/V and
+    relative commands included) — control-point boxes overshot curved art by
+    up to ~50%, and even/odd number pairing misread H/V."""
     tag = el.tag.replace(_SVG_NS, "")
     g = el.get
     try:
@@ -381,85 +486,10 @@ def _collect(root, runs=None):
     return items, mats, layouts
 
 
-_PATH_TOKEN_RE = re.compile(r"[A-Za-z]|-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
-
-
 def _flatten_path(d):
-    """Absolute M/L/H/V/Q/C/Z path data -> list of local polylines.
-
-    Curves are flattened by sampling, so an open hill arc covers its real
-    crest (ground-h) instead of its control point (ground-2h). Returns None
-    for anything else (relative/arc commands) so callers fall back to bbox."""
-    toks = _PATH_TOKEN_RE.findall(d or "")
-    polys, cur = [], []
-    x = y = sx = sy = 0.0
-    cmd, i = None, 0
-    try:
-        while i < len(toks):
-            t = toks[i]
-            if t.isalpha():
-                cmd = t
-                i += 1
-                if cmd in ("Z", "z"):
-                    if cur:
-                        cur.append((sx, sy))
-                        polys.append(cur)
-                    cur = [(sx, sy)]
-                    x, y = sx, sy
-                continue
-            if cmd == "M":
-                if len(cur) > 1:
-                    polys.append(cur)
-                x, y = float(toks[i]), float(toks[i + 1])
-                sx, sy = x, y
-                cur = [(x, y)]
-                i += 2
-                cmd = "L"          # implicit lineto after a moveto pair
-            elif cmd == "L":
-                x, y = float(toks[i]), float(toks[i + 1])
-                cur.append((x, y))
-                i += 2
-            elif cmd == "H":
-                x = float(toks[i])
-                cur.append((x, y))
-                i += 1
-            elif cmd == "V":
-                y = float(toks[i])
-                cur.append((x, y))
-                i += 1
-            elif cmd in ("Q", "C"):
-                n = 4 if cmd == "Q" else 6
-                v = [float(t_) for t_ in toks[i:i + n]]
-                if len(v) < n:
-                    return None
-                pts = [(x, y)] + [(v[k], v[k + 1]) for k in range(0, n, 2)]
-                ctrl = sum(math.hypot(pts[k + 1][0] - pts[k][0],
-                                      pts[k + 1][1] - pts[k][1])
-                           for k in range(len(pts) - 1))
-                steps = max(2, min(48, int(ctrl / 12) + 1))
-                for s in range(1, steps + 1):
-                    u = s / steps
-                    if cmd == "Q":
-                        a, b, c = (1 - u) ** 2, 2 * (1 - u) * u, u * u
-                        px = a * pts[0][0] + b * pts[1][0] + c * pts[2][0]
-                        py = a * pts[0][1] + b * pts[1][1] + c * pts[2][1]
-                    else:
-                        a, b = (1 - u) ** 3, 3 * (1 - u) ** 2 * u
-                        c, e = 3 * (1 - u) * u * u, u ** 3
-                        px = (a * pts[0][0] + b * pts[1][0] + c * pts[2][0]
-                              + e * pts[3][0])
-                        py = (a * pts[0][1] + b * pts[1][1] + c * pts[2][1]
-                              + e * pts[3][1])
-                    cur.append((px, py))
-                x, y = pts[-1]
-                i += n
-            else:
-                return None
-    except (IndexError, ValueError):
-        return None
-    if len(cur) > 1:
-        polys.append(cur)
-    return polys
+    """Path data -> local polylines with adaptive curve sampling (strokes for
+    the mass grid). Never None: the full grammar is parsed."""
+    return _path_polylines(d)
 
 
 def _stroke_polylines(it):
@@ -603,20 +633,24 @@ def _line_endpoints(items):
 
 
 # ------------------------------------------------------------------ checks
-def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
+def validate_svg(svg_str, *, clearance=CLEARANCE, span_min=SPAN_MIN,
                  span_bottom=SPAN_BOTTOM, min_fig_h=MIN_FIG_H,
                  min_face_r=MIN_FACE_R, caption_y=CAPTION_Y, title_y=TITLE_Y,
                  require_span=True, mid_ratio=MID_RATIO):
     """Validate one serialized page SVG. Returns a report dict:
-    {ok, findings: [{severity, check, msg}], counts, mass}.
+    {ok, findings: [{severity, check, msg}], counts, span, mass}.
+
+    `span` is the scene_span measurement: {top, bottom, px, raw_top} — the
+    extent of ink-bearing rows (raw_top also counts lone thin strokes).
 
     `mass` is the mass_distribution measurement (always computed, even when
     a layout opt-out or require_span=False suppresses the finding):
     {bands: {top, mid, bottom}, mid_upper, mid_lower, upper_half, edges,
     judged, skip} — percentages of the band area covered by non-sky scene
     ink; `skip` names why a page was not judged (layout opt-out, ...).
-    require_span=False skips both composition checks (scene_span and
-    mass_distribution)."""
+    Ownership: scene_span owns the scene's vertical EXTENT (strip pages,
+    floating scenes: HIGH); mass_distribution owns where ink sits WITHIN the
+    page (hollow middle: MED). require_span=False skips both."""
     findings = []
 
     def add(sev, check, msg):
@@ -654,53 +688,65 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
     tallest = max((b[3] - b[1] for b in figs.values()), default=0.0)
 
     # ---- scene span (sky tokens excluded) ----------------------------------
+    # EXTENT of the non-sky scene: from the first ink-bearing row (>=
+    # ROW_INK_MIN of the width inked, so a lone pole / kite string / ray
+    # cannot carry it) to the lowest ink. Min/max over bboxes used to pass
+    # every scene-kit page on its sun rays alone.
     mass_items = [it for it in visible
                   if not it.chrome and not it.text
                   and it.el.get("data-sky") != "1" and it.wbbox]
-    mass = [it.wbbox for it in mass_items]
+    prof = _mass_profile(mass_items, title_y, caption_y)
     span_high = False        # scene_span already failed the page outright
-    span_top_item = None     # element whose top satisfied the <=span_top rule
-    if mass and require_span:
-        top = min(b[1] for b in mass)
-        bot = max(b[3] for b in mass)
+    span_rep = None
+    relaxed = is_activity or "creative" in layouts
+    if mass_items:
+        raw_top = min(it.wbbox[1] for it in mass_items)
+        bot = max(it.wbbox[3] for it in mass_items)
+        r0 = next((r for r, c in enumerate(prof) if c >= ROW_INK_MIN), None)
+        top = max(raw_top, title_y + r0 * MASS_CELL) if r0 is not None \
+            else raw_top
         span = bot - top
-        need = 0.55 * H
-        if span < need:
-            if is_activity or "creative" in layouts:
+        span_rep = {"top": round(top), "bottom": round(bot),
+                    "px": round(span), "raw_top": round(raw_top)}
+    if mass_items and require_span:
+        thin = (f"; the lone thin stroke reaching y={raw_top:.0f} carries no "
+                f"mass" if top - raw_top > 2 * MASS_CELL else "")
+        problems = []
+        if span < span_min:
+            problems.append(
+                f"scene spans {span:.0f}px ({top:.0f}..{bot:.0f}, "
+                f"{100 * span / H:.0f}% of the page); need >= {span_min}px "
+                f"(~one foreground figure) — a strip on the ground line: add "
+                f"a midground anchor whose top reaches y~450-550 and/or "
+                f"scale figures up; sky tokens don't count{thin}")
+        if bot < SPAN_FLOAT:
+            problems.append(
+                f"scene bottom y={bot:.0f} floats above the ground zone "
+                f"(want >= {span_bottom}; HIGH below {SPAN_FLOAT})")
+        for msg in problems:
+            if relaxed:
                 add("LOW", "scene_span",
-                    f"scene mass spans {span:.0f}px (fine for an "
-                    f"data-layout=activity page)")
+                    msg + " (fine for a data-layout=activity/creative page)")
             else:
                 span_high = True
-                add("HIGH", "scene_span",
-                    f"scene mass spans {span:.0f}px ({top:.0f}..{bot:.0f}); "
-                    f"need >= {need:.0f}px — add midground anchors, not sky "
-                    f"tokens")
-        else:
-            if top > span_top:
-                add("MED", "scene_span",
-                    f"scene top y={top:.0f} (want <= {span_top}): bottom-crammed")
-            else:
-                span_top_item = min(mass_items, key=lambda it_: it_.wbbox[1])
-            if bot < span_bottom:
-                add("MED", "scene_span",
-                    f"scene bottom y={bot:.0f} (want >= {span_bottom}): "
-                    f"scene floats above the caption band")
+                add("HIGH", "scene_span", msg)
+        if not problems and bot < span_bottom and not relaxed:
+            add("MED", "scene_span",
+                f"scene bottom y={bot:.0f} (want >= {span_bottom}): "
+                f"scene floats above the caption band")
 
     # ---- mass distribution (hourglass / hollow-middle guard) ---------------
-    # scene_span is min/max arithmetic: ANY element near y<=450 satisfies it
-    # (the scene kits' sun rays at y~151 are not sky-tagged, so every kit page
-    # passes), while the art sits in a strip on the ground line. Measure WHERE
-    # the ink is: three equal bands between the title zone and caption band.
+    # scene_span only knows the EXTENT; an hourglass (props/decor up top, a
+    # figure strip on the ground line, nothing between) passes it. Measure
+    # WHERE the ink is: three equal bands between title zone and caption band.
     band_h = (caption_y - title_y) / 3.0
     edges = [title_y + k * band_h for k in range(4)]
-    prof = _mass_profile(mass_items, title_y, caption_y)
     nr = len(prof)
     cut = [round(k * nr / 3) for k in range(4)]
     mid_half = (cut[1] + cut[2]) // 2
 
-    def pct(r0, r1):
-        return round(100.0 * sum(prof[r0:r1]) / max(1, r1 - r0), 1)
+    def pct(r0_, r1_):
+        return round(100.0 * sum(prof[r0_:r1_]) / max(1, r1_ - r0_), 1)
 
     b_top, b_mid, b_bot = (pct(cut[k], cut[k + 1]) for k in range(3))
     mass_rep = {
@@ -730,27 +776,17 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
             fix = (f"figures are already foreground-sized ({tallest:.0f}px), "
                    f"so {anchor}")
         elif tallest > 0:
-            fix = (f"{anchor}, and/or scale foreground figures to 1.2-1.4 "
-                   f"(tallest figure {tallest:.0f}px; want >= {FG_FIG_H})")
+            fix = (f"{anchor}, and/or scale foreground figures to "
+                   f"{FG_FIG_H}-380px (kid_stand 1.2-1.5; tallest figure "
+                   f"{tallest:.0f}px)")
         else:
-            fix = f"{anchor}, and/or scale the foreground subject 1.2-1.4"
+            fix = f"{anchor}, and/or scale the foreground subject up"
         if heavy >= MASS_MIN_BAND and b_mid < mid_ratio * heavy:
             add("MED", "mass_distribution",
                 f"middle band (y {edges[1]:.0f}-{edges[2]:.0f}) {b_mid:.1f}% "
                 f"ink vs {heavy_name} band {heavy:.1f}% (ratio "
                 f"{b_mid / heavy:.2f} < {mid_ratio:.2f}): hollow middle — "
                 f"{fix}")
-        if (span_top_item is not None
-                and mass_rep["upper_half"] < SKY_TOP_MIN):
-            tb = span_top_item.wbbox
-            add("MED", "mass_distribution",
-                f"sky-only top: scene_span's top y={tb[1]:.0f} is a lone "
-                f"{tb[2] - tb[0]:.0f}x{tb[3] - tb[1]:.0f}px {span_top_item.tag} "
-                f"(thin prop or untagged sky decoration, e.g. sun rays) and "
-                f"only {mass_rep['upper_half']:.1f}% ink sits above "
-                f"y={title_y + mid_half * MASS_CELL:.0f} (need >= "
-                f"{SKY_TOP_MIN:.0f}%): the scene is a strip on the ground "
-                f"line — {fix}")
 
     # ---- figure size & faces -------------------------------------------------
     if figs:
@@ -767,6 +803,12 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
                 f"face r={fr:.0f} below {min_face_r} — trait features crowd")
 
     # ---- caption / title bands ------------------------------------------------
+    # sky decoration may share the title ZONE (corner sun) but never the
+    # title INK (glyphs + underline): kit suns at title height were a real
+    # collision defect, and sun rays are sky-tagged now
+    title_ink = [it.wbbox for it in visible
+                 if it.chrome and it.wbbox and it.wbbox[3] <= title_y + 5]
+    sky_hits = []
     for it in visible:
         if it.chrome or it.text or not it.wbbox:
             continue
@@ -774,10 +816,21 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
             add("HIGH", "caption_band",
                 f"{it.tag} bottom reaches y={it.wbbox[3]:.0f} into the caption "
                 f"band (> {caption_y})")
-        if it.wbbox[1] < title_y and it.el.get("data-sky") != "1":
-            add("MED", "title_band",
-                f"{it.tag} top at y={it.wbbox[1]:.0f} intrudes into the title "
-                f"zone (< {title_y})")
+        if it.wbbox[1] < title_y:
+            if it.el.get("data-sky") != "1":
+                add("MED", "title_band",
+                    f"{it.tag} top at y={it.wbbox[1]:.0f} intrudes into the "
+                    f"title zone (< {title_y})")
+            elif any(_intersects(_inflate(it.wbbox, 4), tb)
+                     for tb in title_ink):
+                sky_hits.append(it.wbbox)
+    if sky_hits:
+        u = [round(min(b[0] for b in sky_hits)), round(min(b[1] for b in sky_hits)),
+             round(max(b[2] for b in sky_hits)), round(max(b[3] for b in sky_hits))]
+        add("MED", "title_band",
+            f"sky decoration at {u} ({len(sky_hits)} shape(s)) collides with "
+            f"the page title — move it below y~{title_y + 70} or clear of "
+            f"the title text")
 
     # ---- text fit ---------------------------------------------------------------
     # glyph-path runs: EXACT measured width (data-w) in parent coordinates,
@@ -1081,20 +1134,20 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_top=SPAN_TOP,
     for m_ in re.finditer(r'([a-zA-Z-]+)="(-?\d+\.\d{3,})"', svg_str):
         add("LOW", "float_noise",
             f"attribute {m_.group(1)}='{m_.group(2)}' has excess decimals")
-    # relative path commands make bbox pairing approximate — charlib emits
-    # absolute geometry only; flag stragglers so bboxes stay trustworthy
+    # relative path commands are measured exactly, but charlib's convention
+    # is absolute geometry only (diffable, greppable helper output)
     for el_ in root.iter():
         d_ = el_.get("d") if hasattr(el_, "get") else None
         if d_ and re.search(r"[a-z]", re.sub(r"[^a-zA-Z]", "", d_)):
             add("LOW", "relative_path",
-                "path uses relative commands — bbox approximate; charlib "
-                "convention is absolute commands only")
+                "path uses relative commands — charlib convention is "
+                "absolute commands only")
 
     counts = {"HIGH": 0, "MED": 0, "LOW": 0}
     for f_ in findings:
         counts[f_["severity"]] += 1
     return {"ok": counts["HIGH"] == 0, "findings": findings, "counts": counts,
-            "mass": mass_rep}
+            "span": span_rep, "mass": mass_rep}
 
 
 # ------------------------------------------------------------------ file/book API
@@ -1165,10 +1218,11 @@ if __name__ == "__main__":
     for pth in paths:
         rep = validate_file(pth)
         print(f"== {pth}: {'OK' if rep['ok'] else 'FAIL'} {rep['counts']}")
-        mb = rep["mass"]
-        print(f"   mass bands top/mid/bottom {mb['bands']['top']:.1f}/"
-              f"{mb['bands']['mid']:.1f}/{mb['bands']['bottom']:.1f}% "
-              f"(above midline {mb['upper_half']:.1f}%)"
+        mb, sp = rep["mass"], rep["span"]
+        ext = (f"scene y{sp['top']}-{sp['bottom']} ({sp['px']}px); "
+               if sp else "")
+        print(f"   {ext}mass bands top/mid/bottom {mb['bands']['top']:.1f}/"
+              f"{mb['bands']['mid']:.1f}/{mb['bands']['bottom']:.1f}%"
               + ("" if mb["judged"] else f" [not judged: {mb['skip']}]"))
         for f_ in rep["findings"]:
             print(f"   [{f_['severity']}] {f_['check']}: {f_['msg']}")

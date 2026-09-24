@@ -51,6 +51,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 ### motifs
 
 - `star`
+- `sky` — Tag EVERY shape in `fragment` data-sky="1" — sky decoration, excluded
 - `sparkle`
 - `heart`
 - `cloud`
@@ -251,12 +252,12 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 ### space pack
 
 - `star_field` — Deterministic star/sparkle scatter on a jittered grid — uniform
-- `moon` — Moon disc with asymmetric craters (unpaired heights).
+- `moon` — Moon disc with asymmetric craters (unpaired heights). Sky decoration
 - `crater_ground` — Moon/lunar surface: ground stroke + shallow crater rims (ground = y).
 - `ufo` — Flying saucer centred (cx, cy): dome + saucer + lights (+ alien).
 - `satellite` — Satellite: body + solar panel wings + dish, centred (cx, cy).
 - `telescope` — Tripod telescope aimed up-right, feet on ground_y: three legs splayed
-- `shooting_star` — Comet: star head + three swoosh trails up-left.
+- `shooting_star` — Comet: star head + three swoosh trails up-left. Sky decoration: head
 ### nature pack
 
 - `fish` — Side-view fish swimming right, centred (cx, cy) — no ground line.
