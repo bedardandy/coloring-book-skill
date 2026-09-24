@@ -95,7 +95,9 @@ geometry if needed).
 `word()` / `word_width()` / `banner(text, cy)` (ribbon auto-sized from glyph
 metrics — text-in-box overflow is impossible) / `name_trace_page(["Name", ...])`
 (ruled guidelines + dashed trace-style letters + start stars). No font needs to
-be installed; glyphs are real closed paths kids can color. All page text
+be installed; glyphs are real closed paths kids can color, dilated to a
+thick colorable body (`body=` em fraction, default 0.07; `body=0` = legacy
+thin outline) with overlap-free outlines and open counters. All page text
 (`TXT()`, titles, captions, page numbers) is drawn from the same outlines via
 `text_path()` so renders are identical on every machine — set
 `charlib.TEXT_MODE = "font"` to revert to legacy `<text>` elements.

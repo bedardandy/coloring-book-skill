@@ -1222,7 +1222,7 @@ def otext(x, y, s, size, sw=3, anchor="middle"):
         return (f'<text x="{x}" y="{y}" font-family="DejaVu Sans" font-size="{size}" '
                 f'font-weight="bold" text-anchor="{anchor}" fill="white" stroke="black" '
                 f'stroke-width="{sw}" letter-spacing="10">{_xml_escape(str(s))}</text>')
-    tw = word_width(s, size, tracking=10)
+    tw = word_width(s, size, tracking=10, sw=sw)
     xc = x + tw / 2 if anchor == "start" else (x - tw / 2 if anchor == "end" else x)
     return word(s, xc, y, size, tracking=10, style="colorable", sw=sw)
 
@@ -3086,56 +3086,165 @@ dog = _smooth_dog
 # (_letters() loader + the page-text engine live near TXT() at the top.)
 
 
-def letter(ch, x, y_base, size=120, style="colorable", sw=4):
-    """One glyph as an SVG path. (x, y_base) = LEFT edge ON THE BASELINE.
-    style: "colorable" (white fill + outline) or "trace" (dashed outline to
-    trace along with a crayon). Unknown characters render nothing."""
+HOLLOW_BODY = 0.07   # hollow-letter dilation per side, in em (see letter())
+TRACE_DASH = (9, 7)  # trace-style band: black dash / gap lengths, page px
+
+
+def _hollow_dilation(size, sw, body):
+    """Outward dilation D (page px) of a hollow glyph: the letter's outer
+    edge sits D outside the font outline and its black band (width sw) runs
+    from D - sw to D. 0 = legacy single thin outline (body <= 0)."""
+    body = HOLLOW_BODY if body is None else body
+    if body <= 0:
+        return 0.0
+    return max(body * size, sw)
+
+
+_CONTOURS = {}
+
+
+def _glyph_contours(ch):
+    """[(depth, area, d)] per contour of a glyph, in paint order. depth =
+    how many other contours enclose it (even = ink, odd = counter/hole);
+    solids at one depth are sorted largest-first so dots and accents paint
+    OVER the body they sit near. Cached per glyph."""
+    if ch not in _CONTOURS:
+        subs = ["M" + p for p in _letters()["letters"][ch]["d"].split("M") if p]
+        polys = []
+        for sp in subs:
+            nums = [float(v) for v in re.findall(r"-?\d+(?:\.\d+)?", sp)]
+            polys.append(list(zip(nums[0::2], nums[1::2])))
+
+        def inside(pt, poly):   # even-odd ray cast on the control polygon
+            x, y = pt
+            hit = False
+            for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
+                if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+                    hit = not hit
+            return hit
+
+        out = []
+        for i, poly in enumerate(polys):
+            depth = sum(1 for j, q in enumerate(polys)
+                        if j != i and inside(poly[0], q))
+            xs, ys = [p_[0] for p_ in poly], [p_[1] for p_ in poly]
+            area = (max(xs) - min(xs)) * (max(ys) - min(ys))
+            out.append((depth, -area, i, subs[i]))
+        _CONTOURS[ch] = [(dp, -na, d_) for dp, na, _i, d_ in sorted(out)]
+    return _CONTOURS[ch]
+
+
+def letter(ch, x, y_base, size=120, style="colorable", sw=4, body=None):
+    """One HOLLOW glyph. (x, y_base) = LEFT edge of its advance box ON THE
+    BASELINE. style: "colorable" (white body inside a black band sw wide)
+    or "trace" (the band is dashed, to trace along with a crayon). Unknown
+    characters render nothing.
+
+    Thin font stems (~0.09 em) leave an uncolorable ~10px channel when
+    merely outlined, so every INK contour is DILATED outward by
+    D = body*size (em fraction, default HOLLOW_BODY; never less than sw)
+    with layers of the same contour path:
+      (a) fill+stroke black, stroke 2D        -> dilated black silhouette
+      (b) fill+stroke white, stroke 2(D-sw)   -> leaves a solid band sw wide
+      (c) trace only: white dashed stroke 2D+2 over the band -> dashes
+    COUNTER contours (A/B/O/R holes, found by containment depth) are NOT
+    dilated — shrinking them by D would close A's counter outright at
+    stem-doubling weights — they get a centred band sw wide instead (dashed
+    for trace). Each ink contour paints separately, largest first, so a dot
+    or accent that the dilation pushes into its letter reads as a separate
+    outlined shape on top rather than fusing. Overlap-free outlines
+    (tools/build_font.py) keep interiors line-free.
+    The glyph is drawn D/2 right of x and its advance widens by D (like a
+    real bold: gaps tighten by D, letters never collide at the call sites'
+    tracking); word_width() includes it, and the outer layers carry
+    data-bleed so lib/validate.py measures the dilated ink exactly.
+    body=0 restores the legacy single centred outline."""
     L = _letters()["letters"].get(ch)
     if not L or not L.get("d"):
         return ""
     s = size / _letters()["upem"]
-    fill = 'fill="none"' if style == "trace" else 'fill="white"'
-    dash = ' stroke-dasharray="9 8"' if style == "trace" else ""
-    return (f'<path d="{L["d"]}" {fill} stroke="black" '
-            f'stroke-width="{_f(sw / s)}"{dash} '
-            f'data-letter="{_xml_escape(ch, {chr(34): "&quot;"})}" '
-            f'transform="translate({_f(x)},{_f(y_base)}) '
-            f'scale({_fs(s)},-{_fs(s)})"/>')
+    esc = _xml_escape(ch, {'"': "&quot;"})
+    D = _hollow_dilation(size, sw, body)
+    if D == 0:   # legacy thin outline
+        fill = 'fill="none"' if style == "trace" else 'fill="white"'
+        dash = ' stroke-dasharray="9 8"' if style == "trace" else ""
+        return (f'<path d="{L["d"]}" {fill} stroke="black" '
+                f'stroke-width="{_f(sw / s)}"{dash} data-letter="{esc}" '
+                f'transform="translate({_f(x)},{_f(y_base)}) '
+                f'scale({_fs(s)},-{_fs(s)})"/>')
+    join = 'stroke-linejoin="round"'
+    dash_len, gap_len = TRACE_DASH
+    inner = 2 * (D - sw) / s
+    layers = []
+    for depth, _area, d in _glyph_contours(ch):
+        if depth % 2:   # counter: undilated, centred band
+            dash = (f' stroke-dasharray="{_f(dash_len / s)} {_f(gap_len / s)}"'
+                    if style == "trace" else "")
+            layers.append(f'<path d="{d}" fill="none" stroke="black" '
+                          f'stroke-width="{_f(sw / s)}" {join}{dash}/>')
+            continue
+        layers.append(f'<path d="{d}" fill="black" stroke="black" '
+                      f'stroke-width="{_f(2 * D / s)}" {join} '
+                      f'data-bleed="{_f(D / s)}"/>')
+        wl = (f' stroke="white" stroke-width="{_f(inner)}" {join}'
+              if inner > 0 else "")
+        layers.append(f'<path d="{d}" fill="white"{wl}/>')
+        if style == "trace":
+            # white DASHES erase the band; the black band shows in the GAPS
+            layers.append(f'<path d="{d}" fill="none" stroke="white" '
+                          f'stroke-width="{_f((2 * D + 2) / s)}" {join} '
+                          f'stroke-dasharray="{_f(gap_len / s)} {_f(dash_len / s)}"/>')
+    return (f'<g data-letter="{esc}" fill-rule="nonzero" '
+            f'transform="translate({_f(x + D / 2)},{_f(y_base)}) '
+            f'scale({_fs(s)},-{_fs(s)})">' + "".join(layers) + "</g>")
 
 
-def word_width(text, size=120, tracking=10):
-    """Exact rendered width of word() from glyph advances."""
+def word_width(text, size=120, tracking=10, body=None, sw=4):
+    """Exact width of word(): glyph advances + the hollow dilation (D per
+    inked glyph, plus D/2 overhang at each end — see letter()) + tracking
+    between glyphs. The dilated ink always lies within this width."""
     L = _letters()["letters"]
     run = _resolve_text(text)
     adv = sum(L[c]["adv"] for c in run)
-    return adv * size / _letters()["upem"] + tracking * max(0, len(run) - 1)
+    D = _hollow_dilation(size, sw, body)
+    inked = sum(1 for c in run if L[c]["d"])
+    return (adv * size / _letters()["upem"] + D * inked + (D if inked else 0)
+            + tracking * max(0, len(run) - 1))
 
 
 def word(text, x_center, y_base, size=120, tracking=10, style="colorable",
-         sw=4):
-    """A run of glyphs centered on x_center, sitting on y_base."""
-    total = word_width(text, size, tracking)
-    out, pen = [], x_center - total / 2
+         sw=4, body=None):
+    """A run of hollow glyphs centered on x_center, sitting on y_base (the
+    dilated band dips D = body*size below it). The group carries data-x0 /
+    data-w: the exact extent INCLUDING the dilation."""
+    total = word_width(text, size, tracking, body=body, sw=sw)
+    D = _hollow_dilation(size, sw, body)
+    L, k = _letters()["letters"], size / _letters()["upem"]
+    x0 = x_center - total / 2
+    out, pen = [], x0 + D / 2          # D/2 end overhang (see word_width)
     for ch in _resolve_text(text):   # accents fall back like text_path()
-        out.append(letter(ch, pen, y_base, size, style=style, sw=sw))
-        pen += (_letters()["letters"][ch]["adv"]
-                * size / _letters()["upem"] + tracking)
-    return ('<g data-word="' + _xml_escape(text, {'"': "&quot;"}) + '">'
+        out.append(letter(ch, pen, y_base, size, style=style, sw=sw,
+                          body=body))
+        pen += L[ch]["adv"] * k + (D if L[ch]["d"] else 0) + tracking
+    return (f'<g data-word="{_xml_escape(text, {chr(34): "&quot;"})}" '
+            f'data-x0="{_f(x0)}" data-w="{_f(total)}">'
             + "".join(out) + "</g>")
 
 
 def banner(text, cy, size=64, sw=SW, pad_x=28, style="colorable",
-           x_center=None, w=W, rounded=16):
-    """Ribbon sized EXACTLY for its text (glyph-metric width), centered by
-    default. Text-in-box overflow is impossible by construction; if the
-    ribbon itself would exceed the page, validate_svg's border check fires."""
+           x_center=None, w=W, rounded=16, body=None, tracking=None):
+    """Ribbon sized EXACTLY for its text (glyph-metric width, hollow
+    dilation included, tracking default size*0.08), centered by default.
+    Text-in-box overflow is impossible by construction; if the ribbon
+    itself would exceed the page, validate_svg's border check fires."""
     xc = W / 2 if x_center is None else x_center
-    tw = word_width(text, size)
+    tr = size * 0.08 if tracking is None else tracking
+    tw = word_width(text, size, tracking=tr, body=body)
     bw = tw + 2 * pad_x
     bh = int(size * 1.55)
     out = [rrect(xc - bw / 2, cy - bh / 2, bw, bh, rounded, sw, "white")]
     out.append(word(text, xc, cy + size * 0.36, size=size,
-                    tracking=size * 0.08, style=style))
+                    tracking=tr, style=style, body=body))
     return "".join(out)
 
 
@@ -3156,20 +3265,27 @@ def name_trace_page(names, title="Trace Your Names!", num=None,
     top0, bot0 = 300, 950
     slot = (bot0 - top0) / max(1, n)
     max_w = W - 2 * 130  # room for the start star + border margin
+    F = _letters()
+    cap = F["letters"]["H"]["ymax"] / F["upem"]   # cap height, em
     for i, nm in enumerate(names):
         base_y = top0 + slot * i + slot * 0.72
         # auto-fit: shrink oversized names so star + letters clear the border
         size = row_size
         if word_width(nm.upper(), size, tracking=12) > max_w:
             size = row_size * max_w / word_width(nm.upper(), size, tracking=12)
-        asc = size * 0.75
+        # hollow letters are dilated by D: lift the glyph baseline by D + gap
+        # so the dashed band clears the solid baseline by `gap` px, and put
+        # the top line `gap` px above the dilated cap height — neither ruled
+        # line runs along (and swallows) a letter's dashed edge
+        D, gap = _hollow_dilation(size, 4, None), 6
+        asc = size * cap + 2 * D + 2 * gap
         rows.append(guideline(70, W - 70, base_y))
         rows.append(stitch_dash(70, base_y - asc, W - 70, base_y - asc, sw=2.5, dash="6 6"))
         rows.append(stitch_dash(70, base_y - asc * 0.5, W - 70, base_y - asc * 0.5,
                                 sw=2, dash="4 8"))
         ww = word_width(nm.upper(), size, tracking=12)
         x0 = W / 2 - ww / 2
-        rows.append(word(nm.upper(), W / 2, base_y, size=size,
+        rows.append(word(nm.upper(), W / 2, base_y - D - gap, size=size,
                          tracking=12, style="trace"))
         rows.append(star(x0 - 34, base_y - size * 0.18, 14, 3.5, "white"))
     body = "".join(rows)

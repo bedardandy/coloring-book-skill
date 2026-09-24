@@ -272,5 +272,176 @@ def test_otext_routes_to_colorable_word():
     assert "<text" not in out and 'data-word="MAX"' in out
     assert out.count('fill="white"') == 3
     start = otext(100, 400, "MAX", 150, 4, anchor="start")
-    xs = [float(v) for v in re.findall(r'translate\(([-0-9.]+),', start)]
-    assert min(xs) == pytest.approx(100, abs=0.1)
+    assert float(ET.fromstring(start).get("data-x0")) == pytest.approx(100, abs=0.1)
+
+
+# ---------------------------------------------------------------- hollow letters
+# (letter / word / banner / name_trace_page / otext): dilated body, overlap-
+# free outlines, open counters, dashed trace band. Raster checks render the
+# page band y in [_Y0, _Y0 + _BH) at 4x, so widths resolve to 0.25px.
+_SC, _Y0, _BH = 4, 380, 260
+
+
+def _mask(frag):
+    """Boolean ink mask (dark pixels) of a fragment on white; row r is page
+    y = _Y0 + r / _SC, column c is page x = c / _SC."""
+    cairosvg = pytest.importorskip("cairosvg")
+    import io
+    import numpy as np
+    from PIL import Image
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{_BH}" '
+           f'viewBox="0 {_Y0} {W} {_BH}"><rect y="{_Y0}" width="{W}" '
+           f'height="{_BH}" fill="white"/>{frag}</svg>')
+    png = cairosvg.svg2png(bytestring=svg.encode(), output_width=W * _SC)
+    return np.array(Image.open(io.BytesIO(png)).convert("L")) < 128
+
+
+def _row_runs(row):
+    out, cur, n = [], bool(row[0]), 0
+    for v in row:
+        if bool(v) == cur:
+            n += 1
+        else:
+            out.append((cur, n))
+            cur, n = bool(v), 1
+    out.append((cur, n))
+    return out
+
+
+def _stem(size, sw=4, ch="I"):
+    """(outer stem width, colorable channel) in px across a hollow stem."""
+    m = _mask(charlib.word(ch, 425, 600, size=size, sw=sw))
+    r = _row_runs(m[int((600 - size * 0.33 - _Y0) * _SC)])
+    first = next(i for i, (v, _n) in enumerate(r) if v)
+    b = [i for i, (v, _n) in enumerate(r) if v][:2]
+    assert b[0] == first and len(b) == 2, r
+    outer = sum(n for _v, n in r[b[0]:b[1] + 1]) / _SC
+    channel = sum(n for _v, n in r[b[0] + 1:b[1]]) / _SC
+    return outer, channel
+
+
+@pytest.mark.parametrize("ch", list("MXYKWN"))
+def test_overlap_free_glyphs_are_single_contours(ch):
+    """build_font.py unions Andika's overlapping strokes: one contour each
+    (A keeps exactly outer + counter)."""
+    d = charlib._letters()["letters"][ch]["d"]
+    assert d.count("M") == 1, ch
+    assert charlib._letters()["letters"]["A"]["d"].count("M") == 2
+
+
+@pytest.mark.parametrize("ch", list("MXYAKWN"))
+def test_hollow_interior_has_no_stray_lines(ch):
+    """Raster: inside the colorable body (glyph dilated by D - sw, minus a
+    2px anti-alias margin and minus the counter bands) there is no ink —
+    overlapping source contours would draw lines through it."""
+    np = pytest.importorskip("numpy")
+    from scipy import ndimage
+    size, sw = 120, 4
+    D = charlib._hollow_dilation(size, sw, None)
+    k = size / charlib._letters()["upem"]
+    hollow = _mask(charlib.letter(ch, 300, 600, size=size, sw=sw))
+    tr = (f'transform="translate({300 + D / 2},600) '
+          f'scale({k},{-k})"')
+    ink = [d for dp, _a, d in charlib._glyph_contours(ch) if dp % 2 == 0]
+    holes = [d for dp, _a, d in charlib._glyph_contours(ch) if dp % 2]
+    body = _mask(f'<g {tr}><path d="{"".join(ink)}" fill="black" '
+                 f'stroke="black" stroke-width="{2 * (D - sw) / k}" '
+                 f'stroke-linejoin="round"/></g>')
+    if holes:   # counters + their centred band are legitimately not body
+        hole = _mask(f'<g {tr}><path d="{"".join(holes)}" fill="black" '
+                     f'stroke="black" stroke-width="{sw / k}"/></g>')
+        body &= ~hole
+    core = ndimage.binary_erosion(body, iterations=2 * _SC)
+    assert core.sum() > 1000
+    assert int((hollow & core).sum()) == 0
+
+
+def test_hollow_stem_meets_thickness_and_channel_floors():
+    outer120, ch120 = _stem(120)
+    outer64, _ch64 = _stem(64)
+    assert outer120 >= 26 and outer64 >= 14
+    assert ch120 >= 12          # drawing-guide colorability floor (~3x3 mm)
+    # legacy thin outline (body=0) was the ~7px-channel defect at this size
+    m = _mask(charlib.word("I", 425, 600, size=120, body=0))
+    r = _row_runs(m[int((600 - 120 * 0.33 - _Y0) * _SC)])
+    b = [i for i, (v, _n) in enumerate(r) if v][:2]
+    assert sum(n for _v, n in r[b[0] + 1:b[1]]) / _SC < 10 < ch120
+
+
+@pytest.mark.parametrize("size", [64, 120])
+@pytest.mark.parametrize("ch,holes", [("A", 1), ("B", 2), ("O", 1), ("R", 1)])
+def test_hollow_counters_stay_open(ch, holes, size):
+    """White regions of a hollow glyph: page outside + the colorable body +
+    one per counter. A dilation that closed a counter would merge it away."""
+    from scipy import ndimage
+    frag = charlib.letter(ch, 300, 600, size=size)
+    assert 'fill-rule="nonzero"' in frag
+    white = ~_mask(frag)
+    lab, n = ndimage.label(white)
+    sizes = ndimage.sum(white, lab, range(1, n + 1))
+    regions = int((sizes > 4 * _SC * _SC).sum())     # ignore AA specks
+    assert regions == 2 + holes, (ch, size, regions)
+
+
+def test_trace_style_band_is_dashed():
+    frag = charlib.letter("L", 300, 600, size=150, style="trace")
+    assert "stroke-dasharray" in frag
+    k = 150 / charlib._letters()["upem"]
+    arr = re.search(r'stroke="white"[^>]*stroke-dasharray="([0-9. ]+)"', frag)
+    gap, dash = (float(v) * k for v in arr.group(1).split())
+    assert (dash, gap) == pytest.approx(charlib.TRACE_DASH, abs=0.1)
+    # raster: walking down the band along the L's left edge (2px inside the
+    # outer edge) alternates ink and paper
+    np = pytest.importorskip("numpy")
+    m = _mask(frag)
+    x = int(np.nonzero(m.any(axis=0))[0].min() + 2 * _SC)
+    col = m[int((470 - _Y0) * _SC):int((580 - _Y0) * _SC), x]
+    flips = sum(1 for a, b in zip(col, col[1:]) if a != b)
+    assert flips >= 8 and 0.3 < col.mean() < 0.8, (flips, col.mean())
+
+
+def test_hollow_extent_is_exact_for_validator_and_data_w():
+    """data-bleed makes validate's bbox the DILATED ink (within AA), and
+    the word's data-x0/data-w span contains it."""
+    np = pytest.importorskip("numpy")
+    frag = charlib.word("MAXO", 425, 600, size=120)
+    items, _, _ = V._collect(ET.fromstring(
+        f'<svg xmlns="http://www.w3.org/2000/svg">{frag}</svg>'))
+    bbs = [it.wbbox for it in items if it.wbbox]
+    vb = (min(b[0] for b in bbs), min(b[1] for b in bbs),
+          max(b[2] for b in bbs), max(b[3] for b in bbs))
+    ys, xs = np.nonzero(_mask(frag))
+    rb = (xs.min() / _SC, ys.min() / _SC + _Y0, (xs.max() + 1) / _SC,
+          (ys.max() + 1) / _SC + _Y0)
+    assert all(abs(a - b) < 1.0 for a, b in zip(vb, rb)), (vb, rb)
+    g = ET.fromstring(frag)
+    x0, w = float(g.get("data-x0")), float(g.get("data-w"))
+    assert x0 <= rb[0] and rb[2] <= x0 + w
+    assert w == pytest.approx(charlib.word_width("MAXO", 120), abs=0.05)
+
+
+def test_hollow_body_zero_is_legacy_outline():
+    out = charlib.letter("A", 0, 0, body=0)
+    assert out.startswith("<path") and "data-bleed" not in out
+
+
+def test_name_trace_page_rows_clear_guidelines():
+    """Dashed hollow letters sit BETWEEN the ruled lines (no line runs
+    along a letter edge) and the page still validates."""
+    svg = charlib.name_trace_page(["Harper", "Max", "Lily"])
+    rep = V.validate_svg(svg)
+    assert rep["ok"], rep["findings"]
+    root = ET.fromstring(svg)
+    items, _, _ = V._collect(root)
+    ns = "{http://www.w3.org/2000/svg}"
+    words = [g for g in root.iter(ns + "g") if g.get("data-word")]
+    assert [g.get("data-word") for g in words] == ["HARPER", "MAX", "LILY"]
+    lines = sorted({round(float(el.get("y1")), 1) for el in root.iter(ns + "line")
+                    if el.get("y1") == el.get("y2") and float(el.get("y1")) > 200})
+    for g in words:
+        ids = {id(e) for e in g.iter()}
+        ink = [it.wbbox for it in items if id(it.el) in ids and it.wbbox]
+        top, bot = min(b[1] for b in ink), max(b[3] for b in ink)
+        # nearest ruled lines above and below the word
+        assert any(top - 8 < y < top - 3 for y in lines), (top, lines)
+        assert any(bot + 3 < y < bot + 8 for y in lines), (bot, lines)

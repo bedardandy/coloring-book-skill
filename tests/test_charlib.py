@@ -123,7 +123,7 @@ def test_banner_fits_its_text():
     from charlib import word_width
     text = "HOORAY"
     size = 64
-    bw = word_width(text, size) + 2 * 28
+    bw = word_width(text, size, tracking=size * 0.08) + 2 * 28
     svg = banner(text, 500, size=size)
     # ribbon width equals computed width; both under the printable width
     assert bw < W - 80

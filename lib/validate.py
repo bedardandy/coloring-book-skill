@@ -1,8 +1,10 @@
 """Deterministic layout validation for charlib pages.
 
 charlib embeds semantic metadata (data-face / data-sky / data-ground /
-data-hand / data-el="figure" / data-mat / data-chrome / data-text) into the
-SVG it emits.
+data-hand / data-el="figure" / data-mat / data-chrome / data-text /
+data-bleed) into the SVG it emits. data-bleed="n" inflates an element's
+bbox by n local units (ink a thick stroke adds beyond the path geometry,
+e.g. dilated hollow letters).
 This module parses that SVG, expands every nested G()/GM() transform into a
 world-space affine matrix, and runs EXACT ARITHMETIC versions of the numeric
 rules that reference/drawing-guide.md previously asked models to eyeball:
@@ -187,6 +189,14 @@ def _local_bbox(el):
 
 def _world_bbox(el, m):
     lb = _local_bbox(el)
+    bleed = el.get("data-bleed")
+    if lb is not None and bleed:
+        # declared ink beyond the geometry (LOCAL units) — e.g. charlib's
+        # dilated hollow letters, whose thick outer stroke IS the letter edge
+        try:
+            lb = _inflate(lb, float(bleed))
+        except ValueError:
+            pass
     if lb is None:
         return None
     x0, y0, x1, y1 = lb
