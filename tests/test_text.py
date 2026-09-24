@@ -445,3 +445,37 @@ def test_name_trace_page_rows_clear_guidelines():
         # nearest ruled lines above and below the word
         assert any(top - 8 < y < top - 3 for y in lines), (top, lines)
         assert any(bot + 3 < y < bot + 8 for y in lines), (bot, lines)
+
+
+# ---------------------------------------------------------------- page number vs caption
+def _caption_y(svg, text):
+    import re
+    m = re.search(r'<g data-text="1"[^>]*data-y="(\d+)"[^>]*aria-label="' + re.escape(text), svg)
+    assert m, text
+    return int(m.group(1))
+
+
+def test_page_number_lifts_a_wide_one_line_caption():
+    """A wide single-line caption shares the number's baseline and reads as
+    part of it ("2 Hello, barn!..."): the caption block lifts by one line."""
+    from charlib import spage, page, W, text_width, CAPTION_MAX_W
+    wide = "Hello, barn! Nora feeds the baby goat. Pip says hello to everyone."
+    assert text_width(wide, 22) <= CAPTION_MAX_W          # really one line
+    svg = spage("T", "", num=2, caption=wide)
+    assert _caption_y(svg, wide) == 1030 and _caption_y(svg, "2") == 1058
+    # legacy page(): same rule on its own baselines
+    svg2 = page("T", "", num=2, caption=wide)
+    assert _caption_y(svg2, wide) == 1100 - 48 - 27
+
+
+def test_page_number_leaves_a_short_caption_alone():
+    from charlib import spage
+    svg = spage("T", "", num=2, caption="Grow, flower, grow!")
+    assert _caption_y(svg, "Grow, flower, grow!") == 1058
+
+
+def test_public_pose_parts_match_internal_builders():
+    import charlib
+    t = {"hair": "pigtails", "outfit": "dress"}
+    assert charlib.kid_top(t) == charlib._kid_top(t)
+    assert charlib.arm((0, -150), (40, -90)) == charlib._arm((0, -150), (40, -90))

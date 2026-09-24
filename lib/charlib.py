@@ -767,6 +767,24 @@ _KID_POSES = {
 }
 
 
+def kid_top(t, outfit=None, legs=True):
+    """PUBLIC pose-building part: the kid's head + torso (+ standing legs)
+    at the standard feet origin, WITHOUT arms. Returns (parts_list,
+    shoulders, head_y) exactly like the internal builder so a custom pose
+    (squat, kneel, reach, carry) can be staged as kid_top() + arm()/limb()
+    rather than re-implementing the figure. Draw the head last (it is
+    already last in parts_list)."""
+    return _kid_top(t, outfit=outfit, legs=legs)
+
+
+def arm(shoulder, wrist, sw=5, hand_r=8, bulge=13, lift=4):
+    """PUBLIC pose-building part: one smooth two-segment arm from
+    shoulder=(x, y) to an EXACT wrist=(x, y) target with the tagged hand
+    circle — the same part kid_stand() uses. Keep the hand outside 1.3*r of
+    the face centre (drawing-guide gotcha 1)."""
+    return _arm(shoulder, wrist, sw=sw, hand_r=hand_r, bulge=bulge, lift=lift)
+
+
 def _kid_top(t, outfit=None, legs=True):
     """Shared kid torso (+ optional standing legs). Returns
     (out_list, shoulders, head_y) so pose variants reuse the exact
@@ -953,7 +971,7 @@ def page(title, body, num=None, caption=None):
     if caption:
         # wrap on MEASURED widths: one line at 24px if it fits, else 22px lines
         lines, size = _caption_lines(caption, 24, 22, legacy_chars=56)
-        start = (H - 48) - (len(lines) - 1) * 27
+        start = _caption_start(lines, size, H - 48, 27, num, num_x=70)
         for i, ln in enumerate(lines):
             chrome.append(TXT(W / 2, start + i * 27, ln, size, weight="normal"))
     if num:
@@ -1035,6 +1053,23 @@ def wrap_words(text, maxchars=54):
     return lines
 
 
+NUM_GAP = 30   # min air between the page number's right edge and a caption line
+
+
+def _caption_start(lines, size, base_y, line_h, num=None, num_x=72, num_size=20):
+    """Baseline of the FIRST caption line so the block ends at base_y — lifted
+    by one line when a page number sits on that baseline and the bottom
+    caption line would run into it (a wide one-line caption otherwise reads
+    as "2 Hello, barn!...")."""
+    start = base_y - (len(lines) - 1) * line_h
+    if num is not None and lines:
+        num_right = num_x + text_width(str(num), num_size) / 2
+        left_edge = W / 2 - text_width(lines[-1], size) / 2
+        if left_edge - num_right < NUM_GAP:
+            start -= line_h
+    return start
+
+
 def _caption_lines(caption, one_line_size, multi_size, legacy_chars):
     """(lines, size) for a page caption. Path mode: measured wrap to
     CAPTION_MAX_W — the larger size if the caption fits on ONE line, else
@@ -1066,7 +1101,7 @@ def spage(title, body, num=None, caption=None, title_size=42, layout=None):
     parts.append(body)
     if caption:
         lines, size = _caption_lines(caption, 22, 22, legacy_chars=54)
-        start = 1058 - (len(lines) - 1) * 28
+        start = _caption_start(lines, size, 1058, 28, num)
         for i, ln in enumerate(lines):
             chrome.append(TXT(W / 2, start + i * 28, ln, size, weight="normal"))
     if num:
