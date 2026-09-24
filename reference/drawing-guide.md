@@ -118,9 +118,12 @@ face the same way and the interaction reads rump-first.
   center (a gift held "up" drifts onto the face — the caption said hand, the render said face).
 
 ## Foliage & structures in trees
-- Big canopies need TEXTURE: scallops along the outer rim + scattered inner leaf marks.
+- Big canopies need TEXTURE: a scalloped foliage outline + at most two inner leaf marks.
   Bare overlapping circles read as balloons. Keep inner marks ASYMMETRIC — two marks at
-  the same height read as a pair of eyes.
+  the same height read as a pair of eyes, and three marks in a triangle (two high, one
+  centred below) read as a face: `tree_round`'s old four caret ticks put a sleeping face
+  on every default tree. One mark per height band, on a diagonal, and look at the
+  thumbnail — if you can see a face, it is not fixed.
 - A structure in a tree sits BELOW/BESIDE the foliage with visible support (fork of
   branches, platform planks) — a house floating inside a leaf blob drowns.
 - Ladders/ropes attach beside the trunk, never overlapping it (rails over the trunk

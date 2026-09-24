@@ -1311,44 +1311,54 @@ def bicycle(cx, ground_y, s=200, sw=5):
 
 def tree_round(cx, ground_y, h=260, sw=5, texture=True):
     """Lollipop tree: stubby trunk + fat round canopy, base tangent to ground_y.
-    texture=True adds ASYMMETRIC scallop + leaf marks (bare overlapping circles
-    read as balloons; two marks at the same height read as a pair of eyes)."""
+    texture=True draws the canopy as ONE scalloped foliage outline (bare
+    overlapping circles read as balloons) plus two single-stroke leaf-clump
+    arcs on a diagonal (upper-left, lower-right). Never more marks than that:
+    two marks at one height read as a pair of eyes, and the old four caret
+    ticks (two high, one low) read as a sleeping face on every tree.
+    texture=False keeps the plain three-circle lollipop (apple_tree uses it
+    so its apples stay the only interior detail)."""
     g = ground_y
     tw = 0.18 * h
     out = [rrect(cx - tw / 2, g - 0.28 * h, tw, 0.28 * h, 6, sw, "white")]
-    # 3-lobe canopy centered above the trunk (overlaps trunk top)
-    cyy = g - 0.62 * h
-    out.append(C(cx, cyy, 0.34 * h, sw, "white"))
-    out.append(C(cx - 0.24 * h, cyy + 0.10 * h, 0.20 * h, sw, "white"))
-    out.append(C(cx + 0.24 * h, cyy + 0.10 * h, 0.20 * h, sw, "white"))
-    # re-cap the crown so lobe seams read as one canopy
-    out.append(C(cx, cyy, 0.34 * h, sw, "white"))
-    if texture:
-        # small bumps straddling the rim + a few asymmetric interior leaf
-        # ticks (unpaired heights — no "eye pairs")
-        rr = 0.34 * h
-        mk = max(2.5, sw - 2)
-        for ang_deg in (-150, -110, -60, -15, 55):
-            a = math.radians(ang_deg)
-            bx = cx + rr * math.cos(a)
-            by = cyy + rr * math.sin(a)
-            # outward bump: tangent direction t=(-sin,cos)
-            tx, ty = -math.sin(a), math.cos(a)
-            wdt = 0.045 * h
-            p1 = (bx - tx * wdt, by - ty * wdt)
-            p2 = (bx + tx * wdt, by + ty * wdt)
-            tipx = bx + math.cos(a) * 0.055 * h
-            tipy = by + math.sin(a) * 0.055 * h
-            out.append(P(f"M {_f(p1[0])} {_f(p1[1])} "
-                         f"Q {_f(tipx)} {_f(tipy)} {_f(p2[0])} {_f(p2[1])}", mk))
-        # interior leaf ticks: vee pairs at staggered heights, left-biased
-        for dx, dy, s_ in ((-0.13, -0.10, 0.035), (-0.02, 0.02, 0.03),
-                           (0.12, -0.06, 0.032), (-0.16, 0.08, 0.03)):
-            lx = cx + dx * h
-            ly = cyy + dy * h
-            out.append(P(f"M {_f(lx - s_*h)} {_f(ly + 0.02*h)} "
-                         f"Q {_f(lx)} {_f(ly - 0.045*h)} "
-                         f"{_f(lx + s_*h*0.6)} {_f(ly - 0.01*h)}", mk))
+    if not texture:
+        # 3-lobe canopy centered above the trunk (overlaps trunk top)
+        cyy = g - 0.62 * h
+        out.append(C(cx, cyy, 0.34 * h, sw, "white"))
+        out.append(C(cx - 0.24 * h, cyy + 0.10 * h, 0.20 * h, sw, "white"))
+        out.append(C(cx + 0.24 * h, cyy + 0.10 * h, 0.20 * h, sw, "white"))
+        # re-cap the crown so lobe seams read as one canopy
+        out.append(C(cx, cyy, 0.34 * h, sw, "white"))
+        return "".join(out)
+    # scalloped canopy: 9 bumps on a slightly squashed circle, rotated 20deg
+    # off-axis so the crown is not mirror-symmetric (symmetry invites faces)
+    cyy = g - 0.60 * h
+    rr = 0.36 * h
+    n = 9
+    pts = [(cx + rr * math.cos(math.radians(110 + 360 * i / n)),
+            cyy + rr * 0.92 * math.sin(math.radians(110 + 360 * i / n)))
+           for i in range(n)]
+    d = f"M {_f(pts[0][0])} {_f(pts[0][1])} "
+    for i in range(n):
+        p1, p2 = pts[i], pts[(i + 1) % n]
+        mx, my = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
+        ox, oy = mx - cx, my - cyy
+        ln = math.hypot(ox, oy) or 1.0
+        k = 0.30 * rr
+        d += (f"Q {_f(mx + ox / ln * k)} {_f(my + oy / ln * k)} "
+              f"{_f(p2[0])} {_f(p2[1])} ")
+    out.append(P(d + "Z", sw, "white"))
+    # two leaf-clump arcs on a DIAGONAL, different sizes/tilts: one mark per
+    # height band, no pair, no triangle -> nothing a child can read as a face
+    mk = max(2.5, sw - 2)
+    for dx, dy, half, rot in ((-0.15, -0.11, 0.07, -30), (0.13, 0.11, 0.055, 22)):
+        lx, ly = cx + dx * h, cyy + dy * h
+        a = math.radians(rot)
+        p0 = (lx - half * h * math.cos(a), ly - half * h * math.sin(a))
+        p2 = (lx + half * h * math.cos(a), ly + half * h * math.sin(a))
+        c = (lx + 0.05 * h * math.sin(a), ly - 0.05 * h * math.cos(a))
+        out.append(P(f"M {_f(p0[0])} {_f(p0[1])} Q {_f(c[0])} {_f(c[1])} "
+                     f"{_f(p2[0])} {_f(p2[1])}", mk))
     return "".join(out)
 
 
