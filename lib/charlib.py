@@ -3280,20 +3280,25 @@ def bridge(cx, ground_y, w=340, sw=4.5):
 
 # ---------------------------------------------------------------- vehicles II
 def school_bus(cx, ground_y, w=280, sw=5):
-    """Long school bus facing right: window row, door, stripe, wheels."""
+    """Long school bus facing right: boxy body, low engine hood out FRONT
+    with a headlight, window row, front door, stripe, wheels."""
     x0, g = cx - w / 2, ground_y
     r = 0.085 * w
     body_top = g - 0.40 * w
-    out = [rrect(x0, body_top, w, 0.30 * w, 10, sw, "white")]          # body
-    out.append(rrect(x0 + 0.02 * w, g - 0.115 * w, 0.13 * w, 0.115 * w, 6, sw, "white"))  # hood
-    for i in range(4):                                                  # windows
-        wx = x0 + 0.18 * w + i * 0.16 * w
+    # hood first (the body caps its rear): lower box protruding forward
+    out = [rrect(x0 + 0.78 * w, g - 0.25 * w, 0.215 * w, 0.15 * w, 8, sw, "white")]
+    out.append(rrect(x0, body_top, 0.84 * w, 0.30 * w, 10, sw, "white"))      # body
+    for i in range(3):                                                  # windows
+        wx = x0 + 0.05 * w + i * 0.165 * w
         out.append(rrect(wx, body_top + 0.035 * w, 0.12 * w, 0.10 * w, 4, 3.5, "white"))
-    out.append(rrect(x0 + 0.845 * w, body_top + 0.035 * w, 0.10 * w, 0.24 * w, 4, 3.5, "white"))  # door
-    out.append(LINE(x0 + 0.03 * w, body_top + 0.19 * w, x0 + 0.97 * w, body_top + 0.19 * w, 3.5))
-    out.append(_wheel(x0 + 0.22 * w, g, r, sw - 0.5))
-    out.append(_wheel(x0 + 0.78 * w, g, r, sw - 0.5))
-    out.append(DOT(x0 + 0.985 * w, g - 0.075 * w, 3))                   # headlight
+    out.append(rrect(x0 + 0.545 * w, body_top + 0.035 * w, 0.11 * w, 0.24 * w, 4, 3.5,
+                     "white"))                                          # door
+    out.append(rrect(x0 + 0.69 * w, body_top + 0.035 * w, 0.11 * w, 0.10 * w, 4, 3.5,
+                     "white"))                                          # driver window
+    out.append(LINE(x0 + 0.03 * w, body_top + 0.19 * w, x0 + 0.515 * w, body_top + 0.19 * w, 3.5))
+    out.append(C(x0 + 0.955 * w, g - 0.195 * w, max(4.0, 0.022 * w), 3, "white"))  # headlight
+    out.append(_wheel(x0 + 0.20 * w, g, r, sw - 0.5))
+    out.append(_wheel(x0 + 0.80 * w, g, r, sw - 0.5))
     return "".join(out)
 
 
@@ -3310,8 +3315,9 @@ def dump_truck(cx, ground_y, w=260, sw=5):
     # cab (front)
     out.append(rrect(x0 + 0.58 * w, g - 0.40 * w, 0.30 * w, 0.28 * w, 8, sw, "white"))
     out.append(rrect(x0 + 0.63 * w, g - 0.37 * w, 0.16 * w, 0.11 * w, 4, 3.5, "white"))
-    out.append(LINE(x0 + 0.56 * w, g - 0.16 * w, x0 + 0.90 * w, g - 0.16 * w, sw))  # chassis
-    out.append(LINE(x0 + 0.40 * w, g - 0.50 * w, x0 + 0.40 * w, g - 0.58 * w, 4))   # exhaust
+    out.append(LINE(x0 + 0.06 * w, g - 0.16 * w, x0 + 0.90 * w, g - 0.16 * w, sw))  # chassis
+    out.append(C(x0 + 0.05 * w, g - 0.16 * w, 0.02 * w, 3.5, "white"))            # bed hinge
+    out.append(LINE(x0 + 0.60 * w, g - 0.40 * w, x0 + 0.60 * w, g - 0.50 * w, 4))   # exhaust
     out.append(_wheel(x0 + 0.20 * w, g, r, sw - 0.5))
     out.append(_wheel(x0 + 0.44 * w, g, r, sw - 0.5))
     out.append(_wheel(x0 + 0.80 * w, g, r, sw - 0.5))
