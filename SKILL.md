@@ -116,10 +116,14 @@ re-run after adding helpers). Render one page per pack any time with
 `python tools/showcase.py` (writes examples/showcase/pages + validates).
 
 **Creativity layer (pages that invite the child's own art):** blank
-`speech_bubble` / `thought_bubble`, `symmetry_page(motif)` (left solid, right
-dotted hint), `finish_page(kind)` (dashed ghost to complete), `pattern_menu`
-(swatch strip kids copy onto blank bands), `design_template(kind)` (blank
-tee/cake/rocket), `sticker_sheet(motifs)` (dashed cut cells). Mark such pages
+`speech_bubble` / `thought_bubble` (pass `speaker_top=(x, head_top_y)` and
+the tail ends 20px above the head — never guess bubble coordinates),
+`symmetry_page(motif)` (left solid, right dotted hint), `finish_page(kind)`
+(dashed ghost to complete), `pattern_menu` (swatch strip kids copy onto blank
+bands), `design_template(kind)` (blank tee/cake/rocket),
+`sticker_sheet(motifs)` (dashed cut cells; motifs auto-fit to ~70% of each
+cell). To size any helper into a box, measure it: `fragment_bbox(frag)` /
+`fit_fragment(frag, cx, cy, w, h, anchor="bottom")`. Mark such pages
 `spage(..., layout="creative")` so the validator knows open composition is
 intentional. Weave 1-2 into every book — a story beat like "draw Button's
 hiding spot!" lands the engagement.

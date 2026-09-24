@@ -123,9 +123,12 @@ face the same way and the interaction reads rump-first.
   center (a gift held "up" drifts onto the face — the caption said hand, the render said face).
 
 ## Foliage & structures in trees
-- Big canopies need TEXTURE: scallops along the outer rim + scattered inner leaf marks.
+- Big canopies need TEXTURE: a scalloped foliage outline + at most two inner leaf marks.
   Bare overlapping circles read as balloons. Keep inner marks ASYMMETRIC — two marks at
-  the same height read as a pair of eyes.
+  the same height read as a pair of eyes, and three marks in a triangle (two high, one
+  centred below) read as a face: `tree_round`'s old four caret ticks put a sleeping face
+  on every default tree. One mark per height band, on a diagonal, and look at the
+  thumbnail — if you can see a face, it is not fixed.
 - A structure in a tree sits BELOW/BESIDE the foliage with visible support (fork of
   branches, platform planks) — a house floating inside a leaf blob drowns.
 - Ladders/ropes attach beside the trunk, never overlapping it (rails over the trunk
@@ -168,6 +171,16 @@ a layout; keep one variant per scene across a single book for coherence.
   composite_page + manual G() placement: trace first, characters after.
 - kids_holding_hands separates partners by 48.5*s (pigtails reach 1.32r
   and graze the partner's 1.3r face zone at 44*s).
+- Mat a foreground figure when a background line would run TANGENT to it.
+  When it only CROSSES lines (a cow's thin legs across a hill or ground
+  line), the halo chops those lines into dashes around each leg — stand it
+  a step in front of the ground line (y = ground + 20..30) instead, and keep
+  fence posts out from between animal legs (they read as extra legs:
+  `scene_farm(fence=False)`).
+- Size catalog/inventory grids by MEASURING: `fit_fragment(frag, cx, cy,
+  w, h, anchor="bottom")` scales any helper into its cell at page stroke
+  weight (`fragment_bbox` gives the tight box). Three columns, not four, on
+  a letter page — at ~150px wide animal legs/ears drop under the 3x3mm floor.
 - G()/GM() scales are precision-formatted: rounding 0.95 to one decimal
   silently changed figure sizes (and rounded a 0.044 glyph scale to 0.0,
   vaporizing banner text — the _f() vs _fs() split exists for this).

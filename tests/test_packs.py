@@ -138,6 +138,10 @@ def test_scene_kits():
             (scenes.scene_farm(), scenes.SCENE_GROUND)]
     for i, (body, _ground) in enumerate(kits):
         _check(f"scene{i}", spage("Kit", body))
+    # fence=False drops only the ranch fence (posts between a foreground
+    # animal's legs read as extra legs)
+    assert (scenes.scene_farm().count("<line") >
+            scenes.scene_farm(fence=False).count("<line"))
     # declared ground lines actually work: a kid stands on each kit
     from charlib import kid_stand
     body, ground = kits[0]
