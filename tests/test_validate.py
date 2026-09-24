@@ -349,27 +349,44 @@ def _harper_module():
     return mod
 
 
-@pytest.mark.parametrize("page", ["03-intro", "04-problem",
-                                  "05-search-bedroom", "06-search-living",
-                                  "07-find-activity", "08-solve",
-                                  "09-celebrate"])
-def test_harper_story_pages_flag_hollow_middle(page):
-    """Calibration anchors: the bundled example's story pages keep ~1.0-scale
-    kids on the floor line under wall decor — visibly hollow middles. If
-    make_book.py is recomposed per the three-layer recipe to clear these
-    MEDs, drop the fixed pages from this list (that is the point of it)."""
+# The bundled example's page roster, split by how the validator treats it.
+# Scene pages used to be the calibration anchors for the hollow-middle MED
+# (~1.0-scale kids in a strip on the floor line); make_book.py now follows
+# the three-layer recipe, so they are the positive anchors instead.
+HARPER_SCENES = ["01-cover", "03-intro", "04-problem", "05-search-bedroom",
+                 "06-search-living", "07-find-activity", "08-solve",
+                 "09-celebrate"]
+HARPER_OPT_OUT = {"02-names": "activity", "07b-draw-hiding-spot": "creative",
+                  "10-back-cover": "vignette"}
+
+
+def test_harper_roster_is_fully_classified():
+    """Every page of the example is either a judged scene or a deliberate
+    opt-out — a new page can't slip past the composition checks unseen."""
+    names = [n for n, _ in _harper_module().BUILDERS]
+    assert sorted(names) == sorted(HARPER_SCENES + list(HARPER_OPT_OUT))
+
+
+@pytest.mark.parametrize("page", HARPER_SCENES)
+def test_harper_scene_pages_pass_mass_distribution(page):
+    """Three-layer recipe in practice: furniture/house anchors reaching into
+    the middle band + ~1.4x foreground kids. Every scene page is judged and
+    clears mass_distribution with zero HIGH findings."""
     fn = dict(_harper_module().BUILDERS)[page]
     rep = V.validate_svg(fn())
-    assert rep["ok"]
-    assert _mass_findings(rep, "hollow"), rep["mass"]
-    assert _ratio(rep) <= 0.30
+    assert rep["counts"]["HIGH"] == 0, rep["findings"]
+    assert rep["mass"]["judged"], rep["mass"]
+    assert not _mass_findings(rep), rep["mass"]
+    assert _ratio(rep) >= V.MID_RATIO
 
 
 def test_harper_opt_out_pages_not_judged():
     builders = dict(_harper_module().BUILDERS)
-    for page in ("02-names", "10-back-cover"):
+    for page, layout in HARPER_OPT_OUT.items():
         rep = V.validate_svg(builders[page]())
+        assert rep["counts"]["HIGH"] == 0, (page, rep["findings"])
         assert not _mass_findings(rep), page
+        assert rep["mass"]["skip"] == f"layout={layout}", page
 
 
 def test_head_clearance_ignores_details_of_background_objects():

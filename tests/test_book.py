@@ -21,7 +21,8 @@ def test_example_book_builds_and_validates(tmp_path):
 
     pages = sorted(p for p in os.listdir(os.path.join(EXAMPLE, "pages"))
                    if p.endswith(".svg"))
-    assert len(pages) == 10
+    # 10-beat story arc + one creativity page ("07b", SKILL.md step 2)
+    assert len(pages) == 11
 
     v = subprocess.run([PY, "-m", "lib.validate"] +
                        [os.path.join(EXAMPLE, "pages", p) for p in pages],
