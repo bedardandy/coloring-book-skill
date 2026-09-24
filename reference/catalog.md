@@ -76,6 +76,8 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 
 - `limb` — Tapered limb outline through shoulder s -> elbow e -> wrist wpt
 - `kid_stand` — (Public dispatcher — binds to the smooth rebuild unless
+- `kid_top` — PUBLIC pose-building part: the kid's head + torso (+ standing legs)
+- `arm` — PUBLIC pose-building part: one smooth two-segment arm from
 - `kid_sitting` — Kid sitting holding a game controller. Origin at seat.
 ### animals
 
