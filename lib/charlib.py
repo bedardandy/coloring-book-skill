@@ -4500,26 +4500,69 @@ def thought_bubble(cx, cy, w=190, h=95, sw=4):
     return "".join(out)
 
 
+def _mirror_pts(pts):
+    return [(-x, y) for x, y in pts]
+
+
+def _sym_butterfly(k=1.0, sw=5):
+    """Big colorable butterfly for mirror pages, symmetric about x=0, ~200k
+    wide: closed upper + lower wings with spots, white segmented body, head,
+    knobbed antennae (the small butterfly() motif has a solid black body and
+    open lower wings — fine as a sticker, wrong for a colour-in half)."""
+    up = [(6, -8), (28, -60), (68, -88), (98, -74), (100, -36), (66, -8), (10, 2)]
+    lo = [(8, 6), (48, 12), (80, 38), (74, 76), (44, 88), (18, 62), (5, 24)]
+    out = []
+    for sx in (-1, 1):
+        f = (lambda p: p) if sx > 0 else _mirror_pts
+        out.append(smooth_path([(x * k, y * k) for x, y in f(up)], sw, "white", closed=True))
+        out.append(smooth_path([(x * k, y * k) for x, y in f(lo)], sw, "white", closed=True))
+        out.append(C(sx * 62 * k, -50 * k, 17 * k, sw - 1.5, "white"))    # wing spots
+        out.append(C(sx * 88 * k, -66 * k, 7 * k, sw - 2, "white"))
+        out.append(C(sx * 46 * k, 52 * k, 13 * k, sw - 1.5, "white"))
+        out.append(P(f"M {_f(sx * 4 * k)} {_f(-78 * k)} Q {_f(sx * 10 * k)} {_f(-112 * k)} "
+                     f"{_f(sx * 30 * k)} {_f(-124 * k)}", sw - 1))            # antenna
+        out.append(C(sx * 32 * k, -126 * k, 6 * k, sw - 1.5, "white"))
+    out.append(E(0, 4 * k, 10 * k, 64 * k, sw, "white"))                    # body
+    for yy in (-24, 4, 32):
+        out.append(P(f"M {_f(-9 * k)} {_f(yy * k)} Q 0 {_f((yy + 6) * k)} {_f(9 * k)} {_f(yy * k)}",
+                     sw - 2))
+    out.append(C(0, -70 * k, 14 * k, sw, "white"))                          # head
+    return "".join(out)
+
+
+# symmetric motifs drawn at the LOCAL ORIGIN (axis = local x 0); k scales
+# geometry only — stroke widths stay at page weight at any size
 _SYMMETRY_MOTIFS = {
-    "butterfly": lambda cx, cy: G(cx, cy, butterfly(0, 0, 2.6)),
-    "heart": lambda cx, cy: G(cx, cy, heart(0, 0, 52, 5, "white")),
-    "star": lambda cx, cy: G(cx, cy, star(0, 0, 62, 5, "white")),
-    "flower": lambda cx, cy: G(cx, cy, flower(0, 0, s=3.4)),
-    "face": lambda cx, cy: G(cx, cy, face(0, 0, 52, hair="bob_bangs")),
+    "butterfly": lambda k: _sym_butterfly(k),
+    "heart": lambda k: heart(0, 0, 52 * k, 5, "white"),
+    "star": lambda k: star(0, 0, 62 * k, 5, "white"),
+    "flower": lambda k: flower(0, 0, s=3.4 * k, sw=4.5),
+    "face": lambda k: face(0, 0, 52 * k, hair="bob_bangs"),
 }
 
 
 def symmetry_page(motif="butterfly", title="Finish the Other Half!",
-                  num=None, caption=None, axis_x=None):
+                  num=None, caption=None, axis_x=None, size=0.60):
     """Creativity page: LEFT half drawn solid, right half shown as a dotted
-    hint — the child mirrors it. Uses per-element clipPath (cairosvg-safe)."""
+    hint — the child mirrors it. The whole motif (solid half + hint) is
+    MEASURED and sized to span `size` of the page width (0.55-0.65 reads
+    best), centred in the drawable band; the dashed mirror axis runs the
+    full drawable height. Uses per-element clipPath (cairosvg-safe)."""
     ax = axis_x or W / 2
-    frag = _SYMMETRY_MOTIFS[motif](ax, 540)
+    band_top, band_bot = 170, 985
+    make = _SYMMETRY_MOTIFS[motif]
+    bb = fragment_bbox(make(1.0))
+    half = max(-bb[0], bb[2])                      # symmetric about x=0
+    k = min(size * W / (2 * half), (band_bot - band_top - 60) / (bb[3] - bb[1]))
+    local = make(k)
+    bb = fragment_bbox(local)
+    cy = (band_top + band_bot) / 2 - (bb[1] + bb[3]) / 2
+    frag = G(ax, cy, local)
     defs = '<defs>' + _CLIP_L.format(i="sym") + _CLIP_R.format(i="sym") + '</defs>'
     body = (defs
             + _clipify(frag, "symL")
-            + _clipify(_dashify(frag), "symR")
-            + stitch_dash(ax, 300, ax, 800, sw=3, dash="4 9"))
+            + _clipify(_dashify(frag, dash="9 9"), "symR")
+            + stitch_dash(ax, band_top - 8, ax, band_bot + 5, sw=3, dash="4 9"))
     return spage(title, body, num=num, caption=caption, layout="creative")
 
 

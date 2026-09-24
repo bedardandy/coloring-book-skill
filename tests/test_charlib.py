@@ -186,3 +186,21 @@ def test_sticker_sheet_motifs_fill_their_cells():
     for frag in re.findall(r'(<g transform="translate[^"]*scale\([^)]*\)">.*?</g>)', svg):
         x0, y0, x1, y1 = fragment_bbox(frag)
         assert max(x1 - x0, y1 - y0) >= 0.6 * 200
+
+
+def test_symmetry_page_motif_fills_the_page_width():
+    import re
+    import xml.etree.ElementTree as ET
+    from charlib import symmetry_page, fragment_bbox
+    for motif in ("butterfly", "heart", "star", "flower", "face"):
+        svg = symmetry_page(motif, caption="Draw the other half!")
+        root = ET.fromstring(svg)
+        # the solid (left-clipped) half: measure its unclipped geometry
+        solid = "".join(ET.tostring(el, encoding="unicode") for el in root.iter()
+                        if el.get("clip-path") == "url(#symL)")
+        solid = re.sub(r' xmlns:ns0="[^"]*"|ns0:', "", solid)
+        g = re.search(r'<g transform="translate\(([0-9.]+),([0-9.]+)\)', svg)
+        bb = fragment_bbox(f'<g transform="translate({g.group(1)},{g.group(2)})">{solid}</g>')
+        width = 2 * (float(g.group(1)) - bb[0])        # solid half mirrored
+        assert 0.52 * W <= width <= 0.68 * W, (motif, width)
+        assert bb[1] >= 150 and bb[3] <= 1000, (motif, bb)
