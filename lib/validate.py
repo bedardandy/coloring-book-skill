@@ -431,6 +431,25 @@ class _Mat:
         self.boxes = []
 
 
+
+def _is_page_frame(node, m):
+    """Page chrome by GEOMETRY: the full-page white rect and the rounded
+    border rect that charlib.page()/spage() emit — recognised even without
+    the data-chrome tag, so books with a hand-rolled page wrapper (the
+    2026-07 family books) are not failed for their own frame."""
+    if node.tag != _SVG_NS + "rect":
+        return False
+    bb = _world_bbox(node, m)
+    if not bb:
+        return False
+    x0, y0, x1, y1 = bb
+    full = (abs(x0) <= 1 and abs(y0) <= 1 and abs(x1 - W) <= 1
+            and abs(y1 - H) <= 1)
+    border = (abs(x0 - BORDER_INSET) <= 1 and abs(y0 - BORDER_INSET) <= 1
+              and abs(x1 - (W - BORDER_INSET)) <= 1
+              and abs(y1 - (H - BORDER_INSET)) <= 1)
+    return full or border
+
 def _collect(root, runs=None):
     """Single document-order walk. Returns (visible_items, mats_in_order, layout).
     If `runs` is a list, every <g data-text="1"> glyph run is appended to it
@@ -467,7 +486,8 @@ def _collect(root, runs=None):
             return
         if tag in _SHAPE_TAGS or tag == "text":
             nm = _mmul(m, _parse_transform(node.get("transform")))
-            nchrome = chrome or (node.get("data-chrome") == "1")
+            nchrome = (chrome or (node.get("data-chrome") == "1")
+                       or _is_page_frame(node, nm))
             it = _El(node, nm, figure, nchrome, in_mat, mat_owner, counter[0],
                      text=run is not None)
             counter[0] += 1

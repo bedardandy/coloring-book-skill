@@ -490,3 +490,26 @@ def test_head_clearance_ignores_details_of_background_objects():
     prop = G(330, 580, rrect(-7, -7, 14, 14, 2, 2.5, "white"))
     rep = V.validate_svg(svg_of(prop + kid))
     assert _first(rep, "head_clearance")["severity"] == "HIGH"
+
+
+def test_hand_rolled_page_frame_is_chrome_by_geometry():
+    """Books written before data-chrome existed emit their own full-page and
+    border rects; those must not fail border_clearance / caption_band."""
+    from charlib import W, H, kid_stand, tree_round
+    import scenes
+    frame = (f'<rect x="0" y="0" width="{W}" height="{H}" fill="white"/>'
+             f'<rect x="28" y="28" width="{W-56}" height="{H-56}" rx="26" '
+             f'fill="none" stroke="black" stroke-width="6"/>')
+    body = (scenes.scene_meadow(midground=False) +
+            tree_round(595, scenes.SCENE_GROUND - 4, h=455) +
+            G(330, scenes.SCENE_GROUND, kid_stand({"hair": "buzz", "outfit": "tee"}), 1.3))
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+           f'viewBox="0 0 {W} {H}">' + frame + body + "</svg>")
+    rep = V.validate_svg(svg)
+    bad = [f for f in rep["findings"]
+           if f["check"] in ("border_clearance", "caption_band") and f["severity"] == "HIGH"]
+    assert not bad, bad
+    # a rect that is NOT the frame is still art
+    stray = f'<rect x="20" y="300" width="200" height="100" fill="white" stroke="black"/>'
+    rep2 = V.validate_svg(svg.replace(frame, frame + stray))
+    assert any(f["check"] == "border_clearance" for f in rep2["findings"])
