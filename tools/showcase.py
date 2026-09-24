@@ -124,8 +124,10 @@ def meadow_kite():
     ux, uy = 46 / math.hypot(46, 40), -40 / math.hypot(46, 40)
     corner = (hand[0] + ux * 480, hand[1] + uy * 480)
     kw = 130
-    return (scenes.scene_meadow(variant=0, flowers=0, sky_fill=False) +
+    return (scenes.scene_meadow(variant=0, flowers=0, sky_fill=False,
+                                midground=False) +
             cloud(380, 300, 22) +
+            tree_round(652, g, h=380) +          # midground anchor, top ~y575
             matted(G(kx, g, kid_stand(flyer, "wave"), s)) +
             matted(G(425, g + 26, dog({"coat": "patch"}), 1.2)) +     # a step in front
             grass_tuft(318, g + 24) + grass_tuft(514, g + 24) +
@@ -161,8 +163,8 @@ def beach_day():
                        for x, y in ((452, 792), (598, 770), (740, 800), (150, 772))))
     return (far_sea +                                                # drawn first
             scenes.scene_beach(variant=0, midground=False) + cloud(440, 330, 24) +
-            lighthouse(118, g - 4, h=320) +                          # midground
-            matted(G(282, g, kid_stand(T2, "up"), 1.3)) +
+            lighthouse(132, g - 4, h=440) +          # midground: carries the top half
+            matted(G(300, g, kid_stand(T2, "up"), 1.36)) +
             matted(castle_small(450, g + 4, w=150)) +
             matted(ball(598, g + 50, 30)) +
             star(168, g + 58, 24, 4, "white"))                        # starfish
@@ -183,10 +185,11 @@ def space_landing():
 
 def farm_day():
     g = scenes.SCENE_GROUND
-    return (scenes.scene_farm(variant=0, pond_too=False, midground=False,
+    return (tree_round(232, g, h=400) +          # behind the kit's barn: midground
+            scenes.scene_farm(variant=0, pond_too=False, midground=False,
                               fence=False) +
             hot_air_balloon(470, 420, h=190) +
-            windmill(718, g, h=300) +                                # midground
+            windmill(716, g, h=340) +                                # midground
             pond(705, g + 4, w=180) + duck(700, g - 6, w=74) +
             cow(470, g + 24, w=300) +          # crosses the lines behind it: no mat needed
             matted(chicken(128, g + 24, w=118)))
