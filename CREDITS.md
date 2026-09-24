@@ -20,10 +20,12 @@ recipes are our own prose expression of public techniques.
 | **Phosphor Icons** (github.com/phosphor-icons/core) | MIT | Stroke skeleton reference for the excavator (bulldozer.svg). |
 | **Andika** (SIL International, via google/fonts) | SIL OFL 1.1 (`assets/fonts/OFL.txt`) | Glyph outlines for the colorable letters/words kit (`lib/letters.json`, built by `tools/build_font.py`). Andika is designed for early-literacy teaching. Outlines only are bundled; the font program itself ships alongside for regeneration. Andika now renders ALL page text too (titles, captions, page numbers via `charlib.text_path()`), so output no longer depends on the host's installed fonts. |
 
-Avoided entirely: OpenClipart (quality/provenance lottery), Streamline (terms
-forbid asset-library bundling), any CC-BY-SA source (OpenMoji and derivatives —
-share-alike contamination risk), and personal-use-only galleries (supercoloring,
-wikiHow).
+Avoided entirely for the LIBRARY (helpers, recipes, fonts): OpenClipart
+(quality/provenance lottery), Streamline (terms forbid asset-library bundling),
+any CC-BY-SA source (OpenMoji and derivatives — share-alike contamination risk),
+and personal-use-only galleries (supercoloring, wikiHow). The two sample
+PHOTOS below are share-alike licensed; they are test inputs and showcase
+subjects, not library code, and carry their own attribution.
 
 ## 2026-07 quality-research additions
 - Twemoji (CC-BY 4.0): proportion references for future object helpers come from the
@@ -40,3 +42,21 @@ wikiHow).
   bundled ~230KB ONNX for local, offline face detection driving the
   `face`/`person` photo policies. OpenCV 5 removed Haar cascades; YuNet is
   the supported detector. No photo leaves the machine.
+
+## 2026-09 sample photos (`assets/photos/`)
+Real photographs used by the evaluation gate (`tools/eval_photo.py`, real-photo
+tier) and, for the dog, by the showcase pages `17-photo` / `18-photo-sketch`.
+Both are Wikimedia Commons files; EXIF/APP segments were stripped losslessly
+(pixels untouched) so the PII gate stays clean. The pipeline never uploads
+them; no photo of a child is in the repo.
+
+| File | Source | Author | License |
+|---|---|---|---|
+| `dog.jpg` | [File:Agnes the Golden Retriever.jpg](https://commons.wikimedia.org/wiki/File:Agnes_the_Golden_Retriever.jpg) (1280px thumbnail), Wikimedia Commons, own work, 6 June 2015 | Golden Retriever Raseåd | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| `teddy.jpg` | [File:Teddy bear produced in 1903 face detail, from- Teddy bear early 1900s - Smithsonian Museum of Natural History (cropped).jpg](https://commons.wikimedia.org/wiki/File:Teddy_bear_produced_in_1903_face_detail,_from-_Teddy_bear_early_1900s_-_Smithsonian_Museum_of_Natural_History_(cropped).jpg), Wikimedia Commons crop of a [Flickr photo](https://www.flickr.com/photos/23165290@N00/7237653442/) | Flickr user 23165290@N00, credited as "Smithsonian Museum of Natural History" | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0/) |
+
+Attribution lines for derived pages: "Agnes the Golden Retriever by Golden
+Retriever Raseåd, CC BY-SA 4.0, via Wikimedia Commons" and "Teddy bear early
+1900s, Smithsonian Museum of Natural History, CC BY-SA 2.0, via Wikimedia
+Commons / Flickr". The traced showcase pages are derivatives of the dog photo
+and are shared under the same CC BY-SA 4.0 terms.

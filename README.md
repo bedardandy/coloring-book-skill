@@ -51,9 +51,13 @@ built end-to-end by the skill.*
   helpers-only mode and when to escalate — calibrated by benchmarking the same build
   across model tiers ([`reference/model-tiers.md`](reference/model-tiers.md)).
 - **Photo mode** (`lib/photolib.py`) traces a photo into colorable outlines, fully
-  local (OpenCV + a bundled Apache-2.0 face model). It is honest about its limits:
-  best on a single high-contrast subject in `sketch` style; interiors and textured
-  backgrounds still trace noisily. See [`reference/photo-guide.md`](reference/photo-guide.md).
+  local (OpenCV + a bundled Apache-2.0 face model). A single framed subject (a pet, a
+  toy) is segmented with colour GrabCut, the background is dropped, and every edge
+  band is traced once along its centreline — the showcase's photo pages are a real
+  golden retriever. Its limits are measured, not guessed: the evaluation gate scores
+  real sample photos as well as synthetic fixtures. Low-contrast subjects that fill
+  the frame (a tan teddy on a tan wall) still segment poorly, and multi-subject
+  scenes get the soft rule only. See [`reference/photo-guide.md`](reference/photo-guide.md).
 
 ## Install
 

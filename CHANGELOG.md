@@ -1,5 +1,43 @@
 # Changelog
 
+## 2026-09-24 — photo mode on real photos
+
+The photo pipeline was scored on synthetic fixtures only; on real photos a golden
+retriever traced with fence boards and grass as splatter, double contours on every
+edge band, and fur shadows as interior blobs. Measured and fixed on three
+open-licensed Commons photos.
+
+- **Background drop.** Single-subject policies (`animal`, `plant`, `generic`) now remove
+  ink outside the dilated GrabCut mask and stand the subject on a ground contact line
+  (`<g data-ground="1">`, absent from fragments — the scene supplies the ground). The
+  mask must look like one framed subject (5–70% of the frame, not spilling over the
+  border) or the old soft rule applies. GrabCut runs in **colour** (grayscale could not
+  separate a white dog from a red barn), seeded by a thin border ring instead of a
+  centre rect (the old rect clipped tail and head), on a ≤640px copy with a fixed RNG
+  seed — ~10x faster and reproducible call after call.
+- **Centreline tracing.** Every ink component is classed as a ribbon (edge band) or a
+  blob (solid dark patch). Ribbons are thinned (in-house numpy Zhang-Suen, no
+  opencv-contrib), spur-pruned and walked into polylines with branches merged at
+  two-way junctions, so a thick band yields one stroke instead of both of its sides.
+  Blobs are outlined; interior blobs that are neither dark (eye, nose) nor large are fur
+  shadow and go. Length floors apply to whole connected structures (the outline is
+  long; a grass tuft is not), a squiggliness rule drops texture networks, and inside a
+  dropped subject the clean style's wide-block threshold is 1.5x stricter (shading is
+  not a line). Strokes are three-tier: silhouette 4.6 / interior 3.6 / background 2.6.
+- **Real-photo evaluation tier.** `tools/eval_photo.py` also traces the sample photos in
+  `assets/photos/` (dog, teddy — EXIF stripped, attributed in CREDITS.md) and any
+  `--photos DIR`, scoring subject-ink ratio inside the GrabCut mask, slivers and regions,
+  with their own bands (`photo:<name>|<style>|<metric>`) in `eval_bands.json`.
+  Synthetic bands recalibrated for the new vectorizer (the low-light fixture, which has
+  no subject at all, now traces to nothing instead of 190 grain contours).
+- **Showcase pages 17/18 are the real dog** (matted onto the meadow kit; sketch style
+  with its own ground line) instead of the synthetic rabbit blob.
+- A dropped-background trace carries a white knockout of its subject mask
+  (`data-knockout="1"`) so scene lines behind it stop at the silhouette when composited.
+- Sketch style falls back to the clean extractor when the ridge detector yields almost
+  no line on flat, step-edged subjects. Fragments anchor on the traced art's extent
+  rather than the raw ink.
+
 ## 2026-09-24 — audit and refinement pass
 
 Audit of the repo with the current model generation; execution by Opus 5.5 subagents,

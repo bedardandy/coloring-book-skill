@@ -13,7 +13,6 @@ sys.path.insert(0, os.path.join(ROOT, "lib"))
 
 import math  # noqa: E402
 
-import cv2  # noqa: E402
 import cairosvg  # noqa: E402
 
 import scenes  # noqa: E402
@@ -277,14 +276,21 @@ def main():
          rocket(0, -60, h=140), soccer_ball(0, 0, 34)]))
     builders["16-tracing"] = ("page", name_trace_page(["Harper", "Max", "Lily"]))
     import photolib as _pl
-    _photo = os.path.join(ROOT, "examples", "showcase", "fixture_animal.png")
-    cv2.imwrite(_photo, _pl.synthetic_photo("animal"))
+    # a real photo (Agnes the golden retriever, CC BY-SA 4.0 — CREDITS.md):
+    # the traced subject is matted onto the meadow kit like any helper, a
+    # midground tree on the other side; the sketch page shows the same
+    # photo in pencil style with its own ground contact line
+    _photo = os.path.join(ROOT, "assets", "photos", "dog.jpg")
+    _g = scenes.SCENE_GROUND
     builders["17-photo"] = ("page", _pl.composite_page(
-        _photo, scenes.scene_meadow(), scenes.SCENE_GROUND,
-        x=580, scale=0.95, title="Photo Traced",
-        caption="A photo turned into a coloring page."))
+        _photo, scenes.scene_meadow(variant=0, midground=False, flowers=0) +
+        tree_round(190, _g, h=330) + cloud(400, 330, 22) +
+        sunflower(104, _g, h=140),
+        _g, x=555, scale=0.72, title="Photo Traced",
+        caption="A photo of a dog, traced into a coloring page."))
     builders["18-photo-sketch"] = ("page", _pl.photo_to_svg(
-        _photo, style="sketch", title="Sketch Style", layout="creative"))
+        _photo, style="sketch", title="Sketch Style", layout="creative",
+        caption="The same dog in sketch style."))
 
     bad = 0
     for name in sorted(builders):
