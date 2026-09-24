@@ -479,3 +479,18 @@ def test_public_pose_parts_match_internal_builders():
     t = {"hair": "pigtails", "outfit": "dress"}
     assert charlib.kid_top(t) == charlib._kid_top(t)
     assert charlib.arm((0, -150), (40, -90)) == charlib._arm((0, -150), (40, -90))
+
+
+def test_text_path_unescapes_legacy_xml_entities():
+    """Captions written for the old <text> path carried XML entities; glyph
+    paths must draw the characters, not '&amp;' letter by letter."""
+    from charlib import text_width, text_path
+    assert text_width("Belle, Merritt &amp; Ada", 24) == text_width("Belle, Merritt & Ada", 24)
+    assert text_width("Max &#8226; Lily", 24) == text_width("Max • Lily", 24)
+    assert text_path(0, 0, "A &amp; B", 24).count("<path") == text_path(0, 0, "A & B", 24).count("<path")
+
+
+def test_kid_top_returns_no_head():
+    import charlib
+    parts, shoulders, head_y = charlib.kid_top({"hair": "bob", "outfit": "tee"})
+    assert "data-face" not in "".join(parts) and head_y < 0

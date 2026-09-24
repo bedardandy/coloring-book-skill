@@ -139,10 +139,12 @@ def _resolve_text(s):
     typographic stand-in, else the unaccented base letter (NFKD: "ő" -> "o"),
     else whitespace -> space; anything left is skipped with a ONE-TIME
     warning per character (never a "?" box, never a crash)."""
-    import unicodedata
+    import unicodedata, html
     L = _letters()["letters"]
     out = []
-    for ch in str(s):
+    # glyph paths are not XML text: entities a caller escaped for the old
+    # <text> path ("&amp;", "&#8226;") must become the characters themselves
+    for ch in html.unescape(str(s)):
         if ch in L:
             out.append(ch)
             continue
@@ -800,8 +802,9 @@ def kid_top(t, outfit=None, legs=True):
     at the standard feet origin, WITHOUT arms. Returns (parts_list,
     shoulders, head_y) exactly like the internal builder so a custom pose
     (squat, kneel, reach, carry) can be staged as kid_top() + arm()/limb()
-    rather than re-implementing the figure. Draw the head last (it is
-    already last in parts_list)."""
+    rather than re-implementing the figure. The HEAD IS NOT INCLUDED: after
+    the arms, append `face_traits(0, head_y, 37, t)` yourself, last, exactly
+    as kid_stand() does (heads draw last so hands never cross the face)."""
     return _kid_top(t, outfit=outfit, legs=legs)
 
 
