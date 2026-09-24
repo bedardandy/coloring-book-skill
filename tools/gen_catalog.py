@@ -27,7 +27,8 @@ INTERESTS = {
     "wild animals": "lion elephant giraffe monkey owl frog turtle snail "
                     "rabbit bird_side horse butterfly",
     "farm": "barn cow sheep chicken pig horse baby_goat fence_ranch tractor",
-    "pets": "dog dog_sit dog_sleep cat_sitting teddy food_bowl bone kibble",
+    "pets": "dog dog_sit dog_sleep dog_dig dirt_hole cat_sitting teddy food_bowl "
+            "bone kibble",
     "games & toys": "kite scooter tricycle seesaw sandbox blocks dice drum "
                     "puzzle_piece ice_cream soccer_ball ball swing_set balloon",
     "buildings": "house village_house castle_small treehouse schoolhouse "

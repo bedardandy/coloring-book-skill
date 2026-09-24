@@ -13,7 +13,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - **flowers & garden**: `flower` `tulip` `sunflower` `apple_tree` `potted_plant` `cactus` `garden_strip` `tree_round` `tree_pine` `leaf`
 - **wild animals**: `lion` `elephant` `giraffe` `monkey` `owl` `frog` `turtle` `snail` `rabbit` `bird_side` `horse` `butterfly`
 - **farm**: `barn` `cow` `sheep` `chicken` `pig` `horse` `baby_goat` `fence_ranch` `tractor`
-- **pets**: `dog` `dog_sit` `dog_sleep` `cat_sitting` `teddy` `food_bowl` `bone` `kibble`
+- **pets**: `dog` `dog_sit` `dog_sleep` `dog_dig` `dirt_hole` `cat_sitting` `teddy` `food_bowl` `bone` `kibble`
 - **games & toys**: `kite` `scooter` `tricycle` `seesaw` `sandbox` `blocks` `dice` `drum` `puzzle_piece` `ice_cream` `soccer_ball` `ball` `swing_set` `balloon`
 - **buildings**: `house` `village_house` `castle_small` `treehouse` `schoolhouse` `lighthouse` `windmill` `barn` `tent` `fairy_door`
 - **landscapes**: `hill` `mountain` `mountain_range` `road` `rail_track` `fence_picket` `fence_ranch` `pond` `beach_shore` `forest_border` `skyline` `bridge` `ground_line`
@@ -31,7 +31,12 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `DOT`
 - `E`
 - `LINE`
-- `TXT`
+- `TXT` — Page text at (x, baseline y). Delegates to text_path() (glyph
+### page text engine
+
+- `text_width` — EXACT rendered width (px) of text_path(s, size): sum of the glyph
+- `text_path` — Text as filled Andika glyph paths, (x, y) = anchor point ON THE
+- `wrap_width` — Greedy word wrap on MEASURED glyph advances: every line's
 - `G`
 - `GM` — Mirror horizontally (flip left-right) WITHOUT turning upside-down.
 ### curve engine & line vocabulary
@@ -81,7 +86,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `render_tiles` — Render full page + overlapping tiles (grid rows x cols) for VLM QA.
 ### room furniture, props & story helpers
 
-- `wrap_words`
+- `wrap_words` — Legacy CHARACTER-COUNT wrap (kept for callers that pass maxchars).
 - `spage` — Whole page: border, optional title, body, wrapped multi-line caption, page #.
 ### prop-characters
 
@@ -94,7 +99,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 ### furniture
 
 - `rrect`
-- `otext` — Hollow (outline) block letters for tracing.
+- `otext` — Hollow (outline) letters for tracing/coloring: white-filled Andika
 - `window`
 - `wall_picture` — Framed wall picture — a mid-band filler that is clearly wall-mounted.
 - `bookshelf` — Tall shelf unit — fills the vertical middle band on room pages.
@@ -129,6 +134,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 
 - `dog_sit` — Sitting dog facing right, origin at ground. ~150 tall.
 - `dog_sleep` — Dog lying down 'asleep', head on paws, origin at ground. Facing right.
+- `dog_dig` — Dog DIGGING, facing right, origin at ground contact (GM() to flip).
 - `sock`
 - `cushion_fort`
 - `table`
@@ -211,10 +217,10 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `use_legacy_figures`
 ### colorable letters & words
 
-- `letter` — One glyph as an SVG path. (x, y_base) = LEFT edge ON THE BASELINE.
-- `word_width` — Exact rendered width of word() from glyph advances.
-- `word` — A run of glyphs centered on x_center, sitting on y_base.
-- `banner` — Ribbon sized EXACTLY for its text (glyph-metric width), centered by
+- `letter` — One HOLLOW glyph. (x, y_base) = LEFT edge of its advance box ON THE
+- `word_width` — Exact width of word(): glyph advances + the hollow dilation (D per
+- `word` — A run of hollow glyphs centered on x_center, sitting on y_base (the
+- `banner` — Ribbon sized EXACTLY for its text (glyph-metric width, hollow
 - `guideline`
 - `name_trace_page` — Handwriting-practice page: per-name ruled guidelines (top/mid/base),
 ### world & landscape systems
