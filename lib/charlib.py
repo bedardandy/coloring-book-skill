@@ -3548,16 +3548,24 @@ def satellite(cx, cy, w=230, sw=4.5):
 
 
 def telescope(cx, ground_y, h=190, sw=4.5):
-    """Tripod telescope aimed up-right; a target sparkle at the eyepiece line."""
-    top_y = ground_y - h
-    out = [G(cx, ground_y,
-             LINE(0, 0, -34, -h * 0.62, sw - 0.5) +
-             LINE(0, 0, 34, -h * 0.62, sw - 0.5) +
-             LINE(0, -h * 0.62, 0, -h, sw - 0.5))]
-    out.append(G(cx, top_y + h * 0.38,
-                 G(0, 0, rrect(-h * 0.30, -11, h * 0.60, 22, 8, sw, "white"), 1.0, -28)))
-    out.append(C(cx, top_y + h * 0.38, 7, 3.5, "white"))
-    out.append(sparkle(cx + h * 0.42, top_y - h * 0.10, 10))
+    """Tripod telescope aimed up-right, feet on ground_y: three legs splayed
+    on the ground meeting at the mount, a tapered tube with eyepiece, lens
+    ring and band, and a target sparkle beyond the lens."""
+    g = ground_y
+    mx, my = cx, g - 0.52 * h                       # mount (tripod apex)
+    out = []
+    for fx in (-0.30, 0.30, 0.05):                  # legs: splayed feet on g
+        out.append(LINE(mx, my, cx + fx * h, g, sw - 0.5))
+        out.append(LINE(cx + fx * h - 0.035 * h, g, cx + fx * h + 0.035 * h, g, sw - 1))
+    L0, L1, r0, r1 = -0.30 * h, 0.44 * h, 0.055 * h, 0.085 * h
+    tube = (P(f"M {_f(L0)} {_f(-r0)} L {_f(L1)} {_f(-r1)} L {_f(L1)} {_f(r1)} "
+              f"L {_f(L0)} {_f(r0)} Z", sw, "white")
+            + rrect(L0 - 0.07 * h, -0.035 * h, 0.08 * h, 0.07 * h, 3, sw - 1, "white")
+            + E(L1, 0, 0.03 * h, r1 + 0.012 * h, sw - 0.5, "white")
+            + LINE(0.06 * h, -0.074 * h, 0.06 * h, 0.074 * h, sw - 1.5))
+    out.append(G(mx, my - 0.03 * h, tube, 1.0, -28))
+    out.append(C(mx, my, max(5.0, 0.035 * h), sw - 1, "white"))
+    out.append(sparkle(cx + 0.52 * h, g - 1.02 * h, max(8.0, 0.05 * h)))
     return "".join(out)
 
 
