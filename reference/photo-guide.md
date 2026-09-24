@@ -50,7 +50,7 @@ svg = composite_page("lion.jpg", scene_meadow(), SCENE_GROUND, x=580,
 - The fragment's local origin is the ink's bottom-centre (feet anchor), so
   `G(x, ground_y, frag, s)` stands it on a ground line like any helper
 
-CLI: `python -m lib.photolib photo.jpg -o page.svg [--style sketch] [--fragment f.svg]`
+CLI: `python3 -m lib.photolib photo.jpg -o page.svg [--style sketch] [--fragment f.svg]`
 
 ## Detail policies by subject (tuning table)
 
@@ -70,7 +70,7 @@ CLI: `python -m lib.photolib photo.jpg -o page.svg [--style sketch] [--fragment 
 - Keep ~2×-pad clearance between the trace's halo and neighbouring props —
   `validate_svg` flags halo-swallowed stems exactly as it does for helpers
 - Main-figure floor (≥180px) applies to traced subjects on scene pages
-- Run `python -m lib.photolib` CLI output through `lib.validate` before
+- Run `python3 -m lib.photolib` CLI output through `lib.validate` before
   shipping, exactly as with helper-built pages
 
 ## Provenance
@@ -81,7 +81,7 @@ ever leaves the machine; nothing phones home.
 
 ## Evaluation (`tools/eval_photo.py`)
 
-The pipeline is scored, not eyeballed. `python tools/eval_photo.py` renders
+The pipeline is scored, not eyeballed. `python3 tools/eval_photo.py` renders
 the synthetic fixture tiers (simple subjects, crisp toy, soft portrait,
 textured foliage, low light) through the trace and reports:
 

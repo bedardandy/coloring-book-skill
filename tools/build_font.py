@@ -3,63 +3,165 @@
 assets/fonts/OFL.txt and CREDITS.md).
 
 Glyph outlines are converted to absolute SVG path data in FONT units
-(y-UP); charlib.letter()/word() apply the size scale and y-flip at draw
-time so the JSON stays resolution-independent. Only glyph OUTLINES are
-stored (shape data, not the font program) — this keeps the repo clean of
-any font-engine dependency at render time: pages need only Python.
+(y-UP); charlib.letter()/word()/text_path() apply the size scale and
+y-flip at draw time so the JSON stays resolution-independent. Only glyph
+OUTLINES and metrics are stored (shape data, not the font program) — pages
+need no font engine and no installed fonts at render time, so the SVG is
+byte-identical on every machine and renders never depend on which fonts the
+host happens to have (the old <text> pages came out Helvetica on a Mac and
+DejaVu Sans on Linux).
+
+Overlapping contours are REMOVED first (fontTools removeOverlaps): Andika
+draws M/X/Y/K/W/N/A/... as overlapping strokes, invisible when filled but
+drawn as stray interior lines once a glyph is OUTLINED for coloring or
+tracing. That step needs skia-pathops — a BUILD-TIME-ONLY dependency
+(requirements-dev.txt, pinned so the output is byte-reproducible); pages
+never need it because lib/letters.json is committed.
+
+Path data uses ONLY absolute M/L/Q/C/Z commands (no H/V shorthands, no
+implicit repeats): lib/validate.py pairs path numbers even/odd to measure
+bboxes, which one-coordinate H/V commands would silently misalign.
+
+Stored per glyph: "d" (outline), "adv" (advance width — the ONLY spacing
+data text layout needs: Andika ships no kerning, its GPOS carries mark/mkmk
+attachment only, and the accented letters in CHARSET are composite glyphs
+that the pen decomposes into plain outlines), "ymin"/"ymax" (ink bounds).
+Characters the font lacks are skipped with a note; charlib falls back to
+the unaccented base letter at draw time.
 
 Usage:
+    pip install -r requirements-dev.txt     # skia-pathops (build only)
     python tools/build_font.py [path/to/Andika-Regular.ttf]
 
-Deterministic output (sorted keys, fixed precision) so re-runs diff clean.
+Deterministic output (sorted keys, fixed 1-decimal precision — TrueType
+coords are integers, implied on-curve midpoints are exact .5) so re-runs
+diff clean.
 """
 import json
 import os
 import sys
 
-DEFAULT_TTF = os.path.join(os.path.dirname(__file__), "..",
+DEFAULT_TTF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                            "assets", "fonts", "Andika-Regular.ttf")
-OUT = os.path.join(os.path.dirname(__file__), "..", "lib", "letters.json")
+OUT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "..", "lib", "letters.json"))
 
-CHARSET = ("ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-           "abcdefghijklmnopqrstuvwxyz"
-           "0123456789"
-           " !?'.,-&")
+# printable ASCII (space..~) + Latin-1 Supplement letters/punctuation
+# (U+00A0..U+00FF minus the invisible soft hyphen) + Latin Extended-A
+# (U+0100..U+017F: Œ œ plus the Polish/Czech/Hungarian/Turkish/... letters
+# kids' names need — Łucja, Dvořák, Şule) + Ÿ and the typographic
+# characters that show up in captions.
+CHARSET = ("".join(chr(c) for c in range(0x20, 0x7F))
+           + "".join(chr(c) for c in range(0xA0, 0x100) if c != 0xAD)
+           + "".join(chr(c) for c in range(0x100, 0x180))
+           + "\u2018\u2019\u201C\u201D"      # curly quotes
+           + "\u2013\u2014\u2026\u2022")     # en/em dash, ellipsis, bullet
 
 
-def main(ttf_path):
+def _num(v):
+    s = f"{round(float(v), 1):.1f}"
+    s = s[:-2] if s.endswith(".0") else s
+    return "0" if s == "-0" else s
+
+
+def _pt(p):
+    return _num(p[0]) + " " + _num(p[1])
+
+
+def _pen_class():
+    from fontTools.pens.basePen import BasePen
+
+    class AbsPathPen(BasePen):
+        """Absolute M/L/Q/C/Z only (see module docstring)."""
+
+        def __init__(self, glyph_set):
+            super().__init__(glyph_set)
+            self.cmds = []
+
+        def _moveTo(self, pt):
+            self.cmds.append("M" + _pt(pt))
+
+        def _lineTo(self, pt):
+            self.cmds.append("L" + _pt(pt))
+
+        def _qCurveToOne(self, p1, p2):
+            self.cmds.append("Q" + _pt(p1) + " " + _pt(p2))
+
+        def _curveToOne(self, p1, p2, p3):
+            self.cmds.append("C" + _pt(p1) + " " + _pt(p2) + " " + _pt(p3))
+
+        def _closePath(self):
+            self.cmds.append("Z")
+
+        def _endPath(self):
+            pass
+
+    return AbsPathPen
+
+
+def _remove_overlaps(font, names):
+    """Union each glyph's overlapping contours (Andika builds M, X, Y, K, W,
+    N, A, ... from overlapping strokes). A filled glyph hides overlaps, but
+    an OUTLINED one (charlib's colorable/trace letters) shows every hidden
+    contour as a stray interior line. Runs on the glyphs we bake plus the
+    components they reference; non-overlapping composites stay composite."""
+    try:
+        from fontTools.ttLib.removeOverlaps import removeOverlaps
+    except ImportError as exc:  # pathops missing
+        raise SystemExit(
+            "tools/build_font.py needs skia-pathops to remove glyph overlaps: "
+            "pip install -r requirements-dev.txt") from exc
+    glyf = font["glyf"]
+    todo, closure = list(names), set()
+    while todo:
+        g = todo.pop()
+        if g in closure:
+            continue
+        closure.add(g)
+        if glyf[g].isComposite():
+            todo.extend(c.glyphName for c in glyf[g].components)
+    removeOverlaps(font, sorted(closure))
+
+
+def main(ttf_path, out_path=OUT):
     from fontTools.ttLib import TTFont
-    from fontTools.pens.svgPathPen import SVGPathPen
     from fontTools.pens.boundsPen import BoundsPen
 
+    AbsPathPen = _pen_class()
     font = TTFont(ttf_path)
-    glyph_set = font.getGlyphSet()
     cmap = font.getBestCmap()
     upem = font["head"].unitsPerEm
+    _remove_overlaps(font, [cmap[ord(c)] for c in CHARSET if ord(c) in cmap])
+    glyph_set = font.getGlyphSet()
 
-    letters = {}
+    letters, missing = {}, []
     for ch in CHARSET:
         gname = cmap.get(ord(ch))
         if gname is None:
-            print(f"  !! no glyph for {ch!r}, skipping")
+            missing.append(ch)
             continue
-        pen = SVGPathPen(glyph_set)
+        pen = AbsPathPen(glyph_set)
         glyph_set[gname].draw(pen)
-        d = pen.getCommands()
         bp = BoundsPen(glyph_set)
         glyph_set[gname].draw(bp)
+        adv = glyph_set[gname].width
         letters[ch] = {
-            "d": d,
-            "adv": round(glyph_set[gname].width, 1),
+            "d": "".join(pen.cmds),
+            "adv": int(adv) if float(adv).is_integer() else round(adv, 1),
             "ymin": round(bp.bounds[1], 1) if bp.bounds else 0,
-            "ymax": round(bp.bounds[3], 1) if bp.bounds else upem * 0.7,
+            "ymax": round(bp.bounds[3], 1) if bp.bounds else round(upem * 0.7, 1),
         }
+    if missing:
+        print("  !! Andika has no glyph for "
+              + " ".join(f"U+{ord(c):04X}" for c in missing) + " — skipped")
     out = {"font": "Andika", "license": "SIL-OFL-1.1",
            "upem": upem, "letters": letters}
-    with open(OUT, "w") as fh:
-        json.dump(out, fh, sort_keys=True, separators=(",", ":"))
-    print(f"wrote {OUT}: {len(letters)} glyphs, upem={upem}, "
-          f"{os.path.getsize(OUT) // 1024}KB")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(out, fh, sort_keys=True, separators=(",", ":"),
+                  ensure_ascii=True)  # ASCII-safe on any locale
+        fh.write("\n")
+    print(f"wrote {out_path}: {len(letters)} glyphs, upem={upem}, "
+          f"{os.path.getsize(out_path) // 1024}KB")
 
 
 if __name__ == "__main__":

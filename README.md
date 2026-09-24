@@ -19,56 +19,52 @@ built end-to-end by the skill.*
   kid on every page, zero identity drift, no photos needed or wanted.
 - **Everything is bold vector line art** (SVG → PDF), tuned to age-band line weights.
   No diffusion raster output, no broken gray lines.
-- **A shape cookbook instead of freehand geometry.** LLMs reliably botch bicycles and
-  side-view cars; the skill ships ~20 object helpers plus relative-proportion recipes
+- **A shape library instead of freehand geometry.** LLMs reliably botch bicycles and
+  side-view cars; the skill ships 200+ object helpers indexed by interest in
+  [`reference/catalog.md`](reference/catalog.md) — vehicles, trains, boats, space, farm
+  and wild animals, buildings, playground gear, people in run/jump/point/carry/sleep
+  poses, a wheelchair user — plus relative-proportion recipes for anything else
   (derived from public-domain 1910s drawing pedagogy and MIT-licensed icon skeletons —
   see [CREDITS.md](CREDITS.md)).
+- **Scene kits and a composition recipe.** `lib/scenes.py` gives proven backgrounds
+  (meadow, street, beach, space, farm) with declared ground lines; the drawing guide's
+  three-layer recipe (background kit → midground anchor → foreground figures at
+  300-380 px) is what keeps pages from reading bottom-crammed.
+- **Deterministic validation gate.** `python3 -m lib.validate pages/*.svg` turns every
+  numeric layout rule into exact arithmetic on the emitted SVG — border clearance,
+  scene span, **mass distribution** (a hollow middle third or a sky-only top is
+  flagged even when the bounding-box arithmetic passes), figure and face sizes, head
+  clearance, mat-swallowing, ground tangency, text fit — and fails on HIGH findings.
+- **Machine-independent renders.** All page text (titles, captions, page numbers) is
+  drawn as glyph paths from the bundled Andika literacy font, so the same SVG renders
+  identically on any machine and the PDF embeds no system font. Hollow letters for
+  tracing pages are overlap-free with a colorable body.
 - **Anti-tangency matting** (`matted()`) knocks white halos out of backgrounds around
   figures, so rug lines can't visually fuse with dress hems.
+- **Creativity layer**: finish-the-symmetry and finish-the-picture pages, blank speech
+  bubbles, pattern menus, design-your-own templates, sticker sheets — pages that invite
+  the child's own art.
 - **Tile-based QA loop**: pages are re-rendered as overlapping zoom tiles and reviewed
-  (by subagents when available) for collisions, floaters, and ambiguous shapes.
-- **Deterministic validation gate**: `python -m lib.validate pages/*.svg` turns every
-  numeric layout rule into exact arithmetic on the emitted SVG (border clearance,
-  connected-mass span, head clearance, mat-swallowing, ground tangency, text fit...)
-  and fails on HIGH findings — guarded by a pytest suite.
-- **Smooth organic figures + line vocabulary**: a Catmull-Rom→Bézier engine
-  (`smooth_path`, `limb`) rebuilds kid arms and animal silhouettes as tapered
-  G1-continuous outlines; `scallop_edge`, `hatch_region`, `echo` and friends replace
-  hand-drawn decoration.
-- **Colorable letters & words**: Andika (SIL OFL) glyph outlines baked to paths —
-  hollow colorable letters, dashed trace-style name pages with ruled guidelines,
-  banners auto-sized from glyph metrics. No font install needed at render time.
-- **Interest packs + scene kits**: 230+ helpers indexed by interest in
-  `reference/catalog.md` — vehicles, trains, planes, boats, space, flowers,
-  wild/farm animals, games, buildings — plus `lib/scenes.py` composite
-  backgrounds (meadow, street, beach, space, farm) with declared ground lines,
-  and landscape systems (mountains, roads, fences, skylines).
-- **Creativity layer**: blank speech bubbles, finish-the-symmetry and
-  finish-the-picture pages (dashed hints via per-element clip paths), pattern
-  menus to copy, design-your-own templates, sticker sheets — pages that invite
-  the child's own art, with validator-aware `layout="creative"` marking.
-- **People for every story**: run/jump/point/carry/sleep poses, hand-holding
-  pairs, toddler proportions, a wheelchair user, and cap/scarf/cape accessories.
-- **Photo mode**: `lib/photolib.py` turns photos into splinter-free colorable
-  outlines — flow-coherent line extraction, contour averaging, angle snapping,
-  subject-aware soft policies (faces protected, architecture squared up),
-  closed QA loop; feet-anchored fragments composite traced subjects into scene
-  kits beside charlib characters. Fully local (OpenCV + bundled Apache-2.0
-  YuNet face model).
+  (by vision-capable subagents when available) for collisions, floaters, and ambiguous
+  shapes.
 - **Model-tier aware**: the skill tells weaker models to run in a conservative
   helpers-only mode and when to escalate — calibrated by benchmarking the same build
-  across three model tiers.
+  across model tiers ([`reference/model-tiers.md`](reference/model-tiers.md)).
+- **Photo mode** (`lib/photolib.py`) traces a photo into colorable outlines, fully
+  local (OpenCV + a bundled Apache-2.0 face model). It is honest about its limits:
+  best on a single high-contrast subject in `sketch` style; interiors and textured
+  backgrounds still trace noisily. See [`reference/photo-guide.md`](reference/photo-guide.md).
 
 ## Install
 
 ```bash
-git clone <this-repo> ~/.claude/skills/coloring-book
+git clone https://github.com/bedardandy/coloring-book-skill ~/.claude/skills/coloring-book
+pip install -r ~/.claude/skills/coloring-book/requirements.txt
 ```
 
-Then in Claude Code: `/coloring-book` — or just ask for "a coloring book for my kids".
-
-Rendering needs `cairosvg` (`pip install cairosvg`) and Ghostscript (`gs`) for the
-final PDF merge.
+Rendering needs `cairosvg` (installed above) and Ghostscript (`gs`) for the final PDF
+merge. Then in Claude Code: `/coloring-book` — or just ask for "a coloring book for my
+kids".
 
 ## Try the example
 
@@ -76,23 +72,40 @@ final PDF merge.
 cd examples/where-is-button
 python3 make_book.py          # full book -> Harper-Coloring-Book.pdf
 python3 make_book.py 05       # rebuild just page 5
+python3 -m lib.validate examples/where-is-button/pages/*.svg   # from the repo root
 ```
+
+`python3 tools/showcase.py` renders one page per content pack into
+`examples/showcase/pages/` and validates each — a fast visual smoke test of the whole
+library.
 
 ## Layout
 
-- `SKILL.md` — the skill workflow (cast setup → plan → render → QA → deliver)
-- `lib/charlib.py` — the drawing library: primitives, motifs, parametric faces/figures,
-  animals, furniture, vehicles, page/PDF assembly, QA tile renderer
-- `reference/drawing-guide.md` — collision gotchas and age-band rules, learned in production
-- `reference/story-mode.md` — the 10-beat arc + caption rules for ages 3-6
+- `SKILL.md` — the skill workflow (cast setup → plan → render → validate → QA → deliver)
+- `lib/charlib.py` — the drawing library: primitives, curve engine, motifs, parametric
+  faces/figures, animals, furniture, vehicles, letters, creativity pages, page/PDF assembly
+- `lib/scenes.py` — scene kits with declared ground lines
+- `lib/validate.py` — the deterministic page validator and book linter
+- `lib/photolib.py` — photo-to-outline tracing
+- `reference/drawing-guide.md` — collision gotchas, age-band rules, composition recipe
+- `reference/story-mode.md` + `reference/story-tropes.md` — the 10-beat arc and 18 story
+  structures for ages 3-6
 - `reference/shape-cookbook.md` — relative-proportion recipes for everyday objects
+- `reference/catalog.md` — every helper, indexed by interest (auto-generated)
 - `reference/model-tiers.md` — operating modes and escalation ladder by model capability
+- `tools/` — showcase renderer, catalog generator, font baker, photo evaluation, PII gate
+- `tests/` — pytest suite (run `pytest -q -m "not slow"`; `-m slow` builds the example book)
+
+CI runs the PII gate, the fast tests, the photo-pipeline evaluation gate, and (on push)
+the full example build + validation. See [CHANGELOG.md](CHANGELOG.md) for what changed
+when.
 
 ## License
 
-- **Code** (`lib/`, `examples/`): [AGPL-3.0-or-later](LICENSE). Chosen deliberately:
-  this is a for-fun community project, and AGPL means anyone who builds a service on it
-  must share their improvements back. Personal and family use is completely unencumbered.
+- **Code** (`lib/`, `tools/`, `tests/`, `examples/`): [AGPL-3.0-or-later](LICENSE).
+  Chosen deliberately: this is a for-fun community project, and AGPL means anyone who
+  builds a service on it must share their improvements back. Personal and family use is
+  completely unencumbered.
 - **Documentation and recipes** (`SKILL.md`, `reference/`): CC BY-SA 4.0.
 - Upstream reference material and its licensing: [CREDITS.md](CREDITS.md).
 
@@ -110,9 +123,10 @@ non-negotiable, and skipping them is why hand-rolled attempts come out rough:
 2. **White fills, back-to-front.** Every solid shape is drawn with `fill="white"` over
    what's behind it, in depth order, and figures get `matted()` halos. Outline-only
    drawing produces transparent shapes whose strokes all cross each other.
-3. **Verify numerically** (see `reference/drawing-guide.md`): scene bbox ≥55% of page
-   height, nothing within 12px of the border, figures ≥180px. Every model bottom-crams
-   first drafts; arithmetic catches it when eyeballing doesn't.
+3. **Run the validator** (`python3 -m lib.validate pages/*.svg`) after every build and
+   fix what it reports by moving or scaling elements: scene at least 330 px tall with a
+   filled middle band, nothing within 12 px of the border, main figures at least 180 px.
+   Every model bottom-crams first drafts; arithmetic catches it when eyeballing doesn't.
 
 If your environment can't run Python, the honest move is to say so rather than
 approximate — the output difference is not subtle.

@@ -1,13 +1,15 @@
 # Drawing guide — line-art rules & hard-won gotchas
 
 ## These rules are now CODE
-Every numeric rule below is enforced by `lib/validate.py` (`python -m lib.validate
-pages/*.svg`): border clearance, connected-mass span (sky tokens excluded), figure/
-face size, caption-band + title-zone, text width, head kill-radius, hand/arm overlap,
-wheel tangency, parallel-line sliver floor, mat-swallowing (full erasure; partial halo
-nibbles still need tile eyes), duplicate pages. The prose stays for UNDERSTANDING the
-why — do not hand-audit what `lib.validate` already measures. Pages that are
-intentionally sparse take `spage(..., layout="activity")` or `"vignette"`.
+Every numeric rule below is enforced by `lib/validate.py` (`python3 -m lib.validate
+pages/*.svg`): border clearance, scene extent (sky tokens and lone thin strokes
+excluded), mass distribution (hollow middle band — the three-layer recipe below, as
+arithmetic), figure/face size, caption-band + title-zone, text width, head
+kill-radius, hand/arm overlap, wheel tangency, parallel-line sliver floor,
+mat-swallowing (full erasure; partial halo nibbles still need tile eyes), duplicate
+pages. The prose stays for UNDERSTANDING the why — do not hand-audit what
+`lib.validate` already measures. Pages that are intentionally sparse take
+`spage(..., layout="activity")`, `"vignette"` or `"creative"`.
 
 ## Age-band tuning
 | Age | main stroke | elements/page | notes |
@@ -29,15 +31,18 @@ charlib default SW=5 suits the 3-6 middle. Detail strokes 2.5-3.5.
 5. **Adjacent rectangles (windows) must not overlap** — overlapping strokes render as solid
    black slabs. Keep ≥4px gaps.
 6. **Text in burst stars**: font-size ≤ 0.4 × star radius or it overflows the points.
-6b. **Text in any banner/box**: DejaVu Sans runs ≈ 0.55 × font-size per character (bold ≈ 0.62).
-   Container width must be ≥ text width + 2×18px padding — compute it, don't eyeball it
-   (a 29-char name banner at 24px needs ≥ 420px, not 340).
+6b. **Text in any banner/box**: page text is Andika glyph paths, so its width is EXACT —
+   `charlib.text_width(s, size)` (or `word_width()` for `word()`/`banner()`); no
+   per-character estimate needed (the old DejaVu ≈ 0.55 × size/char, bold ≈ 0.62 rule only
+   applies to legacy `TEXT_MODE="font"` output). Container width must be ≥ text width +
+   2×18px padding — compute it, don't eyeball it.
 6c. **Text in organic shapes (hearts, bursts, clouds)**: measure the shape's interior
    width AT THE TEXT'S y, not its widest point — a heart narrows fast above and below
    its lobes. Proven combo for back covers: heart s≈210 with "The End!" at ≤52px bold.
 6d. **Captions must wrap.** A 15-25-word story caption on ONE line overflows the border
-   (this bit two of six benchmark models). `charlib.page()` wraps captions automatically
-   at ~56 chars; if you render caption text yourself, wrap at ~55 chars per line.
+   (this bit two of six benchmark models). `charlib.page()`/`spage()` wrap captions
+   automatically on MEASURED width (~670px); if you render caption text yourself, use
+   `charlib.wrap_width(text, max_w, size)`.
 7. Background objects (sun, clouds, bunting) collide with tower/flag/head tops — check the
    sky lane before placing. Sun rays extend r+32 beyond the disc.
 8. Anchor everything to a ground line or tuft — floating animals/objects get flagged by kids
@@ -57,7 +62,11 @@ Two defenses, use both:
 2. Even with matting, don't run a closed background shape (full rug ellipse) through a
    crowd — prefer partial arcs behind groups, and keep ≥14px designed clearance between
    unrelated contours.
-3. **Dense matted clusters (3+ overlapping matted objects) can swallow a neighbor** —
+3. **Contact lines are not background.** A `matted()` halo also knocks out the ground
+   line under paws and dress hems, dashing it. Draw the ground line (or a short contact
+   segment) AFTER the matted figures — the r3 benchmark found the bundled example had
+   this artifact on every page.
+4. **Dense matted clusters (3+ overlapping matted objects) can swallow a neighbor** —
    a later object's white halo can fully erase an earlier small one (a dog's mat ate a
    dirt mound; another run's dog mat ate half an excavator). Draw a tight cluster as ONE
    `matted()` group, or keep ~2x-pad clearance between separately-matted objects. Verify
@@ -84,16 +93,19 @@ keep the LEFT one stock (it faces right) and `GM()` the RIGHT one — otherwise 
 face the same way and the interaction reads rump-first.
 
 ## Composition
-- **Numeric layout check (run it, don't eyeball)**: scene bbox spans ≥55% of page height
-  (top ≤450, bottom ≥900); every element ≥12px inside the border; main figures ≥180px
-  tall; faces r≥28 or trait features crowd. Every model bottom-crams first drafts —
-  plan the vertical layout BEFORE drawing (see reference/model-tiers.md).
-- **The span metric is a FLOOR, not the goal — and sky tokens don't count.** A corner
-  sun + a high cloud makes the bbox arithmetic pass while the page still reads
-  unfinished (three of six benchmark models did exactly this, one knowingly). Compute
-  the span from CONNECTED scene mass — structures, trees, figures that touch the
-  ground composition — not from isolated sun/cloud/bird tokens. If the connected mass
-  doesn't reach y≈450, add a midground anchor (tree, building, hill), don't sprinkle sky.
+- **Numeric layout check (run it, don't eyeball)**: the scene (non-sky ink) spans
+  ≥330px — about one foreground figure — and reaches down to y≥900 (HIGH below 330px
+  or above y880); the middle band y430-715 holds ≥40% of the heavier outer band's ink
+  (MED); every element ≥12px inside the border; main figures ≥180px tall; faces r≥28
+  or trait features crowd. Every model bottom-crams first drafts — plan the vertical
+  layout BEFORE drawing (see reference/model-tiers.md).
+- **The span is a FLOOR, not the goal — and sky tokens don't count.** A corner sun +
+  a high cloud used to make the bbox arithmetic pass while the page still read
+  unfinished (three of six benchmark models did exactly this, one knowingly). Every
+  part of sun/moon/cloud/sparkle/star_field is tagged `data-sky` (wrap your own sky
+  decoration in `charlib.sky()`), and rows carrying a lone thin stroke (pole, kite
+  string) don't extend the span. Add a midground anchor (tree, building, hill) whose
+  top reaches y≈450-550, don't sprinkle sky.
 - Whole-page layout: title y≈100, scene y≈150-950, caption y≈1038, page number bottom.
 - Fill the middle band — a fence at the top and kids at the bottom with 300px of empty
   space between reads as unfinished; add a barn/tree/path/mid-ground element.
@@ -103,6 +115,17 @@ face the same way and the interaction reads rump-first.
 ## Print
 - `build()` renders letter-size vector PDF (612x792pt) — never rasterize pages.
 - One page per builder function; BUILDERS list + argv substring filter = partial rebuilds.
+
+## Custom poses (strong tier only)
+- Build from the PUBLIC parts, never by re-implementing the figure: `kid_top(t)` gives
+  head + torso + legs at the feet origin with `(parts, shoulders, head_y)`; add
+  `arm(shoulder, wrist)` / `limb(...)` for each arm and draw the head last.
+- A pose you KNOW is "kneeling" read as "a girl in a poofy dress" to three sets of blind
+  raters; the frontal "diamond" squat (knees above hips, shins angled in) read correctly.
+  Test every custom pose with the blind-rater protocol in `model-tiers.md`; if it fails,
+  change the pose TYPE, don't iterate the same one.
+- Pointy ears on a tilted dog head read as horns (one ear) or a cat (two spread ears);
+  keep a tucked pair and ≤22° tilt. Paired marks on a dirt pile read as a face.
 
 ## Costumes, facial accessories & props on figures (lessons from user pushback)
 - **Never stroke across the face interior.** An accessory edge crossing the face gets
@@ -118,9 +141,12 @@ face the same way and the interaction reads rump-first.
   center (a gift held "up" drifts onto the face — the caption said hand, the render said face).
 
 ## Foliage & structures in trees
-- Big canopies need TEXTURE: scallops along the outer rim + scattered inner leaf marks.
+- Big canopies need TEXTURE: a scalloped foliage outline + at most two inner leaf marks.
   Bare overlapping circles read as balloons. Keep inner marks ASYMMETRIC — two marks at
-  the same height read as a pair of eyes.
+  the same height read as a pair of eyes, and three marks in a triangle (two high, one
+  centred below) read as a face: `tree_round`'s old four caret ticks put a sleeping face
+  on every default tree. One mark per height band, on a diagonal, and look at the
+  thumbnail — if you can see a face, it is not fixed.
 - A structure in a tree sits BELOW/BESIDE the foliage with visible support (fork of
   branches, platform planks) — a house floating inside a leaf blob drowns.
 - Ladders/ropes attach beside the trunk, never overlapping it (rails over the trunk
@@ -131,10 +157,25 @@ face the same way and the interaction reads rump-first.
    `variant=N` for deterministic layout variety and `midground=True`
    (default) for depth anchors.
 2. MIDGROUND: kit anchors sit at y≈750-930 at reduced size (further away).
-3. FOREGROUND: characters/vehicles at scale 1.2-1.4 (~35-45% of page
-   height) standing ON the declared ground line. Scale 1.0 reads as a
-   distant figure — bump it or add midground so the page doesn't read
-   bottom-empty (the span checker flags this).
+   They add depth but do NOT fill the middle band — add one anchor of your
+   own (tree/house/furniture) whose top reaches y≈450-550.
+3. FOREGROUND: main figures ~300-380px tall (kid_stand scale 1.2-1.5;
+   1.3 ≈ 326px ≈ 30% of the page) standing ON the declared ground line.
+   Scale 1.0 (~250px) reads as a distant figure — bump it or add midground
+   so the page doesn't read bottom-empty.
+
+The validator measures this recipe with two checks, one owner per failure.
+`scene_span` owns the EXTENT: a kit + one 1.0 kid is a 246px strip → HIGH
+(floor 330px); the recipe (tree whose top reaches y≈500 + kid at 1.3) spans
+444px. `mass_distribution` owns WHERE the ink sits: non-sky coverage in three
+equal bands between the title (y145) and caption (y1000), MED **hollow middle**
+when the middle band (y430-715) holds < 40% of the heavier outer band's ink —
+the hourglass that clears the extent with props up top and a figure strip on
+the ground (~1% middle vs ~27% bottom). The recipe scores ~40% vs ~44%. A big
+figure alone does not fill the middle (kid at 1.4 on a bare kit: 8% vs 31%) —
+the midground anchor does. Numbers are in `validate_svg(...)["span"]`/`["mass"]`
+and printed by the CLI.
+
 Rotate `variant` between pages of the same setting so spreads don't repeat
 a layout; keep one variant per scene across a single book for coherence.
 
@@ -149,6 +190,16 @@ a layout; keep one variant per scene across a single book for coherence.
   composite_page + manual G() placement: trace first, characters after.
 - kids_holding_hands separates partners by 48.5*s (pigtails reach 1.32r
   and graze the partner's 1.3r face zone at 44*s).
+- Mat a foreground figure when a background line would run TANGENT to it.
+  When it only CROSSES lines (a cow's thin legs across a hill or ground
+  line), the halo chops those lines into dashes around each leg — stand it
+  a step in front of the ground line (y = ground + 20..30) instead, and keep
+  fence posts out from between animal legs (they read as extra legs:
+  `scene_farm(fence=False)`).
+- Size catalog/inventory grids by MEASURING: `fit_fragment(frag, cx, cy,
+  w, h, anchor="bottom")` scales any helper into its cell at page stroke
+  weight (`fragment_bbox` gives the tight box). Three columns, not four, on
+  a letter page — at ~150px wide animal legs/ears drop under the 3x3mm floor.
 - G()/GM() scales are precision-formatted: rounding 0.95 to one decimal
   silently changed figure sizes (and rounded a 0.044 glyph scale to 0.0,
   vaporizing banner text — the _f() vs _fs() split exists for this).

@@ -121,13 +121,31 @@ def test_creativity_pack():
         _check(f"creativity:{name}", svg)
 
 
+def test_dog_dig_pose():
+    """dog_dig: digging dog on a meadow ground line, both dirt settings and
+    traits, mirrored with GM, next to a standing kid — validates clean."""
+    from charlib import dog_dig, kid_stand, GM, matted
+    for dirt in (True, False):
+        for t in ({}, {"coat": "patch"}, {"coat": "spots", "floppy_ears": False}):
+            frag = dog_dig(t, long_nose=bool(t), dirt=dirt)
+            assert frag.startswith('<g data-el="figure">')
+            ET.fromstring(f'<svg xmlns="http://www.w3.org/2000/svg">{frag}</svg>')
+    assert len(dog_dig({}, dirt=True)) > len(dog_dig({}, dirt=False))
+    body = (G(200, G_, kid_stand({"outfit": "tee"}, "down"), 1.2) +
+            matted(G(500, G_, dog_dig({"coat": "patch"}), 1.4)) +
+            GM(640, 500, dog_dig({}, dirt=False), 1.0))
+    _check("dog_dig", spage("Digging", body, layout="activity"))
+
+
 def test_landscape_pack():
     body = (sun(120, 140, r=40) + cloud(650, 160, 26) +
             mountain_range(310, G_, peaks=3, w=440) +
             road(440, 790, G_ - 120) +
             forest_border(G_, n=3, x0=255, x1=425, h=115) +
             bridge(200, G_ - 170, w=260) + pond(690, G_ - 30))
-    _check("landscapes", spage("World", body))
+    # a bare background strip (no figures): helper smoke, not composition —
+    # scene extent/distribution are tests/test_validate.py's job
+    _check("landscapes", spage("World", body), require_span=False)
 
 
 def test_scene_kits():
@@ -136,13 +154,19 @@ def test_scene_kits():
             (scenes.scene_beach(), scenes.BEACH_GROUND),
             (scenes.scene_space(), scenes.SPACE_GROUND),
             (scenes.scene_farm(), scenes.SCENE_GROUND)]
+    # bare kits are BACKGROUNDS (they need a midground anchor + figures to
+    # compose a page), so only collision/border/band checks apply here
     for i, (body, _ground) in enumerate(kits):
-        _check(f"scene{i}", spage("Kit", body))
+        _check(f"scene{i}", spage("Kit", body), require_span=False)
+    # fence=False drops only the ranch fence (posts between a foreground
+    # animal's legs read as extra legs)
+    assert (scenes.scene_farm().count("<line") >
+            scenes.scene_farm(fence=False).count("<line"))
     # declared ground lines actually work: a kid stands on each kit
     from charlib import kid_stand
     body, ground = kits[0]
     body += G(430, ground, kid_stand({"outfit": "tee"}, "wave"), 1.0)
-    _check("scene+figure", spage("Meadow", body))
+    _check("scene+figure", spage("Meadow", body), require_span=False)
 
 
 def test_showcase_pages_all_clean():

@@ -27,7 +27,8 @@ INTERESTS = {
     "wild animals": "lion elephant giraffe monkey owl frog turtle snail "
                     "rabbit bird_side horse butterfly",
     "farm": "barn cow sheep chicken pig horse baby_goat fence_ranch tractor",
-    "pets": "dog dog_sit dog_sleep cat_sitting teddy food_bowl bone kibble",
+    "pets": "dog dog_sit dog_sleep dog_dig dirt_hole cat_sitting teddy food_bowl "
+            "bone kibble",
     "games & toys": "kite scooter tricycle seesaw sandbox blocks dice drum "
                     "puzzle_piece ice_cream soccer_ball ball swing_set balloon",
     "buildings": "house village_house castle_small treehouse schoolhouse "
@@ -65,7 +66,16 @@ def parse_module(path):
         if m and not m.group(1).startswith("_"):
             name = m.group(1)
             doc = ""
-            j = i + 1
+            j = i
+            # multi-line signatures: the docstring follows the line that
+            # closes the def (paren balance back to zero, ends with ':')
+            depth = 0
+            while j < len(lines):
+                depth += lines[j].count("(") - lines[j].count(")")
+                if depth <= 0 and lines[j].rstrip().endswith(":"):
+                    break
+                j += 1
+            j += 1
             if j < len(lines) and lines[j].strip().startswith('"""'):
                 doc = lines[j].strip().strip('"')
                 if len(lines[j].strip()) == 3:  # multiline docstring

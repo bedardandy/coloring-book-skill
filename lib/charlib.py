@@ -17,7 +17,8 @@ CRITICAL GOTCHAS (learned the hard way):
 
 VALIDATION HOOKS (consumed by lib/validate.py — see reference/drawing-guide.md):
 - Semantic metadata travels in the SVG itself as data-* attributes:
-  data-face="cx,cy,r" (head circles), data-sky="1" (sun/cloud/sparkle),
+  data-face="cx,cy,r" (head circles), data-sky="1" (every part of sun/
+  moon/cloud/sparkle/shooting_star/star_field — see sky()),
   data-ground="y" (wheels tangent to a declared ground line),
   data-hand="1" (hand circles), data-el="figure" (character groups),
   data-mat="1" (invisible knockout-mat copies), data-chrome="1"
@@ -83,8 +84,159 @@ def LINE(x1, y1, x2, y2, sw=SW):
 
 
 def TXT(x, y, s, size=40, anchor="middle", weight="bold"):
+    """Page text at (x, baseline y). Delegates to text_path() (glyph
+    outlines, renders identically on every machine); TEXT_MODE = "font"
+    restores the legacy fontconfig-dependent <text> element."""
+    if TEXT_MODE == "font":
+        return _txt_font(x, y, s, size, anchor, weight)
+    return text_path(x, y, s, size=size, anchor=anchor, weight=weight)
+
+
+def _txt_font(x, y, s, size=40, anchor="middle", weight="bold"):
     return (f'<text x="{_f(x)}" y="{_f(y)}" font-family="DejaVu Sans" font-size="{_f(size)}" '
             f'font-weight="{weight}" text-anchor="{anchor}" fill="black">{_xml_escape(s)}</text>')
+
+
+# ---------------------------------------------------------------- page text engine
+# ALL page text — titles, captions, page numbers, labels — is drawn as filled
+# glyph OUTLINES of the bundled Andika font (SIL OFL), baked into
+# lib/letters.json by tools/build_font.py. A <text> element is resolved by the
+# host's fontconfig at render time, so the same SVG came out as Helvetica on
+# a Mac and DejaVu Sans on Linux; glyph paths need no installed font, render
+# the same everywhere, and their widths are EXACT (sum of glyph advances —
+# Andika has no kerning), so wrapping and the validator's text_fit need no
+# estimates.
+#   TEXT_MODE = "path"  (default) glyph outlines via text_path()
+#   TEXT_MODE = "font"  legacy <text font-family="DejaVu Sans"> + char-count
+#                       caption wrapping (e.g. to get selectable PDF text back)
+TEXT_MODE = "path"
+BOLD_STROKE = 0.04          # fake-bold outline stroke, as a fraction of size
+CAPTION_MAX_W = W - 2 * 90  # measured caption line width limit (px)
+
+# close typographic stand-ins tried before the NFKD base-letter fallback
+_TEXT_SUBS = {"\u2010": "-", "\u2011": "-", "\u2012": "\u2013", "\u2015": "\u2014",
+              "\u2212": "-", "\u201a": ",", "\u201e": "\u201c", "\u2032": "'",
+              "\u2033": '"', "\u2039": "<", "\u203a": ">", "\u2027": "\u00b7",
+              "\u2219": "\u2022", "\u25cf": "\u2022"}
+_TEXT_WARNED = set()
+_LETTERS_CACHE = None
+
+
+def _letters():
+    global _LETTERS_CACHE
+    if _LETTERS_CACHE is None:
+        import json as _json
+        import os as _os
+        p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                          "letters.json")
+        with open(p, encoding="utf-8") as fh:
+            _LETTERS_CACHE = _json.load(fh)
+    return _LETTERS_CACHE
+
+
+def _resolve_text(s):
+    """Map s onto characters letters.json can draw: exact glyph, else a
+    typographic stand-in, else the unaccented base letter (NFKD: "ő" -> "o"),
+    else whitespace -> space; anything left is skipped with a ONE-TIME
+    warning per character (never a "?" box, never a crash)."""
+    import unicodedata
+    L = _letters()["letters"]
+    out = []
+    for ch in str(s):
+        if ch in L:
+            out.append(ch)
+            continue
+        sub = _TEXT_SUBS.get(ch)
+        if sub is None:
+            sub = " " if ch.isspace() else "".join(
+                c for c in unicodedata.normalize("NFKD", ch)
+                if not unicodedata.combining(c))
+        if sub and all(c in L for c in sub):
+            out.append(sub)
+            continue
+        if ch not in _TEXT_WARNED:
+            _TEXT_WARNED.add(ch)
+            import warnings
+            warnings.warn(f"charlib text: no Andika glyph for {ch!r} "
+                          f"(U+{ord(ch):04X}); skipped", stacklevel=3)
+    return "".join(out)
+
+
+def _is_bold(weight):
+    w = str(weight).strip().lower()
+    return w in ("bold", "bolder") or (w.isdigit() and int(w) >= 600)
+
+
+def text_width(s, size=40):
+    """EXACT rendered width (px) of text_path(s, size): sum of the glyph
+    advances. Weight does not change it (fake-bold strokes the same glyphs)."""
+    L = _letters()["letters"]
+    return (sum(L[c]["adv"] for c in _resolve_text(s))
+            * size / _letters()["upem"])
+
+
+def text_path(x, y, s, size=40, anchor="middle", weight="bold", fill="black"):
+    """Text as filled Andika glyph paths, (x, y) = anchor point ON THE
+    BASELINE (same contract as SVG <text>). anchor: start | middle | end.
+    weight="bold" = fake-bold: the fill plus a same-color outline stroke of
+    BOLD_STROKE*size on the same paths (no second font file is bundled).
+    Emits <g data-text="1" data-x0 data-y data-w data-size aria-label>: the
+    validator treats it exactly like a <text> element and reads the measured
+    width from data-w."""
+    run = _resolve_text(s)
+    if not run.strip():
+        return ""
+    F = _letters()
+    L, upem = F["letters"], F["upem"]
+    k = size / upem
+    w = sum(L[c]["adv"] for c in run) * k
+    x0 = x - w / 2 if anchor == "middle" else (x - w if anchor == "end" else x)
+    paint = f'fill="{fill}"'
+    if _is_bold(weight):
+        # stroke-width is in FONT units (the group is scaled by k)
+        paint += (f' stroke="{fill}" stroke-width="{_f(BOLD_STROKE * upem)}" '
+                  f'stroke-linejoin="round"')
+    glyphs, pen = [], 0
+    for c in run:
+        g = L[c]
+        if g["d"]:
+            tr = f' transform="translate({_f(pen)},0)"' if pen else ""
+            glyphs.append(f'<path{tr} d="{g["d"]}"/>')
+        pen += g["adv"]
+    label = _xml_escape(str(s), {'"': "&quot;"})
+    return (f'<g data-text="1" data-x0="{_f(x0)}" data-y="{_f(y)}" '
+            f'data-w="{_f(w)}" data-size="{_f(size)}" aria-label="{label}" '
+            f'{paint} transform="translate({_f(x0)},{_f(y)}) '
+            f'scale({_fs(k)},{_fs(-k)})">' + "".join(glyphs) + "</g>")
+
+
+def wrap_width(text, max_w=CAPTION_MAX_W, size=22):
+    """Greedy word wrap on MEASURED glyph advances: every line's
+    text_width(line, size) <= max_w and no line is empty. A single word
+    wider than max_w is hard-split between characters rather than allowed
+    to overflow."""
+    lines, cur = [], ""
+    for wd in str(text).split():
+        if text_width(wd, size) > max_w:
+            if cur:
+                lines.append(cur)
+            cur = ""
+            for ch in wd:
+                if cur and text_width(cur + ch, size) > max_w:
+                    lines.append(cur)
+                    cur = ch
+                else:
+                    cur += ch
+            continue
+        cand = wd if not cur else cur + " " + wd
+        if text_width(cand, size) <= max_w:
+            cur = cand
+        else:
+            lines.append(cur)
+            cur = wd
+    if cur:
+        lines.append(cur)
+    return lines
 
 
 def _fs(v):
@@ -247,6 +399,18 @@ def star(cx, cy, r, sw=SW, fill="none"):
     return f'<polygon points="{" ".join(pts)}" fill="{fill}" stroke="black" stroke-width="{sw}" stroke-linejoin="round"/>'
 
 
+_SKY_TAG_RE = re.compile(
+    r"<(circle|ellipse|line|path|polygon|polyline|rect)\b(?![^>]*data-sky)")
+
+
+def sky(fragment):
+    """Tag EVERY shape in `fragment` data-sky="1" — sky decoration, excluded
+    from the validator's scene-mass arithmetic. Tag whole motifs, never just
+    their main shape: untagged sun rays at y~151 used to satisfy scene_span
+    on every scene-kit page."""
+    return _SKY_TAG_RE.sub(r'<\1 data-sky="1"', fragment)
+
+
 def sparkle(cx, cy, r=10, sw=3.5):
     return LINE(cx - r, cy, cx + r, cy, sw).replace("<line ", '<line data-sky="1" ', 1) + \
            LINE(cx, cy - r, cx, cy + r, sw).replace("<line ", '<line data-sky="1" ', 1)
@@ -267,12 +431,12 @@ def cloud(cx, cy, s, sw=SW):
 
 
 def sun(cx, cy, r=42, sw=SW):
-    s = C(cx, cy, r, sw, "white", sky="1")
+    s = C(cx, cy, r, sw, "white")
     for i in range(8):
         a = i * math.pi / 4
         s += LINE(cx + (r + 12) * math.cos(a), cy + (r + 12) * math.sin(a),
                   cx + (r + 32) * math.cos(a), cy + (r + 32) * math.sin(a), sw)
-    return s
+    return sky(s)                       # disc AND rays
 
 
 def strawberry(cx, cy, s, sw=4):
@@ -616,6 +780,24 @@ _KID_POSES = {
 }
 
 
+def kid_top(t, outfit=None, legs=True):
+    """PUBLIC pose-building part: the kid's head + torso (+ standing legs)
+    at the standard feet origin, WITHOUT arms. Returns (parts_list,
+    shoulders, head_y) exactly like the internal builder so a custom pose
+    (squat, kneel, reach, carry) can be staged as kid_top() + arm()/limb()
+    rather than re-implementing the figure. Draw the head last (it is
+    already last in parts_list)."""
+    return _kid_top(t, outfit=outfit, legs=legs)
+
+
+def arm(shoulder, wrist, sw=5, hand_r=8, bulge=13, lift=4):
+    """PUBLIC pose-building part: one smooth two-segment arm from
+    shoulder=(x, y) to an EXACT wrist=(x, y) target with the tagged hand
+    circle — the same part kid_stand() uses. Keep the hand outside 1.3*r of
+    the face centre (drawing-guide gotcha 1)."""
+    return _arm(shoulder, wrist, sw=sw, hand_r=hand_r, bulge=bulge, lift=lift)
+
+
 def _kid_top(t, outfit=None, legs=True):
     """Shared kid torso (+ optional standing legs). Returns
     (out_list, shoulders, head_y) so pose variants reuse the exact
@@ -800,19 +982,11 @@ def page(title, body, num=None, caption=None):
         chrome.append(P(f"M {W/2-260} 122 Q {W/2} 138 {W/2+260} 122", 4))
     parts.append(body)
     if caption:
-        # wrap long captions — a single line overflows the border past ~55 chars
-        words, lines, cur = caption.split(), [], ""
-        for w_ in words:
-            if len(cur) + len(w_) + 1 <= 56:
-                cur = (cur + " " + w_).strip()
-            else:
-                lines.append(cur); cur = w_
-        if cur:
-            lines.append(cur)
-        start = (H - 48) - (len(lines) - 1) * 27
+        # wrap on MEASURED widths: one line at 24px if it fits, else 22px lines
+        lines, size = _caption_lines(caption, 24, 22, legacy_chars=56)
+        start = _caption_start(lines, size, H - 48, 27, num, num_x=70)
         for i, ln in enumerate(lines):
-            chrome.append(TXT(W / 2, start + i * 27, ln, 24 if len(lines) == 1 else 22,
-                              weight="normal"))
+            chrome.append(TXT(W / 2, start + i * 27, ln, size, weight="normal"))
     if num:
         chrome.append(TXT(70, H - 42, str(num), 20, weight="normal"))
     if chrome:
@@ -879,6 +1053,8 @@ def render_tiles(svg_path, outdir, name, grid=(3, 2), overlap=150,
 FLOOR = 960  # default scene floor for room helpers
 
 def wrap_words(text, maxchars=54):
+    """Legacy CHARACTER-COUNT wrap (kept for callers that pass maxchars).
+    page()/spage() use wrap_width(), which measures real glyph advances."""
     words, lines, cur = text.split(), [], ""
     for w in words:
         if len(cur) + len(w) + 1 <= maxchars:
@@ -888,6 +1064,37 @@ def wrap_words(text, maxchars=54):
     if cur:
         lines.append(cur)
     return lines
+
+
+NUM_GAP = 30   # min air between the page number's right edge and a caption line
+
+
+def _caption_start(lines, size, base_y, line_h, num=None, num_x=72, num_size=20):
+    """Baseline of the FIRST caption line so the block ends at base_y — lifted
+    by one line when a page number sits on that baseline and the bottom
+    caption line would run into it (a wide one-line caption otherwise reads
+    as "2 Hello, barn!...")."""
+    start = base_y - (len(lines) - 1) * line_h
+    if num is not None and lines:
+        num_right = num_x + text_width(str(num), num_size) / 2
+        left_edge = W / 2 - text_width(lines[-1], size) / 2
+        if left_edge - num_right < NUM_GAP:
+            start -= line_h
+    return start
+
+
+def _caption_lines(caption, one_line_size, multi_size, legacy_chars):
+    """(lines, size) for a page caption. Path mode: measured wrap to
+    CAPTION_MAX_W — the larger size if the caption fits on ONE line, else
+    multi_size lines. Font mode keeps the legacy character-count wrap (the
+    host font's metrics are unknown)."""
+    if TEXT_MODE == "font":
+        lines = wrap_words(caption, legacy_chars)
+    else:
+        lines = wrap_width(caption, CAPTION_MAX_W, one_line_size)
+        if len(lines) > 1 and multi_size != one_line_size:
+            lines = wrap_width(caption, CAPTION_MAX_W, multi_size)
+    return lines, (one_line_size if len(lines) == 1 else multi_size)
 
 
 def spage(title, body, num=None, caption=None, title_size=42, layout=None):
@@ -906,10 +1113,10 @@ def spage(title, body, num=None, caption=None, title_size=42, layout=None):
         chrome.append(P(f"M {W/2-270} 124 Q {W/2} 142 {W/2+270} 124", 4))
     parts.append(body)
     if caption:
-        lines = wrap_words(caption, 54)
-        start = 1058 - (len(lines) - 1) * 28
+        lines, size = _caption_lines(caption, 22, 22, legacy_chars=54)
+        start = _caption_start(lines, size, 1058, 28, num)
         for i, ln in enumerate(lines):
-            chrome.append(TXT(W / 2, start + i * 28, ln, 22, weight="normal"))
+            chrome.append(TXT(W / 2, start + i * 28, ln, size, weight="normal"))
     if num:
         chrome.append(TXT(72, 1058, str(num), 20, weight="normal"))
     if chrome:
@@ -1055,10 +1262,17 @@ def rrect(x, y, w, h, r=8, sw=SW, fill="white"):
 
 
 def otext(x, y, s, size, sw=3, anchor="middle"):
-    """Hollow (outline) block letters for tracing."""
-    return (f'<text x="{x}" y="{y}" font-family="DejaVu Sans" font-size="{size}" '
-            f'font-weight="bold" text-anchor="{anchor}" fill="white" stroke="black" '
-            f'stroke-width="{sw}" letter-spacing="10">{s}</text>')
+    """Hollow (outline) letters for tracing/coloring: white-filled Andika
+    glyph outlines via word() (colorable art, exact width), anchored like
+    SVG text at (x, baseline y). TEXT_MODE = "font" restores the legacy
+    fontconfig-dependent DejaVu <text> element."""
+    if TEXT_MODE == "font":
+        return (f'<text x="{x}" y="{y}" font-family="DejaVu Sans" font-size="{size}" '
+                f'font-weight="bold" text-anchor="{anchor}" fill="white" stroke="black" '
+                f'stroke-width="{sw}" letter-spacing="10">{_xml_escape(str(s))}</text>')
+    tw = word_width(s, size, tracking=10, sw=sw)
+    xc = x + tw / 2 if anchor == "start" else (x - tw / 2 if anchor == "end" else x)
+    return word(s, xc, y, size, tracking=10, style="colorable", sw=sw)
 
 
 def window(x, y, w=150, h=120):
@@ -1311,44 +1525,54 @@ def bicycle(cx, ground_y, s=200, sw=5):
 
 def tree_round(cx, ground_y, h=260, sw=5, texture=True):
     """Lollipop tree: stubby trunk + fat round canopy, base tangent to ground_y.
-    texture=True adds ASYMMETRIC scallop + leaf marks (bare overlapping circles
-    read as balloons; two marks at the same height read as a pair of eyes)."""
+    texture=True draws the canopy as ONE scalloped foliage outline (bare
+    overlapping circles read as balloons) plus two single-stroke leaf-clump
+    arcs on a diagonal (upper-left, lower-right). Never more marks than that:
+    two marks at one height read as a pair of eyes, and the old four caret
+    ticks (two high, one low) read as a sleeping face on every tree.
+    texture=False keeps the plain three-circle lollipop (apple_tree uses it
+    so its apples stay the only interior detail)."""
     g = ground_y
     tw = 0.18 * h
     out = [rrect(cx - tw / 2, g - 0.28 * h, tw, 0.28 * h, 6, sw, "white")]
-    # 3-lobe canopy centered above the trunk (overlaps trunk top)
-    cyy = g - 0.62 * h
-    out.append(C(cx, cyy, 0.34 * h, sw, "white"))
-    out.append(C(cx - 0.24 * h, cyy + 0.10 * h, 0.20 * h, sw, "white"))
-    out.append(C(cx + 0.24 * h, cyy + 0.10 * h, 0.20 * h, sw, "white"))
-    # re-cap the crown so lobe seams read as one canopy
-    out.append(C(cx, cyy, 0.34 * h, sw, "white"))
-    if texture:
-        # small bumps straddling the rim + a few asymmetric interior leaf
-        # ticks (unpaired heights — no "eye pairs")
-        rr = 0.34 * h
-        mk = max(2.5, sw - 2)
-        for ang_deg in (-150, -110, -60, -15, 55):
-            a = math.radians(ang_deg)
-            bx = cx + rr * math.cos(a)
-            by = cyy + rr * math.sin(a)
-            # outward bump: tangent direction t=(-sin,cos)
-            tx, ty = -math.sin(a), math.cos(a)
-            wdt = 0.045 * h
-            p1 = (bx - tx * wdt, by - ty * wdt)
-            p2 = (bx + tx * wdt, by + ty * wdt)
-            tipx = bx + math.cos(a) * 0.055 * h
-            tipy = by + math.sin(a) * 0.055 * h
-            out.append(P(f"M {_f(p1[0])} {_f(p1[1])} "
-                         f"Q {_f(tipx)} {_f(tipy)} {_f(p2[0])} {_f(p2[1])}", mk))
-        # interior leaf ticks: vee pairs at staggered heights, left-biased
-        for dx, dy, s_ in ((-0.13, -0.10, 0.035), (-0.02, 0.02, 0.03),
-                           (0.12, -0.06, 0.032), (-0.16, 0.08, 0.03)):
-            lx = cx + dx * h
-            ly = cyy + dy * h
-            out.append(P(f"M {_f(lx - s_*h)} {_f(ly + 0.02*h)} "
-                         f"Q {_f(lx)} {_f(ly - 0.045*h)} "
-                         f"{_f(lx + s_*h*0.6)} {_f(ly - 0.01*h)}", mk))
+    if not texture:
+        # 3-lobe canopy centered above the trunk (overlaps trunk top)
+        cyy = g - 0.62 * h
+        out.append(C(cx, cyy, 0.34 * h, sw, "white"))
+        out.append(C(cx - 0.24 * h, cyy + 0.10 * h, 0.20 * h, sw, "white"))
+        out.append(C(cx + 0.24 * h, cyy + 0.10 * h, 0.20 * h, sw, "white"))
+        # re-cap the crown so lobe seams read as one canopy
+        out.append(C(cx, cyy, 0.34 * h, sw, "white"))
+        return "".join(out)
+    # scalloped canopy: 9 bumps on a slightly squashed circle, rotated 20deg
+    # off-axis so the crown is not mirror-symmetric (symmetry invites faces)
+    cyy = g - 0.60 * h
+    rr = 0.36 * h
+    n = 9
+    pts = [(cx + rr * math.cos(math.radians(110 + 360 * i / n)),
+            cyy + rr * 0.92 * math.sin(math.radians(110 + 360 * i / n)))
+           for i in range(n)]
+    d = f"M {_f(pts[0][0])} {_f(pts[0][1])} "
+    for i in range(n):
+        p1, p2 = pts[i], pts[(i + 1) % n]
+        mx, my = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
+        ox, oy = mx - cx, my - cyy
+        ln = math.hypot(ox, oy) or 1.0
+        k = 0.30 * rr
+        d += (f"Q {_f(mx + ox / ln * k)} {_f(my + oy / ln * k)} "
+              f"{_f(p2[0])} {_f(p2[1])} ")
+    out.append(P(d + "Z", sw, "white"))
+    # two leaf-clump arcs on a DIAGONAL, different sizes/tilts: one mark per
+    # height band, no pair, no triangle -> nothing a child can read as a face
+    mk = max(2.5, sw - 2)
+    for dx, dy, half, rot in ((-0.15, -0.11, 0.07, -30), (0.13, 0.11, 0.055, 22)):
+        lx, ly = cx + dx * h, cyy + dy * h
+        a = math.radians(rot)
+        p0 = (lx - half * h * math.cos(a), ly - half * h * math.sin(a))
+        p2 = (lx + half * h * math.cos(a), ly + half * h * math.sin(a))
+        c = (lx + 0.05 * h * math.sin(a), ly - 0.05 * h * math.cos(a))
+        out.append(P(f"M {_f(p0[0])} {_f(p0[1])} Q {_f(c[0])} {_f(c[1])} "
+                     f"{_f(p2[0])} {_f(p2[1])}", mk))
     return "".join(out)
 
 
@@ -1511,6 +1735,83 @@ def matted(inner, pad=9, scale=1.0):
     return f'<g data-mat="1" data-pad="{eff:.1f}">{mat}</g>' + inner
 
 
+# ---------------------------------------------------------------- fragment geometry
+def fragment_bbox(svg_fragment, stroke=True):
+    """Tight world-space bbox (x0, y0, x1, y1) of the VISIBLE art in an SVG
+    fragment (nested G()/GM() transforms expanded; matted() knockout copies
+    and text ignored). Curves are sampled on-curve, and stroke=True grows
+    each shape by half its (transformed) stroke width — the extent a child
+    actually sees. Returns None for an empty fragment. Use it to fit a
+    motif into a cell/page instead of guessing its size:
+        x0, y0, x1, y1 = fragment_bbox(dino(0, 0, s=0.9))"""
+    try:
+        import validate as _v
+    except ImportError:  # imported as lib.charlib — put lib/ on the path
+        import os
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import validate as _v
+    import xml.etree.ElementTree as _ET
+    root = _ET.fromstring('<svg xmlns="http://www.w3.org/2000/svg">'
+                          + svg_fragment + "</svg>")
+    items, _mats, _lay = _v._collect(root)
+    box = None
+    for it in items:
+        if it.in_mat or it.tag == "text" or it.wbbox is None:
+            continue
+        bb = it.wbbox
+        if stroke and it.el.get("stroke") not in (None, "none"):
+            try:
+                sw_ = float(it.el.get("stroke-width") or 0)
+            except ValueError:
+                sw_ = 0.0
+            det = abs(it.m[0] * it.m[3] - it.m[1] * it.m[2])
+            grow = sw_ * math.sqrt(det) / 2
+            bb = (bb[0] - grow, bb[1] - grow, bb[2] + grow, bb[3] + grow)
+        box = bb if box is None else (min(box[0], bb[0]), min(box[1], bb[1]),
+                                      max(box[2], bb[2]), max(box[3], bb[3]))
+    return box
+
+
+def restroke(svg_fragment, k):
+    """Divide every stroke-width (and dash length) in a fragment by k — pair
+    it with G(..., scale=k) so an auto-scaled motif keeps the page's stroke
+    weights instead of fattening (k>1) or hairlining (k<1)."""
+    k = float(k) or 1.0
+    out = re.sub(r'stroke-width="([0-9.]+)"',
+                 lambda m: f'stroke-width="{float(m.group(1)) / k:.3g}"', svg_fragment)
+    return re.sub(r'stroke-dasharray="([0-9. ]+)"',
+                  lambda m: 'stroke-dasharray="' + " ".join(
+                      f"{float(v) / k:.3g}" for v in m.group(1).split()) + '"', out)
+
+
+def fit_fragment(svg_fragment, cx, cy, max_w, max_h, keep_stroke=True,
+                 anchor="center"):
+    """Scale a fragment (drawn around any origin) so its visible bbox fits
+    max_w x max_h. anchor="center" centres it on (cx, cy); anchor="bottom"
+    stands its geometry ON (cx, cy) — the bottom-centre, i.e. a ground line
+    — for grids of grounded objects. keep_stroke=True restrokes it so lines
+    keep their page weight at the new scale. Returns the placed fragment
+    (or "" for empty input)."""
+    bs = fragment_bbox(svg_fragment)
+    if bs is None:
+        return ""
+    if keep_stroke:
+        # geometry scales by k but the restroked line keeps its page width,
+        # so fit the GEOMETRY into the box minus the (constant) stroke margin
+        bg = fragment_bbox(svg_fragment, stroke=False)
+        ex_w = (bs[2] - bs[0]) - (bg[2] - bg[0])
+        ex_h = (bs[3] - bs[1]) - (bg[3] - bg[1])
+    else:
+        bg, ex_w, ex_h = bs, 0.0, 0.0
+    bw, bh = max(1e-6, bg[2] - bg[0]), max(1e-6, bg[3] - bg[1])
+    k = max(1e-3, min((max_w - ex_w) / bw, (max_h - ex_h) / bh))
+    inner = restroke(svg_fragment, k) if keep_stroke else svg_fragment
+    mx = (bg[0] + bg[2]) / 2
+    my = bg[3] if anchor == "bottom" else (bg[1] + bg[3]) / 2
+    return G(cx - mx * k, cy - my * k, inner, k)
+
+
 # ---------------------------------------------------------------- scene & prop library (harvested from production books, 2026-07)
 def dog_sit(t, long_nose=False, wink=False):
     """Sitting dog facing right, origin at ground. ~150 tall."""
@@ -1562,6 +1863,94 @@ def dog_sleep(t, long_nose=False, zzz=True):
     if zzz:
         out.append(TXT(96, -76, "z", 17) + TXT(110, -92, "z", 14))
     return "".join(out)
+
+
+def dog_dig(t, long_nose=False, dirt=True):
+    """Dog DIGGING, facing right, origin at ground contact (GM() to flip).
+    Rump HIGH on long braced hind legs, back sloping steeply down to low
+    shoulders, head down over the hole, near front paw IN the hollow and the
+    far paw scraping at its rim, tail up with wag ticks.
+    The hole sits at x~+84 on the ground line and reads as a hole, not a
+    bowl: bumpy dug rim, dark inner wall arcs, a near lip that swallows the
+    paw, rim clods (dirt_hole vocabulary). dirt=True adds the spray: dirt
+    flung back under the belly and out between the hind legs (motion arcs
+    ending in clods) onto a dug pile behind. Traits as dog(): coat, collar,
+    floppy_ears."""
+    t = t or {}
+    out = []
+    hx0 = 84                                           # hole centre on ground
+    if dirt:
+        # dug pile behind (drawn first: behind the hind legs)
+        out.append(P("M -168 0 Q -150 -46 -120 -42 Q -100 -46 -84 0 Z", 4, "white"))
+        out.append(P("M -148 -18 Q -140 -26 -130 -22", 2.5))   # one mark only:
+    if dirt:
+        # spray: from the paws back under the belly, out between the hind legs
+        for (x1, y1), (qx, qy), (x2, y2) in (
+                ((40, -12), (-30, -4), (-104, -92)),
+                ((46, -6), (-26, 8), (-128, -70)),
+                ((34, -18), (-24, -30), (-86, -120))):
+            out.append(P(f"M {x1} {y1} Q {qx} {qy} {x2} {y2}", 3))
+        for cx_, cy_, r_ in ((-110, -104, 8), (-138, -80, 7), (-92, -134, 6),
+                             (-124, -128, 5), (-156, -104, 5)):
+            out.append(smooth_path([(cx_ - r_, cy_), (cx_, cy_ - r_ * 0.9),
+                                    (cx_ + r_, cy_ - r_ * 0.1), (cx_ + r_ * 0.4, cy_ + r_),
+                                    (cx_ - r_ * 0.7, cy_ + r_ * 0.7)],
+                                   3, closed=True, fill="white"))
+    # hind legs: long and braced so the rump sits high
+    for hx, fx in ((-56, -66), (-34, -40)):
+        out.append(limb((hx, -76), (hx - 4, -38), (fx, -5), w0=8, w1=5, sw=4.5))
+        out.append(P(f"M {fx - 7} 0 Q {fx - 7} -9 {fx} -9 L {fx + 8} -7 "
+                     f"Q {fx + 12} -2 {fx + 10} 0 Z", 3.5, "white"))
+    # tail: up and wagging
+    out.append(P("M -64 -104 Q -80 -130 -70 -150 Q -60 -146 -60 -132 "
+                 "Q -60 -118 -52 -108 Z", 4, "white"))
+    out.append(P("M -56 -160 Q -48 -164 -42 -158", 3))           # wag tick
+    # the hollow: dug rim (bumps) + dark inner wall, drawn before the paws
+    out.append(P(f"M {hx0 - 50} 0 Q {hx0 - 46} -16 {hx0 - 30} -14 Q {hx0 - 20} -24 "
+                 f"{hx0 - 4} -18 Q {hx0 + 12} -26 {hx0 + 26} -16 Q {hx0 + 44} -18 "
+                 f"{hx0 + 50} 0 Z", 4, "white"))
+    out.append(E(hx0, -2, 38, 10, 4, "white"))
+    out.append(P(f"M {hx0 - 26} -4 Q {hx0} -12 {hx0 + 26} -4", 2.5))       # inner wall
+    # far front leg: scraping at the near rim of the hole
+    out.append(limb((26, -42), (44, -30), (54, -12), w0=7, w1=5, sw=4.5))
+    out.append(E(55, -10, 8, 6, 3.5, "white"))
+    # body: rump high, back sloping steeply down to low shoulders
+    out.append(smooth_path([(-66, -80), (-64, -100), (-46, -112), (-14, -96),
+                            (22, -70), (42, -52), (38, -32), (16, -30),
+                            (-16, -46), (-50, -64)], 4.5, closed=True, fill="white"))
+    coat = t.get("coat", "plain")
+    if coat == "spots":
+        out.append(E(-36, -92, 11, 8, 3) + E(0, -70, 8, 6, 3))
+    # near front leg: reaching down INTO the hollow
+    out.append(limb((30, -40), (58, -30), (78, -2), w0=7.5, w1=5, sw=4.5))
+    # near lip swallows the paw tip; rim clods
+    out.append(P(f"M {hx0 - 38} -2 Q {hx0} 14 {hx0 + 38} -2 "
+                 f"Q {hx0} 5 {hx0 - 38} -2 Z", 4, "white"))
+    for cx_, cy_ in ((hx0 - 58, -8), (hx0 + 58, -6)):
+        out.append(smooth_path([(cx_ - 6, cy_), (cx_, cy_ - 6), (cx_ + 6, cy_ - 1),
+                                (cx_ + 2, cy_ + 5), (cx_ - 5, cy_ + 4)],
+                               3, closed=True, fill="white"))
+    # head down over the hole: dog()'s head, tipped nose-down
+    head = [C(0, 0, 25, 4.5, "white")]
+    if long_nose:
+        head.append(P("M 20 4 Q 42 6 40 18 Q 30 24 14 18", 4, "white"))
+        head.append(DOT(37, 11, 3.5))
+    else:
+        head.append(P("M 20 4 Q 34 6 32 16 Q 24 22 14 18", 4, "white"))
+        head.append(DOT(30, 10, 3.5))
+    head.append(DOT(6, -6, 3))                                          # eye
+    head.append(P("M 18 20 Q 14 26 8 24", 3.5))                         # mouth
+    if coat == "patch":
+        head.append(E(-2, -8, 10, 12, 3))
+    if t.get("floppy_ears", True):
+        head.append(P("M -12 -18 Q -26 -28 -30 -8 Q -30 8 -18 12 Q -12 0 -10 -12",
+                      4, "white"))
+    else:
+        head.append(P("M -12 -20 L -18 -38 L -4 -28 Z", 4, "white"))
+    out.append(G(60, -52, "".join(head), 1.0, 22))
+    if t.get("collar", True):
+        out.append(P("M 30 -66 Q 40 -54 38 -36", 3.5))
+    return '<g data-el="figure">' + "".join(out) + "</g>"
 
 
 def sock(cx, cy, s=1.0, rot=0):
@@ -2917,68 +3306,168 @@ dog = _smooth_dog
 # must be installed anywhere), and every glyph is a real closed path a child
 # can color. Widths come from GLYPH ADVANCES, so containers can be sized
 # numerically — the drawing-guide banner rule is satisfied by construction.
-_LETTERS_CACHE = None
+# (_letters() loader + the page-text engine live near TXT() at the top.)
 
 
-def _letters():
-    global _LETTERS_CACHE
-    if _LETTERS_CACHE is None:
-        import json as _json
-        import os as _os
-        p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
-                          "letters.json")
-        with open(p) as fh:
-            _LETTERS_CACHE = _json.load(fh)
-    return _LETTERS_CACHE
+HOLLOW_BODY = 0.07   # hollow-letter dilation per side, in em (see letter())
+TRACE_DASH = (9, 7)  # trace-style band: black dash / gap lengths, page px
 
 
-def letter(ch, x, y_base, size=120, style="colorable", sw=4):
-    """One glyph as an SVG path. (x, y_base) = LEFT edge ON THE BASELINE.
-    style: "colorable" (white fill + outline) or "trace" (dashed outline to
-    trace along with a crayon). Unknown characters render nothing."""
+def _hollow_dilation(size, sw, body):
+    """Outward dilation D (page px) of a hollow glyph: the letter's outer
+    edge sits D outside the font outline and its black band (width sw) runs
+    from D - sw to D. 0 = legacy single thin outline (body <= 0)."""
+    body = HOLLOW_BODY if body is None else body
+    if body <= 0:
+        return 0.0
+    return max(body * size, sw)
+
+
+_CONTOURS = {}
+
+
+def _glyph_contours(ch):
+    """[(depth, area, d)] per contour of a glyph, in paint order. depth =
+    how many other contours enclose it (even = ink, odd = counter/hole);
+    solids at one depth are sorted largest-first so dots and accents paint
+    OVER the body they sit near. Cached per glyph."""
+    if ch not in _CONTOURS:
+        subs = ["M" + p for p in _letters()["letters"][ch]["d"].split("M") if p]
+        polys = []
+        for sp in subs:
+            nums = [float(v) for v in re.findall(r"-?\d+(?:\.\d+)?", sp)]
+            polys.append(list(zip(nums[0::2], nums[1::2])))
+
+        def inside(pt, poly):   # even-odd ray cast on the control polygon
+            x, y = pt
+            hit = False
+            for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
+                if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+                    hit = not hit
+            return hit
+
+        out = []
+        for i, poly in enumerate(polys):
+            depth = sum(1 for j, q in enumerate(polys)
+                        if j != i and inside(poly[0], q))
+            xs, ys = [p_[0] for p_ in poly], [p_[1] for p_ in poly]
+            area = (max(xs) - min(xs)) * (max(ys) - min(ys))
+            out.append((depth, -area, i, subs[i]))
+        _CONTOURS[ch] = [(dp, -na, d_) for dp, na, _i, d_ in sorted(out)]
+    return _CONTOURS[ch]
+
+
+def letter(ch, x, y_base, size=120, style="colorable", sw=4, body=None):
+    """One HOLLOW glyph. (x, y_base) = LEFT edge of its advance box ON THE
+    BASELINE. style: "colorable" (white body inside a black band sw wide)
+    or "trace" (the band is dashed, to trace along with a crayon). Unknown
+    characters render nothing.
+
+    Thin font stems (~0.09 em) leave an uncolorable ~10px channel when
+    merely outlined, so every INK contour is DILATED outward by
+    D = body*size (em fraction, default HOLLOW_BODY; never less than sw)
+    with layers of the same contour path:
+      (a) fill+stroke black, stroke 2D        -> dilated black silhouette
+      (b) fill+stroke white, stroke 2(D-sw)   -> leaves a solid band sw wide
+      (c) trace only: white dashed stroke 2D+2 over the band -> dashes
+    COUNTER contours (A/B/O/R holes, found by containment depth) are NOT
+    dilated — shrinking them by D would close A's counter outright at
+    stem-doubling weights — they get a centred band sw wide instead (dashed
+    for trace). Each ink contour paints separately, largest first, so a dot
+    or accent that the dilation pushes into its letter reads as a separate
+    outlined shape on top rather than fusing. Overlap-free outlines
+    (tools/build_font.py) keep interiors line-free.
+    The glyph is drawn D/2 right of x and its advance widens by D (like a
+    real bold: gaps tighten by D, letters never collide at the call sites'
+    tracking); word_width() includes it, and the outer layers carry
+    data-bleed so lib/validate.py measures the dilated ink exactly.
+    body=0 restores the legacy single centred outline."""
     L = _letters()["letters"].get(ch)
     if not L or not L.get("d"):
         return ""
     s = size / _letters()["upem"]
-    fill = 'fill="none"' if style == "trace" else 'fill="white"'
-    dash = ' stroke-dasharray="9 8"' if style == "trace" else ""
-    return (f'<path d="{L["d"]}" {fill} stroke="black" '
-            f'stroke-width="{_f(sw / s)}"{dash} data-letter="{ch}" '
-            f'transform="translate({_f(x)},{_f(y_base)}) '
-            f'scale({_fs(s)},-{_fs(s)})"/>')
+    esc = _xml_escape(ch, {'"': "&quot;"})
+    D = _hollow_dilation(size, sw, body)
+    if D == 0:   # legacy thin outline
+        fill = 'fill="none"' if style == "trace" else 'fill="white"'
+        dash = ' stroke-dasharray="9 8"' if style == "trace" else ""
+        return (f'<path d="{L["d"]}" {fill} stroke="black" '
+                f'stroke-width="{_f(sw / s)}"{dash} data-letter="{esc}" '
+                f'transform="translate({_f(x)},{_f(y_base)}) '
+                f'scale({_fs(s)},-{_fs(s)})"/>')
+    join = 'stroke-linejoin="round"'
+    dash_len, gap_len = TRACE_DASH
+    inner = 2 * (D - sw) / s
+    layers = []
+    for depth, _area, d in _glyph_contours(ch):
+        if depth % 2:   # counter: undilated, centred band
+            dash = (f' stroke-dasharray="{_f(dash_len / s)} {_f(gap_len / s)}"'
+                    if style == "trace" else "")
+            layers.append(f'<path d="{d}" fill="none" stroke="black" '
+                          f'stroke-width="{_f(sw / s)}" {join}{dash}/>')
+            continue
+        layers.append(f'<path d="{d}" fill="black" stroke="black" '
+                      f'stroke-width="{_f(2 * D / s)}" {join} '
+                      f'data-bleed="{_f(D / s)}"/>')
+        wl = (f' stroke="white" stroke-width="{_f(inner)}" {join}'
+              if inner > 0 else "")
+        layers.append(f'<path d="{d}" fill="white"{wl}/>')
+        if style == "trace":
+            # white DASHES erase the band; the black band shows in the GAPS
+            layers.append(f'<path d="{d}" fill="none" stroke="white" '
+                          f'stroke-width="{_f((2 * D + 2) / s)}" {join} '
+                          f'stroke-dasharray="{_f(gap_len / s)} {_f(dash_len / s)}"/>')
+    return (f'<g data-letter="{esc}" fill-rule="nonzero" '
+            f'transform="translate({_f(x + D / 2)},{_f(y_base)}) '
+            f'scale({_fs(s)},-{_fs(s)})">' + "".join(layers) + "</g>")
 
 
-def word_width(text, size=120, tracking=10):
-    """Exact rendered width of word() from glyph advances."""
+def word_width(text, size=120, tracking=10, body=None, sw=4):
+    """Exact width of word(): glyph advances + the hollow dilation (D per
+    inked glyph, plus D/2 overhang at each end — see letter()) + tracking
+    between glyphs. The dilated ink always lies within this width."""
     L = _letters()["letters"]
-    adv = sum(L.get(c, {}).get("adv", 0) for c in text)
-    return adv * size / _letters()["upem"] + tracking * max(0, len(text) - 1)
+    run = _resolve_text(text)
+    adv = sum(L[c]["adv"] for c in run)
+    D = _hollow_dilation(size, sw, body)
+    inked = sum(1 for c in run if L[c]["d"])
+    return (adv * size / _letters()["upem"] + D * inked + (D if inked else 0)
+            + tracking * max(0, len(run) - 1))
 
 
 def word(text, x_center, y_base, size=120, tracking=10, style="colorable",
-         sw=4):
-    """A run of glyphs centered on x_center, sitting on y_base."""
-    total = word_width(text, size, tracking)
-    out, pen = [], x_center - total / 2
-    for ch in text:
-        out.append(letter(ch, pen, y_base, size, style=style, sw=sw))
-        pen += (_letters()["letters"].get(ch, {}).get("adv", 0)
-                * size / _letters()["upem"] + tracking)
-    return '<g data-word="' + _xml_escape(text) + '">' + "".join(out) + "</g>"
+         sw=4, body=None):
+    """A run of hollow glyphs centered on x_center, sitting on y_base (the
+    dilated band dips D = body*size below it). The group carries data-x0 /
+    data-w: the exact extent INCLUDING the dilation."""
+    total = word_width(text, size, tracking, body=body, sw=sw)
+    D = _hollow_dilation(size, sw, body)
+    L, k = _letters()["letters"], size / _letters()["upem"]
+    x0 = x_center - total / 2
+    out, pen = [], x0 + D / 2          # D/2 end overhang (see word_width)
+    for ch in _resolve_text(text):   # accents fall back like text_path()
+        out.append(letter(ch, pen, y_base, size, style=style, sw=sw,
+                          body=body))
+        pen += L[ch]["adv"] * k + (D if L[ch]["d"] else 0) + tracking
+    return (f'<g data-word="{_xml_escape(text, {chr(34): "&quot;"})}" '
+            f'data-x0="{_f(x0)}" data-w="{_f(total)}">'
+            + "".join(out) + "</g>")
 
 
 def banner(text, cy, size=64, sw=SW, pad_x=28, style="colorable",
-           x_center=None, w=W, rounded=16):
-    """Ribbon sized EXACTLY for its text (glyph-metric width), centered by
-    default. Text-in-box overflow is impossible by construction; if the
-    ribbon itself would exceed the page, validate_svg's border check fires."""
+           x_center=None, w=W, rounded=16, body=None, tracking=None):
+    """Ribbon sized EXACTLY for its text (glyph-metric width, hollow
+    dilation included, tracking default size*0.08), centered by default.
+    Text-in-box overflow is impossible by construction; if the ribbon
+    itself would exceed the page, validate_svg's border check fires."""
     xc = W / 2 if x_center is None else x_center
-    tw = word_width(text, size)
+    tr = size * 0.08 if tracking is None else tracking
+    tw = word_width(text, size, tracking=tr, body=body)
     bw = tw + 2 * pad_x
     bh = int(size * 1.55)
     out = [rrect(xc - bw / 2, cy - bh / 2, bw, bh, rounded, sw, "white")]
     out.append(word(text, xc, cy + size * 0.36, size=size,
-                    tracking=size * 0.08, style=style))
+                    tracking=tr, style=style, body=body))
     return "".join(out)
 
 
@@ -2999,20 +3488,27 @@ def name_trace_page(names, title="Trace Your Names!", num=None,
     top0, bot0 = 300, 950
     slot = (bot0 - top0) / max(1, n)
     max_w = W - 2 * 130  # room for the start star + border margin
+    F = _letters()
+    cap = F["letters"]["H"]["ymax"] / F["upem"]   # cap height, em
     for i, nm in enumerate(names):
         base_y = top0 + slot * i + slot * 0.72
         # auto-fit: shrink oversized names so star + letters clear the border
         size = row_size
         if word_width(nm.upper(), size, tracking=12) > max_w:
             size = row_size * max_w / word_width(nm.upper(), size, tracking=12)
-        asc = size * 0.75
+        # hollow letters are dilated by D: lift the glyph baseline by D + gap
+        # so the dashed band clears the solid baseline by `gap` px, and put
+        # the top line `gap` px above the dilated cap height — neither ruled
+        # line runs along (and swallows) a letter's dashed edge
+        D, gap = _hollow_dilation(size, 4, None), 6
+        asc = size * cap + 2 * D + 2 * gap
         rows.append(guideline(70, W - 70, base_y))
         rows.append(stitch_dash(70, base_y - asc, W - 70, base_y - asc, sw=2.5, dash="6 6"))
         rows.append(stitch_dash(70, base_y - asc * 0.5, W - 70, base_y - asc * 0.5,
                                 sw=2, dash="4 8"))
         ww = word_width(nm.upper(), size, tracking=12)
         x0 = W / 2 - ww / 2
-        rows.append(word(nm.upper(), W / 2, base_y, size=size,
+        rows.append(word(nm.upper(), W / 2, base_y - D - gap, size=size,
                          tracking=12, style="trace"))
         rows.append(star(x0 - 34, base_y - size * 0.18, 14, 3.5, "white"))
     body = "".join(rows)
@@ -3197,20 +3693,25 @@ def bridge(cx, ground_y, w=340, sw=4.5):
 
 # ---------------------------------------------------------------- vehicles II
 def school_bus(cx, ground_y, w=280, sw=5):
-    """Long school bus facing right: window row, door, stripe, wheels."""
+    """Long school bus facing right: boxy body, low engine hood out FRONT
+    with a headlight, window row, front door, stripe, wheels."""
     x0, g = cx - w / 2, ground_y
     r = 0.085 * w
     body_top = g - 0.40 * w
-    out = [rrect(x0, body_top, w, 0.30 * w, 10, sw, "white")]          # body
-    out.append(rrect(x0 + 0.02 * w, g - 0.115 * w, 0.13 * w, 0.115 * w, 6, sw, "white"))  # hood
-    for i in range(4):                                                  # windows
-        wx = x0 + 0.18 * w + i * 0.16 * w
+    # hood first (the body caps its rear): lower box protruding forward
+    out = [rrect(x0 + 0.78 * w, g - 0.25 * w, 0.215 * w, 0.15 * w, 8, sw, "white")]
+    out.append(rrect(x0, body_top, 0.84 * w, 0.30 * w, 10, sw, "white"))      # body
+    for i in range(3):                                                  # windows
+        wx = x0 + 0.05 * w + i * 0.165 * w
         out.append(rrect(wx, body_top + 0.035 * w, 0.12 * w, 0.10 * w, 4, 3.5, "white"))
-    out.append(rrect(x0 + 0.845 * w, body_top + 0.035 * w, 0.10 * w, 0.24 * w, 4, 3.5, "white"))  # door
-    out.append(LINE(x0 + 0.03 * w, body_top + 0.19 * w, x0 + 0.97 * w, body_top + 0.19 * w, 3.5))
-    out.append(_wheel(x0 + 0.22 * w, g, r, sw - 0.5))
-    out.append(_wheel(x0 + 0.78 * w, g, r, sw - 0.5))
-    out.append(DOT(x0 + 0.985 * w, g - 0.075 * w, 3))                   # headlight
+    out.append(rrect(x0 + 0.545 * w, body_top + 0.035 * w, 0.11 * w, 0.24 * w, 4, 3.5,
+                     "white"))                                          # door
+    out.append(rrect(x0 + 0.69 * w, body_top + 0.035 * w, 0.11 * w, 0.10 * w, 4, 3.5,
+                     "white"))                                          # driver window
+    out.append(LINE(x0 + 0.03 * w, body_top + 0.19 * w, x0 + 0.515 * w, body_top + 0.19 * w, 3.5))
+    out.append(C(x0 + 0.955 * w, g - 0.195 * w, max(4.0, 0.022 * w), 3, "white"))  # headlight
+    out.append(_wheel(x0 + 0.20 * w, g, r, sw - 0.5))
+    out.append(_wheel(x0 + 0.80 * w, g, r, sw - 0.5))
     return "".join(out)
 
 
@@ -3227,8 +3728,9 @@ def dump_truck(cx, ground_y, w=260, sw=5):
     # cab (front)
     out.append(rrect(x0 + 0.58 * w, g - 0.40 * w, 0.30 * w, 0.28 * w, 8, sw, "white"))
     out.append(rrect(x0 + 0.63 * w, g - 0.37 * w, 0.16 * w, 0.11 * w, 4, 3.5, "white"))
-    out.append(LINE(x0 + 0.56 * w, g - 0.16 * w, x0 + 0.90 * w, g - 0.16 * w, sw))  # chassis
-    out.append(LINE(x0 + 0.40 * w, g - 0.50 * w, x0 + 0.40 * w, g - 0.58 * w, 4))   # exhaust
+    out.append(LINE(x0 + 0.06 * w, g - 0.16 * w, x0 + 0.90 * w, g - 0.16 * w, sw))  # chassis
+    out.append(C(x0 + 0.05 * w, g - 0.16 * w, 0.02 * w, 3.5, "white"))            # bed hinge
+    out.append(LINE(x0 + 0.60 * w, g - 0.40 * w, x0 + 0.60 * w, g - 0.50 * w, 4))   # exhaust
     out.append(_wheel(x0 + 0.20 * w, g, r, sw - 0.5))
     out.append(_wheel(x0 + 0.44 * w, g, r, sw - 0.5))
     out.append(_wheel(x0 + 0.80 * w, g, r, sw - 0.5))
@@ -3387,7 +3889,8 @@ def star_field(x0, y0, x1, y1, n=14, sw=2.5):
 
 
 def moon(cx, cy, r=85, sw=5):
-    """Moon disc with asymmetric craters (unpaired heights)."""
+    """Moon disc with asymmetric craters (unpaired heights). Sky decoration
+    like sun(): every part tagged data-sky."""
     out = [C(cx, cy, r, sw, "white")]
     for dx, dy, cr in ((-0.35, -0.25, 0.16), (0.30, -0.05, 0.11),
                        (-0.10, 0.38, 0.13), (0.42, 0.42, 0.08)):
@@ -3395,7 +3898,7 @@ def moon(cx, cy, r=85, sw=5):
         out.append(P(f"M {_f(cx + dx * r - cr * r * 0.6)} {_f(cy + dy * r - cr * r * 0.35)} "
                      f"Q {_f(cx + dx * r)} {_f(cy + dy * r - cr * r * 0.7)} "
                      f"{_f(cx + dx * r + cr * r * 0.6)} {_f(cy + dy * r - cr * r * 0.35)}", 2.5))
-    return "".join(out)
+    return sky("".join(out))
 
 
 def crater_ground(y, x0=60, x1=None, sw=4):
@@ -3459,27 +3962,36 @@ def satellite(cx, cy, w=230, sw=4.5):
 
 
 def telescope(cx, ground_y, h=190, sw=4.5):
-    """Tripod telescope aimed up-right; a target sparkle at the eyepiece line."""
-    top_y = ground_y - h
-    out = [G(cx, ground_y,
-             LINE(0, 0, -34, -h * 0.62, sw - 0.5) +
-             LINE(0, 0, 34, -h * 0.62, sw - 0.5) +
-             LINE(0, -h * 0.62, 0, -h, sw - 0.5))]
-    out.append(G(cx, top_y + h * 0.38,
-                 G(0, 0, rrect(-h * 0.30, -11, h * 0.60, 22, 8, sw, "white"), 1.0, -28)))
-    out.append(C(cx, top_y + h * 0.38, 7, 3.5, "white"))
-    out.append(sparkle(cx + h * 0.42, top_y - h * 0.10, 10))
+    """Tripod telescope aimed up-right, feet on ground_y: three legs splayed
+    on the ground meeting at the mount, a tapered tube with eyepiece, lens
+    ring and band, and a target sparkle beyond the lens."""
+    g = ground_y
+    mx, my = cx, g - 0.52 * h                       # mount (tripod apex)
+    out = []
+    for fx in (-0.30, 0.30, 0.05):                  # legs: splayed feet on g
+        out.append(LINE(mx, my, cx + fx * h, g, sw - 0.5))
+        out.append(LINE(cx + fx * h - 0.035 * h, g, cx + fx * h + 0.035 * h, g, sw - 1))
+    L0, L1, r0, r1 = -0.30 * h, 0.44 * h, 0.055 * h, 0.085 * h
+    tube = (P(f"M {_f(L0)} {_f(-r0)} L {_f(L1)} {_f(-r1)} L {_f(L1)} {_f(r1)} "
+              f"L {_f(L0)} {_f(r0)} Z", sw, "white")
+            + rrect(L0 - 0.07 * h, -0.035 * h, 0.08 * h, 0.07 * h, 3, sw - 1, "white")
+            + E(L1, 0, 0.03 * h, r1 + 0.012 * h, sw - 0.5, "white")
+            + LINE(0.06 * h, -0.074 * h, 0.06 * h, 0.074 * h, sw - 1.5))
+    out.append(G(mx, my - 0.03 * h, tube, 1.0, -28))
+    out.append(C(mx, my, max(5.0, 0.035 * h), sw - 1, "white"))
+    out.append(sparkle(cx + 0.52 * h, g - 1.02 * h, max(8.0, 0.05 * h)))
     return "".join(out)
 
 
 def shooting_star(cx, cy, s=1.0, sw=4):
-    """Comet: star head + three swoosh trails up-left."""
+    """Comet: star head + three swoosh trails up-left. Sky decoration: head
+    and trails all tagged data-sky."""
     out = [star(cx, cy, 16 * s, sw, "white")]
     for i, (dx, dy, ln) in enumerate(((1.6, 1.0, 60), (1.9, 0.55, 78), (1.3, 1.35, 46))):
         out.append(LINE(cx + dx * 14 * s, cy + dy * 14 * s,
                         cx + dx * 14 * s + ln * s * 0.55, cy + dy * 14 * s + ln * s * 0.35,
-                        sw - i * 0.5).replace("<line ", '<line data-sky="1" ', 1))
-    return "".join(out)
+                        sw - i * 0.5))
+    return sky("".join(out))
 
 
 # ---------------------------------------------------------------- nature pack
@@ -3627,40 +4139,71 @@ def duck(cx, water_y, w=140, sw=4.5):
 
 
 def cow(cx, ground_y, w=240, sw=5):
-    """Side-view cow facing right, feet on ground_y."""
+    """Side-view cow walking right, head turned to the viewer; feet on
+    ground_y. Kids'-book read: big front-facing head (~30% of body length)
+    with a wide oval muzzle + nostrils, two ears, short curved horns, three
+    large patches, four hoofed legs, tufted tail and an udder hint."""
     x0, g = cx - w / 2, ground_y
+    dsw = max(2.5, sw - 2)                                  # detail stroke
+    X = lambda f: x0 + f * w                                # noqa: E731
+    Y = lambda f: g - f * w                                 # noqa: E731
     out = []
-    # tail (behind body)
-    out.append(P(f"M {_f(x0 + 0.06 * w)} {_f(g - 0.52 * w)} "
-                 f"Q {_f(x0 - 0.01 * w)} {_f(g - 0.36 * w)} {_f(x0 + 0.03 * w)} {_f(g - 0.20 * w)}", 3.5))
-    # legs
-    for lx in (0.18, 0.30, 0.60, 0.72):
-        px = x0 + lx * w
-        out.append(P(f"M {_f(px)} {_f(g - 0.26 * w)} L {_f(px)} {_f(g)}", sw - 0.5))
-        out.append(P(f"M {_f(px - 0.022 * w)} {_f(g)} L {_f(px + 0.03 * w)} {_f(g)}", sw - 1.5))
-    # body
-    out.append(smooth_path([(x0 + 0.08 * w, g - 0.44 * w), (x0 + 0.16 * w, g - 0.56 * w),
-                            (x0 + 0.42 * w, g - 0.58 * w), (x0 + 0.66 * w, g - 0.55 * w),
-                            (x0 + 0.76 * w, g - 0.42 * w), (x0 + 0.72 * w, g - 0.26 * w),
-                            (x0 + 0.40 * w, g - 0.24 * w), (x0 + 0.14 * w, g - 0.28 * w)],
-                           sw, closed=True, fill="white"))
-    # head (drawn after body): muzzle + horns + ears
-    hx, hy = x0 + 0.84 * w, g - 0.56 * w
-    out.append(P(f"M {_f(x0 + 0.72 * w)} {_f(g - 0.50 * w)} "
-                 f"Q {_f(x0 + 0.78 * w)} {_f(g - 0.62 * w)} {_f(x0 + 0.90 * w)} {_f(g - 0.60 * w)} "
-                 f"L {_f(x0 + 0.94 * w)} {_f(g - 0.46 * w)} "
-                 f"Q {_f(x0 + 0.84 * w)} {_f(g - 0.42 * w)} {_f(x0 + 0.74 * w)} {_f(g - 0.44 * w)} Z",
-                 sw, "white"))
-    out.append(E(x0 + 0.90 * w, g - 0.47 * w, 0.055 * w, 0.04 * w, 3, "white"))   # muzzle
-    out.append(DOT(x0 + 0.885 * w, g - 0.475 * w, 2.2))                            # nostril
-    out.append(DOT(x0 + 0.815 * w, g - 0.545 * w, 2.6))                            # eye
-    out.append(P(f"M {_f(x0 + 0.78 * w)} {_f(g - 0.615 * w)} L {_f(x0 + 0.755 * w)} {_f(g - 0.665 * w)} "
-                 f"L {_f(x0 + 0.81 * w)} {_f(g - 0.635 * w)} Z", 3, "white"))      # horn
-    out.append(E(x0 + 0.755 * w, g - 0.565 * w, 0.035 * w, 0.02 * w, 3, "white"))  # ear
-    # spots (asymmetric)
-    out.append(E(x0 + 0.28 * w, g - 0.42 * w, 0.07 * w, 0.05 * w, 3))
-    out.append(E(x0 + 0.50 * w, g - 0.34 * w, 0.055 * w, 0.04 * w, 3))
-    out.append(E(x0 + 0.60 * w, g - 0.50 * w, 0.045 * w, 0.035 * w, 3))
+    # tail + tuft (body caps the root)
+    out.append(P(f"M {_f(X(0.13))} {_f(Y(0.47))} Q {_f(X(0.03))} {_f(Y(0.45))} "
+                 f"{_f(X(0.05))} {_f(Y(0.26))}", sw - 1))
+    out.append(smooth_path([(X(0.05), Y(0.28)), (X(0.088), Y(0.225)),
+                            (X(0.068), Y(0.16)), (X(0.028), Y(0.175)),
+                            (X(0.014), Y(0.235))], dsw + 0.5, closed=True, fill="white"))
+    # legs: sturdy posts with a hoof band (body caps the tops)
+    lw = 0.085 * w
+    for lx in (0.20, 0.34, 0.56, 0.70):
+        out.append(rrect(X(lx) - lw / 2, Y(0.30), lw, 0.30 * w, lw * 0.3, sw - 0.5, "white"))
+        out.append(LINE(X(lx) - lw / 2, Y(0.075), X(lx) + lw / 2, Y(0.075), dsw))
+    # udder hint between the leg pairs (behind the belly)
+    out.append(P(f"M {_f(X(0.385))} {_f(Y(0.235))} Q {_f(X(0.385))} {_f(Y(0.13))} "
+                 f"{_f(X(0.45))} {_f(Y(0.13))} Q {_f(X(0.515))} {_f(Y(0.13))} "
+                 f"{_f(X(0.515))} {_f(Y(0.235))} Z", sw - 1, "white"))
+    for tx in (0.425, 0.475):
+        out.append(LINE(X(tx), Y(0.135), X(tx), Y(0.10), dsw))
+    # body: long rounded barrel
+    out.append(smooth_path([(X(0.12), Y(0.27)), (X(0.095), Y(0.40)), (X(0.15), Y(0.505)),
+                            (X(0.40), Y(0.525)), (X(0.64), Y(0.51)), (X(0.77), Y(0.43)),
+                            (X(0.77), Y(0.31)), (X(0.70), Y(0.235)), (X(0.44), Y(0.22)),
+                            (X(0.20), Y(0.23))], sw, closed=True, fill="white"))
+    # three big patches — different sizes AND heights (no pairs)
+    for pcx, pcy, rx, ry, rot in ((0.255, 0.40, 0.095, 0.075, 0.4),
+                                  (0.475, 0.31, 0.07, 0.05, 1.3),
+                                  (0.56, 0.445, 0.055, 0.04, 2.2)):
+        pts = []
+        for k in range(12):                    # organic blob: 2 low harmonics
+            a = k * math.pi / 6
+            wob = 1 + 0.13 * math.sin(2 * a + rot) + 0.09 * math.sin(3 * a + 2 * rot)
+            pts.append((X(pcx) + math.cos(a) * rx * w * wob,
+                        Y(pcy) + math.sin(a) * ry * w * wob))
+        out.append(smooth_path(pts, dsw, closed=True, fill="white"))
+    # head, turned to the viewer: horns + ears behind, then head, muzzle
+    hx, hy = X(0.80), Y(0.56)
+    for sx in (-1, 1):
+        out.append(smooth_path([(hx + sx * 0.035 * w, hy - 0.09 * w),
+                                (hx + sx * 0.09 * w, hy - 0.135 * w),
+                                (hx + sx * 0.10 * w, hy - 0.20 * w),
+                                (hx + sx * 0.14 * w, hy - 0.13 * w),
+                                (hx + sx * 0.095 * w, hy - 0.06 * w)],
+                               dsw + 0.5, closed=True, fill="white"))       # horn
+        out.append(smooth_path([(hx + sx * 0.085 * w, hy - 0.07 * w),
+                                (hx + sx * 0.16 * w, hy - 0.075 * w),
+                                (hx + sx * 0.205 * w, hy - 0.035 * w),
+                                (hx + sx * 0.15 * w, hy - 0.01 * w),
+                                (hx + sx * 0.085 * w, hy - 0.02 * w)],
+                               dsw + 0.5, closed=True, fill="white"))       # ear
+    out.append(E(hx, hy, 0.10 * w, 0.12 * w, sw, "white"))
+    out.append(E(hx, hy + 0.09 * w, 0.125 * w, 0.07 * w, sw - 0.5, "white"))  # muzzle
+    for sx in (-1, 1):
+        out.append(E(hx + sx * 0.048 * w, hy + 0.085 * w, max(2.6, 0.017 * w),
+                     max(3.4, 0.022 * w), dsw - 0.5, "black"))              # nostril
+        out.append(DOT(hx + sx * 0.045 * w, hy - 0.025 * w, max(2.8, 0.016 * w)))
+    out.append(P(f"M {_f(hx - 0.035 * w)} {_f(hy + 0.128 * w)} Q {_f(hx)} {_f(hy + 0.145 * w)} "
+                 f"{_f(hx + 0.035 * w)} {_f(hy + 0.128 * w)}", dsw))       # smile
     return "".join(out)
 
 
@@ -3765,35 +4308,71 @@ def owl(cx, ground_y, w=120, sw=4.5):
     return "".join(out)
 
 
-def monkey(cx, ground_y, w=180, sw=4.5):
-    """Sitting monkey facing right with curled tail, feet on ground_y."""
-    x0, g = cx - w / 2, ground_y
+def monkey(cx, ground_y, w=180, sw=4.5, banana=False):
+    """Sitting monkey facing the viewer, bottom on ground_y: round head with
+    a peanut-shaped face disc, ear circles either side, small pear body,
+    bent arms, long tail curling up on the left. banana=True raises the
+    right hand holding a banana (kept outside the 1.3r face zone)."""
+    g = ground_y
+    dsw = max(2.5, sw - 1.5)
     out = []
-    # tail: long curl behind
-    out.append(smooth_path([(x0 + 0.16 * w, g - 0.30 * w), (x0 - 0.02 * w, g - 0.34 * w),
-                            (x0 - 0.10 * w, g - 0.52 * w), (x0 + 0.02 * w, g - 0.62 * w),
-                            (x0 + 0.12 * w, g - 0.56 * w), (x0 + 0.06 * w, g - 0.48 * w)], 3.5))
-    # body: hunched sitting
-    out.append(smooth_path([(x0 + 0.20 * w, g), (x0 + 0.14 * w, g - 0.24 * w),
-                            (x0 + 0.26 * w, g - 0.44 * w), (x0 + 0.48 * w, g - 0.50 * w),
-                            (x0 + 0.66 * w, g - 0.42 * w), (x0 + 0.70 * w, g - 0.24 * w),
-                            (x0 + 0.62 * w, g)],
+    hx, hy, R = cx, g - 0.64 * w, 0.23 * w
+    # tail: long sweep out to the left, rising to a curl beside the shoulder
+    # (behind everything; curl kept clear of the elbow and the ear)
+    out.append(smooth_path([(cx - 0.10 * w, g - 0.05 * w), (cx - 0.30 * w, g - 0.04 * w),
+                            (cx - 0.44 * w, g - 0.12 * w), (cx - 0.50 * w, g - 0.28 * w),
+                            (cx - 0.47 * w, g - 0.43 * w), (cx - 0.39 * w, g - 0.49 * w),
+                            (cx - 0.33 * w, g - 0.44 * w), (cx - 0.355 * w, g - 0.375 * w),
+                            (cx - 0.415 * w, g - 0.385 * w)], sw))
+    # feet, body, belly
+    for sx in (-1, 1):
+        out.append(E(cx + sx * 0.165 * w, g - 0.05 * w, 0.095 * w, 0.05 * w, sw - 0.5, "white"))
+    out.append(smooth_path([(cx, g - 0.02 * w), (cx - 0.15 * w, g - 0.05 * w),
+                            (cx - 0.19 * w, g - 0.20 * w), (cx - 0.13 * w, g - 0.40 * w),
+                            (cx, g - 0.45 * w), (cx + 0.13 * w, g - 0.40 * w),
+                            (cx + 0.19 * w, g - 0.20 * w), (cx + 0.15 * w, g - 0.05 * w)],
                            sw, closed=True, fill="white"))
-    # arm + legs
-    out.append(limb((x0 + 0.56 * w, g - 0.40 * w), (x0 + 0.66 * w, g - 0.22 * w),
-                    (x0 + 0.72 * w, g - 0.06 * w), w0=5, w1=3.5, sw=sw - 0.5, hand_r=5))
-    out.append(P(f"M {_f(x0 + 0.30 * w)} {_f(g)} L {_f(x0 + 0.30 * w)} {_f(g - 0.14 * w)}", sw - 0.5))
-    out.append(P(f"M {_f(x0 + 0.26 * w)} {_f(g)} L {_f(x0 + 0.36 * w)} {_f(g)}", sw - 1.5))
-    # head with face disc + ears
-    hx, hy = x0 + 0.62 * w, g - 0.62 * w
-    out.append(C(hx, hy, 0.155 * w, sw, "white"))
-    out.append(E(hx - 0.155 * w, hy - 0.02 * w, 0.05 * w, 0.06 * w, 3.5, "white"))
-    out.append(E(hx + 0.155 * w, hy - 0.02 * w, 0.05 * w, 0.06 * w, 3.5, "white"))
-    out.append(E(hx + 0.02 * w, hy + 0.03 * w, 0.085 * w, 0.07 * w, 2.5))            # muzzle disc
-    out.append(DOT(hx - 0.055 * w, hy - 0.03 * w, 2.6))
-    out.append(DOT(hx + 0.085 * w, hy - 0.03 * w, 2.6))
-    out.append(P(f"M {_f(hx + 0.005 * w)} {_f(hy + 0.055 * w)} "
-                 f"Q {_f(hx + 0.035 * w)} {_f(hy + 0.075 * w)} {_f(hx + 0.065 * w)} {_f(hy + 0.05 * w)}", 2.5))
+    out.append(E(cx, g - 0.19 * w, 0.095 * w, 0.115 * w, dsw, "white"))
+    # arms (bent, elbows out); hands overlap the wrist ends
+    out.append(limb((cx - 0.12 * w, g - 0.36 * w), (cx - 0.27 * w, g - 0.25 * w),
+                    (cx - 0.20 * w, g - 0.10 * w), w0=0.045 * w, w1=0.03 * w, sw=sw - 0.5,
+                    hand_r=0.052 * w))
+    if banana:
+        bx, by = cx + 0.36 * w, g - 0.40 * w           # right hand, raised
+        out.append(limb((cx + 0.12 * w, g - 0.36 * w), (cx + 0.29 * w, g - 0.26 * w),
+                        (bx, by), w0=0.045 * w, w1=0.03 * w, sw=sw - 0.5))
+        # banana: curved tapered tube out of the fist, stem at the tip
+        tip = (bx + 0.075 * w, by - 0.20 * w)
+        out.append(limb((bx - 0.005 * w, by + 0.01 * w), (bx + 0.085 * w, by - 0.075 * w),
+                        tip, w0=0.042 * w, w1=0.022 * w, sw=sw - 0.5))
+        out.append(LINE(tip[0], tip[1] - 0.01 * w, tip[0] - 0.012 * w, tip[1] - 0.045 * w,
+                        sw - 0.5))
+        out.append(C(bx, by, 0.052 * w, max(3.5, sw - 1), "white", hand="1"))
+    else:
+        out.append(limb((cx + 0.12 * w, g - 0.36 * w), (cx + 0.27 * w, g - 0.25 * w),
+                        (cx + 0.20 * w, g - 0.10 * w), w0=0.045 * w, w1=0.03 * w,
+                        sw=sw - 0.5, hand_r=0.052 * w))
+    # ears (outer + inner, head caps the inside), head, face disc
+    for sx in (-1, 1):
+        ex_ = hx + sx * 0.235 * w
+        out.append(C(ex_, hy + 0.01 * w, 0.085 * w, sw, "white"))
+        # inner ear: an OPEN arc, so the ear stays one >=3mm region (a
+        # closed inner circle left only a sliver ring at catalog sizes)
+        out.append(P(f"M {_f(ex_ + sx * 0.005 * w)} {_f(hy - 0.035 * w)} "
+                     f"Q {_f(ex_ + sx * 0.055 * w)} {_f(hy + 0.01 * w)} "
+                     f"{_f(ex_ + sx * 0.005 * w)} {_f(hy + 0.055 * w)}", dsw))
+    out.append(C(hx, hy, R, sw, "white"))
+    out.append(smooth_path([(hx, hy - 0.075 * w), (hx + 0.075 * w, hy - 0.13 * w),
+                            (hx + 0.15 * w, hy - 0.06 * w), (hx + 0.155 * w, hy + 0.05 * w),
+                            (hx + 0.10 * w, hy + 0.15 * w), (hx, hy + 0.175 * w),
+                            (hx - 0.10 * w, hy + 0.15 * w), (hx - 0.155 * w, hy + 0.05 * w),
+                            (hx - 0.15 * w, hy - 0.06 * w), (hx - 0.075 * w, hy - 0.13 * w)],
+                           dsw, closed=True, fill="white"))
+    for sx in (-1, 1):
+        out.append(DOT(hx + sx * 0.068 * w, hy - 0.045 * w, max(3.0, 0.02 * w)))
+        out.append(DOT(hx + sx * 0.022 * w, hy + 0.045 * w, max(1.8, 0.01 * w)))
+    out.append(P(f"M {_f(hx - 0.055 * w)} {_f(hy + 0.085 * w)} Q {_f(hx)} {_f(hy + 0.15 * w)} "
+                 f"{_f(hx + 0.055 * w)} {_f(hy + 0.085 * w)}", dsw))
     return "".join(out)
 
 
@@ -3900,25 +4479,80 @@ def potted_plant(cx, ground_y, h=150, sw=4):
     return "".join(out)
 
 
-def cactus(cx, ground_y, h=180, sw=4.5):
-    """Saguaro: trunk + two arms + spine ticks + bloom."""
-    tw = 0.20 * h
-    out = [rrect(cx - tw / 2, ground_y - h, tw, h, tw / 2, sw, "white")]
-    for sx, ah in ((-1, 0.52), (1, 0.36)):
-        aw = tw * 0.62
-        ay = ground_y - h * ah
-        out.append(P(f"M {_f(cx + sx * (tw / 2 - 2))} {_f(ay + aw * 0.9)} "
-                     f"L {_f(cx + sx * (tw / 2 + aw * 0.9))} {_f(ay + aw * 0.9)} "
-                     f"Q {_f(cx + sx * (tw / 2 + aw * 1.5))} {_f(ay + aw * 0.9)} "
-                     f"{_f(cx + sx * (tw / 2 + aw * 1.5))} {_f(ay + aw * 0.3)} "
-                     f"L {_f(cx + sx * (tw / 2 + aw * 0.6))} {_f(ay + aw * 0.3)} "
-                     f"L {_f(cx + sx * (tw / 2 + aw * 0.6))} {_f(ay + aw * 0.9 - 4)} "
-                     f"L {_f(cx + sx * tw / 2)} {_f(ay + aw * 0.9 - 4)} Z", sw - 0.5, "white"))
-    for i in range(6):                                                    # spines
-        px = cx - tw * 0.3 + (i % 3) * tw * 0.3
-        py = ground_y - h * (0.25 + 0.18 * (i // 3))
-        out.append(LINE(px, py, px, py - 7, 2))
-    out.append(C(cx, ground_y - h - 6, 6, 3, "white"))
+def cactus(cx, ground_y, h=180, sw=4.5, pot=False):
+    """Saguaro cactus, base on ground_y: tall round-topped trunk, one arm each
+    side at DIFFERENT heights curving up, rib lines, sparse spine ticks on
+    the silhouette and a small bloom. pot=True stands it in a clay pot
+    (total height stays h)."""
+    k = 0.5523                                  # cubic quarter-circle factor
+    dsw = max(2.5, sw - 1.5)
+    g = ground_y
+    out = []
+    if pot:
+        ph = 0.26 * h
+        base = g - 0.20 * h                     # plant base hides in the pot
+        h = 0.80 * h
+    else:
+        base = g
+    tw = 0.28 * h
+    T = tw / 2
+    top = base - h
+
+    def arm(sx, ya, reach, rise, aw):
+        """L-shaped arm tube leaving the trunk at centre-height ya."""
+        rc = aw * 0.75                          # elbow centreline radius
+        ex = cx + sx * (T + reach)
+        ecx, ecy = ex - sx * rc, ya - rc        # elbow arc centre
+        ro, ri = rc + aw / 2, rc - aw / 2
+        ytip = ya - rise
+        X = lambda v: _f(v)                     # noqa: E731
+        d = (f"M {X(cx)} {X(ya + aw / 2)} L {X(ecx)} {X(ya + aw / 2)} "
+             f"C {X(ecx + sx * ro * k)} {X(ya + aw / 2)} {X(ex + sx * aw / 2)} {X(ecy + ro * k)} "
+             f"{X(ex + sx * aw / 2)} {X(ecy)} "
+             f"L {X(ex + sx * aw / 2)} {X(ytip)} "
+             f"C {X(ex + sx * aw / 2)} {X(ytip - aw / 2 * k * 1.2)} {X(ex + sx * aw / 2 * k)} {X(ytip - aw / 2)} "
+             f"{X(ex)} {X(ytip - aw / 2)} "
+             f"C {X(ex - sx * aw / 2 * k)} {X(ytip - aw / 2)} {X(ex - sx * aw / 2)} {X(ytip - aw / 2 * k * 1.2)} "
+             f"{X(ex - sx * aw / 2)} {X(ytip)} "
+             f"L {X(ex - sx * aw / 2)} {X(ecy)} "
+             f"C {X(ex - sx * aw / 2)} {X(ecy + ri * k)} {X(ecx + sx * ri * k)} {X(ya - aw / 2)} "
+             f"{X(ecx)} {X(ya - aw / 2)} L {X(cx)} {X(ya - aw / 2)} Z")
+        out.append(P(d, sw, "white"))
+        out.append(LINE(ex, ecy - 0.02 * h, ex, ytip - 0.02 * h, dsw - 0.5))  # arm rib
+        return ex, ytip - aw / 2
+
+    aw = 0.17 * h
+    # reach > aw/2 + 0.09h: the gap between an arm and the trunk stays a
+    # colorable >=3mm band instead of a sliver slot
+    tipL = arm(-1, base - 0.42 * h, 0.19 * h, 0.22 * h, aw)   # lower arm, left
+    tipR = arm(1, base - 0.60 * h, 0.18 * h, 0.20 * h, aw)    # higher arm, right
+    # trunk: straight sides, domed top (drawn over the arm roots)
+    out.append(P(f"M {_f(cx - T)} {_f(base)} L {_f(cx - T)} {_f(top + T)} "
+                 f"C {_f(cx - T)} {_f(top + T - T * k)} {_f(cx - T * k)} {_f(top)} {_f(cx)} {_f(top)} "
+                 f"C {_f(cx + T * k)} {_f(top)} {_f(cx + T)} {_f(top + T - T * k)} {_f(cx + T)} {_f(top + T)} "
+                 f"L {_f(cx + T)} {_f(base)} Z", sw, "white"))
+    for rx in (-0.40, 0.40):                    # two ribs, bowed to the dome
+        out.append(P(f"M {_f(cx + rx * T)} {_f(base - 0.05 * h)} "
+                     f"L {_f(cx + rx * T)} {_f(top + T * 1.1)} "
+                     f"Q {_f(cx + rx * T)} {_f(top + T * 0.45)} {_f(cx + rx * T * 0.55)} {_f(top + T * 0.30)}",
+                     dsw - 0.5))
+    # sparse spine ticks OUTSIDE the silhouette, staggered heights
+    for sx, fy in ((-1, 0.14), (1, 0.22), (-1, 0.25), (1, 0.40), (-1, 0.84)):
+        yy = base - fy * h
+        out.append(LINE(cx + sx * T, yy, cx + sx * (T + 0.05 * h), yy - 0.025 * h, 2.2))
+    for (tx, ty), sx in ((tipL, -1), (tipR, 1)):
+        out.append(LINE(tx + sx * aw / 2, ty + 0.12 * h, tx + sx * (aw / 2 + 0.045 * h),
+                        ty + 0.10 * h, 2.2))
+    # bloom on the dome
+    bs = max(1.9, h / 110)                      # petals stay >= 3mm regions
+    out.append(flower(cx + 0.2 * T, top - 3 * bs, s=bs, sw=dsw - 0.5))
+    if pot:
+        pw = 0.62 * (h / 0.80) * 0.62
+        rim_h = 0.07 * (h / 0.80)
+        out.append(P(f"M {_f(cx - pw * 0.44)} {_f(g - ph + rim_h)} L {_f(cx - pw * 0.34)} {_f(g)} "
+                     f"L {_f(cx + pw * 0.34)} {_f(g)} L {_f(cx + pw * 0.44)} {_f(g - ph + rim_h)} Z",
+                     sw, "white"))
+        out.append(rrect(cx - pw / 2, g - ph, pw, rim_h, 4, sw, "white"))
     return "".join(out)
 
 
@@ -4106,101 +4740,6 @@ def ice_cream(cx, cy, h=160, sw=4):
 
 
 # ---------------------------------------------------------------- structures pack
-def barn(cx, ground_y, w=260, sw=5):
-    """Red-barn classic: gambrel roof, X-braced doors, loft window."""
-    x0, g = cx - w / 2, ground_y
-    eave = g - 0.52 * w
-    out = [rrect(x0 + 0.08 * w, eave, 0.84 * w, 0.52 * w, 3, sw, "white")]
-    knee_l, knee_r = x0 + 0.02 * w, x0 + 0.98 * w
-    apex = g - 0.88 * w
-    out.append(P(f"M {_f(x0)} {_f(eave)} L {_f(knee_l)} {_f(g - 0.70 * w)} "
-                 f"L {_f(cx)} {_f(apex)} L {_f(knee_r)} {_f(g - 0.70 * w)} "
-                 f"L {_f(x0 + w)} {_f(eave)} Z", sw, "white"))
-    dw = 0.34 * w
-    out.append(rrect(cx - dw / 2, g - 0.36 * w, dw, 0.36 * w, 4, sw, "white"))
-    out.append(LINE(cx, g - 0.36 * w, cx, g, sw - 1))
-    out.append(LINE(cx - dw / 2, g - 0.36 * w, cx + dw / 2, g, 3))
-    out.append(LINE(cx + dw / 2, g - 0.36 * w, cx - dw / 2, g, 3))
-    out.append(P(f"M {_f(cx - 13)} {_f(g - 0.62 * w)} L {_f(cx)} {_f(g - 0.62 * w - 22)} "
-                 f"L {_f(cx + 13)} {_f(g - 0.62 * w)} L {_f(cx)} {_f(g - 0.62 * w + 8)} Z", 3, "white"))
-    return "".join(out)
-
-
-def schoolhouse(cx, ground_y, w=280, sw=5):
-    """One-room schoolhouse: wide body, cupola bell, flag, steps."""
-    x0, g = cx - w / 2, ground_y
-    wall_top = g - 0.42 * w
-    out = [rrect(x0, wall_top, w, 0.42 * w, 3, sw, "white")]
-    out.append(P(f"M {_f(x0 - 10)} {_f(wall_top)} L {_f(cx)} {_f(wall_top - 0.16 * w)} "
-                 f"L {_f(x0 + w + 10)} {_f(wall_top)} Z", sw, "white"))
-    cup = 0.10 * w
-    out.append(rrect(cx - cup / 2, wall_top - 0.16 * w - cup, cup, cup, 3, sw, "white"))
-    out.append(P(f"M {_f(cx - cup / 2 - 3)} {_f(wall_top - 0.16 * w - cup)} "
-                 f"L {_f(cx)} {_f(wall_top - 0.16 * w - cup - 12)} "
-                 f"L {_f(cx + cup / 2 + 3)} {_f(wall_top - 0.16 * w - cup)} Z", sw, "white"))
-    out.append(LINE(cx, wall_top - 0.16 * w - cup - 12, cx, wall_top - 0.16 * w - cup - 34, 2.5))
-    out.append(LINE(cx, wall_top - 0.16 * w - cup - 34, cx + 22, wall_top - 0.16 * w - cup - 30, 2.5))
-    for i in range(3):                                                     # windows
-        wx = x0 + 0.10 * w + i * 0.16 * w
-        out.append(rrect(wx, wall_top + 0.07 * w, 0.11 * w, 0.13 * w, 3, 3.5, "white"))
-        out.append(LINE(wx + 0.055 * w, wall_top + 0.07 * w, wx + 0.055 * w, wall_top + 0.20 * w, 2))
-    out.append(rrect(cx - 0.07 * w, g - 0.26 * w, 0.14 * w, 0.26 * w, 3, sw, "white"))  # door
-    out.append(C(cx + 0.035 * w, g - 0.13 * w, 2.5, 2, "white"))
-    out.append(LINE(cx - 0.12 * w, g, cx + 0.12 * w, g, sw))               # step
-    return "".join(out)
-
-
-def lighthouse(cx, ground_y, h=330, sw=5):
-    """Lighthouse on rocks: striped taper, gallery, light rays."""
-    x0, g = cx - 0.16 * h, ground_y
-    tw = 0.30 * h
-    out = [P(f"M {_f(cx - 46)} {_f(g)} L {_f(cx - 30)} {_f(g - 18)} L {_f(cx)} {_f(g - 8)} "
-             f"L {_f(cx + 34)} {_f(g - 20)} L {_f(cx + 50)} {_f(g)} Z", sw - 0.5, "white")]
-    top = g - h
-    out.append(P(f"M {_f(cx - tw * 0.62)} {_f(g - 0.10 * h)} L {_f(cx - tw * 0.38)} {_f(top + 0.16 * h)} "
-                 f"L {_f(cx + tw * 0.38)} {_f(top + 0.16 * h)} L {_f(cx + tw * 0.62)} {_f(g - 0.10 * h)} Z",
-                 sw, "white"))
-    for i in range(2):                                                     # stripes
-        sy = g - 0.10 * h - (i + 0.5) * (h * 0.74) / 2
-        half = tw * (0.62 - 0.24 * (i + 0.5) / 2)
-        out.append(P(f"M {_f(cx - half)} {_f(sy)} L {_f(cx + half)} {_f(sy)}", 3.5))
-    out.append(rrect(cx - tw * 0.44, top + 0.10 * h, tw * 0.88, 0.06 * h, 3, sw, "white"))
-    out.append(rrect(cx - tw * 0.30, top + 0.015 * h, tw * 0.60, 0.09 * h, 4, 4, "white"))
-    out.append(P(f"M {_f(cx - tw * 0.34)} {_f(top + 0.02 * h)} L {_f(cx)} {_f(top - 0.035 * h)} "
-                 f"L {_f(cx + tw * 0.34)} {_f(top + 0.02 * h)} Z", sw, "white"))
-    for sx in (-1, 1):                                                     # beams
-        out.append(P(f"M {_f(cx + sx * tw * 0.32)} {_f(top + 0.06 * h)} "
-                     f"L {_f(cx + sx * (tw * 0.32 + 46))} {_f(top + 0.06 * h - 16)} "
-                     f"L {_f(cx + sx * (tw * 0.32 + 46))} {_f(top + 0.06 * h + 14)} Z", 2.5)
-                  .replace('stroke-width="2.5"', 'stroke-width="2.5" stroke-dasharray="6 5"'))
-    return "".join(out)
-
-
-def windmill(cx, ground_y, h=310, sw=5):
-    """Windmill: tapered body, cap, four lattice blades."""
-    x0, g = cx - 0.22 * h, ground_y
-    bw_top = 0.16 * h
-    top = g - h
-    out = [P(f"M {_f(cx - 0.22 * h)} {_f(g)} L {_f(cx - bw_top / 2)} {_f(top + 0.14 * h)} "
-             f"L {_f(cx + bw_top / 2)} {_f(top + 0.14 * h)} L {_f(cx + 0.22 * h)} {_f(g)} Z",
-             sw, "white")]
-    out.append(P(f"M {_f(cx - bw_top / 2 - 6)} {_f(top + 0.14 * h)} "
-                 f"Q {_f(cx)} {_f(top - 0.02 * h)} {_f(cx + bw_top / 2 + 6)} {_f(top + 0.14 * h)} Z",
-                 sw, "white"))
-    out.append(rrect(cx - 0.05 * h, g - 0.22 * h, 0.10 * h, 0.22 * h, 3, sw, "white"))  # door
-    hub_x, hub_y = cx, top + 0.10 * h
-    out.append(C(hub_x, hub_y, 7, 3.5, "white"))
-    for i in range(4):
-        a = math.pi / 4 + i * math.pi / 2
-        ex, ey = hub_x + math.cos(a) * 0.34 * h, hub_y + math.sin(a) * 0.34 * h
-        out.append(LINE(hub_x, hub_y, ex, ey, sw - 0.5))
-        for t in (0.35, 0.65):
-            px, py = hub_x + math.cos(a) * 0.34 * h * t, hub_y + math.sin(a) * 0.34 * h * t
-            out.append(LINE(px, py, px + math.cos(a + 1.35) * 10, py + math.sin(a + 1.35) * 10, 2.5))
-    return "".join(out)
-
-
-# ---------------------------------------------------------------- structures pack
 def barn(cx, ground_y, w=240, sw=5):
     """Classic barn: gambrel roof, X-braced doors, loft diamond window."""
     x0, g = cx - w / 2, ground_y
@@ -4301,20 +4840,56 @@ def windmill(cx, ground_y, h=240, sw=5):
 
 # ---------------------------------------------------------------- people expansion
 def _run_legs(out, s=1.0):
-    """Running legs: front leg striding forward, back leg kicking behind."""
-    out.append(limb((-8, -70), (12, -38), (26, -4), w0=7, w1=4.5, sw=5))
-    out.append(LINE(20, -2, 34, -2, 4.5))
-    out.append(limb((10, -70), (-8, -40), (-22, -14), w0=7, w1=4.5, sw=5))
-    out.append(LINE(-30, -12, -18, -8, 4.5))
+    """Running stride (legacy name kept): the NEAR leg drives forward with
+    the knee up (foot off the ground), the FAR leg pushes off behind, toe on
+    the ground line. Drawn before the torso so a dress hem covers thighs."""
+    # far leg: long diagonal push-off, heel up, toe on the ground behind
+    out.append(limb((-6, -72), (-30, -42), (-52, -16), w0=7, w1=4.5, sw=5))
+    out.append(P("M -55 -14 Q -54 -3 -44 -2 L -38 -2", 4.5))
+    # near leg: thigh driven forward-up, shin hanging below the knee
+    out.append(limb((8, -72), (44, -60), (42, -24), w0=7, w1=4.5, sw=5))
+    out.append(P("M 41 -22 Q 41 -14 49 -14 L 58 -14", 4.5))
 
 
-def kid_run(t, outfit=None):
-    """Running kid: leaning stride, pumping arms. Origin at feet center."""
-    out, sh, head_y = _kid_top(t, outfit, legs=False)
+def kid_run(t, outfit=None, lean=18):
+    """Running kid heading RIGHT (mirror with GM). Origin at feet center; the
+    push-off toe sits on the ground line. Silhouette = the running read at
+    thumbnail size: near leg knee-up forward, far leg extended behind, torso
+    leaning `lean` px forward at the shoulders, elbows bent ~90deg and
+    pumping in opposition to the legs (far arm drives forward-up, drawn
+    behind the torso; near arm swings back). Face/hair via face_traits,
+    front-facing like every pose."""
+    outfit = outfit or t.get("outfit", "tee")
+    out = []
     _run_legs(out)
-    out.append(_arm(sh[0], (-38, -108), bulge=-12, lift=2))
-    out.append(_arm(sh[1], (40, -128), bulge=12, lift=2))
-    out.append(face_traits(2, head_y, 37, t))
+
+    def sk(x, y):                                  # forward lean above the hips
+        return x + lean * max(0.0, (-70.0 - y) / 82.0), y
+
+    def poly(pts):
+        return " L ".join(f"{_f(x)} {_f(y)}" for x, y in pts)
+
+    if outfit == "dress":
+        sh = sk(-20, -150), sk(20, -150)
+        head_y = -196
+        # skirt drapes over the raised knee and trails back in the wind
+        body = (f"M {poly([sk(-18, -160), sk(18, -160), sk(30, -108), (60, -40)])} "
+                "Q 52 -50 42 -34 Q 32 -48 20 -30 Q 8 -44 -4 -28 Q -16 -42 -28 -28 "
+                f"Q -40 -42 -54 -32 L {poly([sk(-28, -108)])} Z")
+        extra = (LINE(*sk(-26, -100), *sk(26, -100), 4) +
+                 DOT(-18, -58, 3) + DOT(8, -44, 3) + DOT(30, -64, 3) + DOT(4, -76, 3))
+    else:
+        sh = sk(-18, -142), sk(18, -142)
+        head_y = -188
+        body = f"M {poly([sk(-18, -152), sk(18, -152), (26, -70), (-26, -70)])} Z"
+        extra = LINE(*sk(-22, -96), *sk(22, -96), 4)
+    # far arm (drawn behind the torso) drives forward: fist up at chin level
+    out.append(_arm(sh[1], (sh[1][0] + 42, -150), bulge=10, lift=-14))
+    out.append(P(body, 5, "white"))
+    out.append(extra)
+    # near arm swings back: elbow cocked behind, fist low
+    out.append(_arm(sh[0], (sh[0][0] - 34, -98), bulge=17, lift=16))
+    out.append(face_traits(sk(0, head_y + 30)[0], head_y, 37, t))
     return '<g data-el="figure">' + "".join(out) + "</g>"
 
 
@@ -4401,37 +4976,56 @@ def kids_holding_hands(t1, t2, cx, ground_y, s=1.0):
 
 
 def kid_wheelchair(t, outfit=None):
-    """Wheelchair user, origin at ground under the big wheel. Side view
-    facing right: seated kid, chair frame, big rear wheel + small caster."""
-    out, sh, head_y = _kid_top(t, outfit, legs=False)
-    del sh
-    hy = -150
-    # seated body (torso from _kid_top is standing-shaped; reuse torso only)
-    out.clear()
+    """Kid in a manual wheelchair, side view of the chair heading RIGHT with
+    the child seated upright and face front (like every pose). Origin on the
+    ground line under the chair (rear wheel tangent at x=-20). Parts: large
+    rear wheel + push rim + spokes (near side, in front of the hip), small
+    front caster, seat, backrest + push handle, footplate; near hand rests ON
+    the push rim, far hand on the lap. ~235 tall at scale 1."""
     outfit = outfit or t.get("outfit", "tee")
+    out = []
+    wx, wy, wr = -20, -50, 50               # rear wheel (tangent to y=0)
+    # chair behind the child: backrest + handle, seat, frame, caster
+    out.append(LINE(-36, -64, -38, -152, 5))                  # backrest post
+    out.append(LINE(-38, -152, -60, -156, 5))                 # push handle
+    out.append(rrect(-48, -74, 90, 10, 4, 4.5, "white"))      # seat
+    out.append(LINE(34, -66, 40, -36, 4.5))                   # front post
+    out.append(LINE(40, -36, 40, -24, 4))                     # caster fork
+    out.append(C(40, -13, 13, 4.5, "white", ground=_f(0)))    # front caster
+    out.append(C(40, -13, 3.5, 2.5, "white"))
+    out.append(rrect(38, -42, 38, 8, 3, 4, "white"))          # footplate
+    # child: legs first (thigh along the seat, shin down to the plate)
+    out.append(limb((-8, -80), (44, -80), (52, -46), w0=8, w1=5.5, sw=5))
+    out.append(P("M 50 -44 Q 50 -40 56 -40 L 70 -40", 4.5))   # shoe on plate
     if outfit == "dress":
-        out.append(P("M -14 -158 L 16 -158 L 26 -112 L 34 -74 L -22 -74 L -18 -114 Z", 5, "white"))
-        head_y = -196
+        head_y, top = -198, -160
+        out.append(P("M -18 -160 L 18 -160 L 22 -112 L 44 -92 Q 60 -86 56 -66 "
+                     "Q 46 -58 38 -66 Q 28 -58 18 -66 Q 6 -58 -4 -66 L -26 -70 "
+                     "L -24 -112 Z", 5, "white"))
+        out.append(LINE(-23, -104, 21, -104, 4))
+        out.append(DOT(10, -80, 3) + DOT(32, -80, 3) + DOT(-2, -92, 3))
+        sh = (-20, -150), (20, -150)
     else:
-        out.append(P("M -16 -150 L 16 -150 L 20 -76 L -20 -76 Z", 5, "white"))
-        head_y = -188
-    # lap + lower legs on footplate
-    out.append(limb((-6, -80), (16, -74), (34, -70), w0=6.5, w1=4, sw=5))
-    out.append(limb((-2, -78), (18, -66), (32, -48), w0=6, w1=4, sw=5))
-    out.append(LINE(24, -40, 48, -40, 4.5))                    # footplate
-    # chair frame
-    out.append(LINE(-30, -8, -30, -120, 4.5))                  # back post
-    out.append(LINE(-30, -120, -6, -128, 4))                   # push handle
-    out.append(LINE(-30, -74, 26, -74, 4))                     # seat rail
-    out.append(LINE(26, -74, 40, -40, 4))                      # front frame
-    out.append(C(-14, -36, 36, 5, "white", ground=_f(0)))      # big wheel
+        head_y, top = -190, -152
+        out.append(P("M -18 -152 L 18 -152 L 24 -72 L -24 -72 Z", 5, "white"))
+        out.append(LINE(-21, -100, 21, -100, 4))
+        sh = (-18, -142), (18, -142)
+    # far arm: hand resting on the lap
+    out.append(_arm(sh[1], (34, -88), bulge=8, lift=4))
+    # near rear wheel in FRONT of the hip: tyre, push rim, spokes, hub
+    out.append(C(wx, wy, wr, 5, "white", ground=_f(0)))
+    out.append(C(wx, wy, wr - 13, 3.5))
     for i in range(6):
-        a = i * math.pi / 3
-        out.append(LINE(-14, -36, -14 + 30 * math.cos(a), -36 + 30 * math.sin(a), 2.5))
-    out.append(C(38, -12, 12, 4, "white", ground=_f(0)))       # caster
-    out.append(_arm((-14, -140), (30, -96), bulge=8))
-    out.append(_arm((-16, -142), (-34, -100), bulge=-8))
-    out.append(face_traits(2, head_y, 36, t))
+        a = math.pi / 6 + i * math.pi / 3
+        out.append(LINE(wx + 7 * math.cos(a), wy + 7 * math.sin(a),
+                        wx + (wr - 13) * math.cos(a), wy + (wr - 13) * math.sin(a), 2.5))
+    out.append(C(wx, wy, 7, 3.5, "white"))
+    # near arm down the torso side, elbow out, hand ON the top of the rim
+    ra = math.radians(-100)
+    rim = (wx + (wr - 13) * math.cos(ra), wy + (wr - 13) * math.sin(ra))
+    out.append(_arm(sh[0], rim, bulge=16, lift=4))
+    out.append(face_traits(0, head_y, 36, t))
+    del top
     return '<g data-el="figure">' + "".join(out) + "</g>"
 
 
@@ -4484,19 +5078,45 @@ _CLIP_L = '<clipPath id="{i}L"><rect x="-440" y="-560" width="440" height="1120"
 _CLIP_R = '<clipPath id="{i}R"><rect x="0" y="-560" width="440" height="1120"/></clipPath>'
 
 
-def speech_bubble(cx, cy, w=210, h=100, tail="down", lines=False, sw=4):
+def speech_bubble(cx=None, cy=None, w=210, h=100, tail="down", lines=False, sw=4,
+                  speaker_top=None, gap=20):
     """BLANK speech balloon (draw the word/picture inside). tail points at
-    the speaker: "down" | "left" | "right"."""
+    the speaker: "down" | "left" | "right".
+    speaker_top=(x, y) — the TOP of the speaker's head/hair in page coords —
+    places the bubble for you: the tail tip ends `gap` (~20) px above that
+    point, the balloon sits above it ("down") or up-beside it ("left" puts
+    the balloon to the speaker's right, "right" to the left), clamped inside
+    the page. cx/cy then only nudge the balloon (cx = its centre x).
+    Without speaker_top, (cx, cy) is the balloon centre as before."""
+    tip = None
+    if speaker_top is not None:
+        sx, sy = speaker_top
+        tip = (sx, sy - gap)
+        if tail == "down":
+            cx = sx if cx is None else cx
+            cy = tip[1] - 30 - h / 2
+        elif tail == "left":             # balloon up and to the speaker's right
+            cx = tip[0] + 30 + w / 2
+            cy = tip[1] - 16 - h / 2
+        else:                            # balloon up and to the speaker's left
+            cx = tip[0] - 30 - w / 2
+            cy = tip[1] - 16 - h / 2
+        cx = min(max(cx, 52 + w / 2), W - 52 - w / 2)
     out = [rrect(cx - w / 2, cy - h / 2, w, h, 22, sw, "white")]
     if tail == "down":
-        out.append(P(f"M {_f(cx - 12)} {_f(cy + h / 2 - 2)} L {_f(cx + 2)} {_f(cy + h / 2 + 26)} "
-                     f"L {_f(cx + 16)} {_f(cy + h / 2 - 2)} Z", sw, "white"))
-    elif tail == "left":
-        out.append(P(f"M {_f(cx - w / 2 + 2)} {_f(cy - 10)} L {_f(cx - w / 2 - 26)} {_f(cy)} "
-                     f"L {_f(cx - w / 2 + 2)} {_f(cy + 12)} Z", sw, "white"))
-    else:
-        out.append(P(f"M {_f(cx + w / 2 - 2)} {_f(cy - 10)} L {_f(cx + w / 2 + 26)} {_f(cy)} "
-                     f"L {_f(cx + w / 2 - 2)} {_f(cy + 12)} Z", sw, "white"))
+        if tip is None:
+            tip = (cx + 2, cy + h / 2 + 26)
+        bx = min(max(tip[0], cx - w / 2 + 34), cx + w / 2 - 34)   # tail root
+        out.append(P(f"M {_f(bx - 14)} {_f(cy + h / 2 - 2)} L {_f(tip[0])} {_f(tip[1])} "
+                     f"L {_f(bx + 14)} {_f(cy + h / 2 - 2)} Z", sw, "white"))
+    elif tail in ("left", "right"):
+        sgn = -1 if tail == "left" else 1
+        edge = cx + sgn * (w / 2 - 2)
+        if tip is None:
+            tip = (cx + sgn * (w / 2 + 26), cy)
+        by = min(max(tip[1] - 6, cy - h / 2 + 22), cy + h / 2 - 22)
+        out.append(P(f"M {_f(edge)} {_f(by - 11)} L {_f(tip[0])} {_f(tip[1])} "
+                     f"L {_f(edge)} {_f(by + 11)} Z", sw, "white"))
     if lines:
         for i in range(2):
             ly = cy - 10 + i * 24
@@ -4504,58 +5124,130 @@ def speech_bubble(cx, cy, w=210, h=100, tail="down", lines=False, sw=4):
     return "".join(out)
 
 
-def thought_bubble(cx, cy, w=190, h=95, sw=4):
-    """Cloud-style thought bubble with trailing puffs (blank inside)."""
-    out = [cloud(cx, cy, w * 0.34, sw)]
-    for dx, dy, r in ((-w * 0.30, h * 0.62, 8), (-w * 0.20, h * 0.85, 5.5)):
-        out.append(C(cx + dx, cy + dy, r, 3, "white"))
+def thought_bubble(cx=None, cy=None, w=190, h=95, sw=4, speaker_top=None,
+                   side=1, gap=20):
+    """Cloud-style thought bubble with trailing puffs (blank inside).
+    speaker_top=(x, y) (top of the speaker's head in page coords) places it:
+    the smallest puff ends `gap` (~20) px above that point and the cloud
+    rises BESIDE the head on `side` (+1 right, -1 left) — thought bubbles
+    trail from beside the head, never over the back of it. Without
+    speaker_top, (cx, cy) is the cloud's base centre as before."""
+    s = w * 0.34
+    if speaker_top is None:
+        out = [cloud(cx, cy, s, sw)]
+        for dx, dy, r in ((-w * 0.30, h * 0.62, 8), (-w * 0.20, h * 0.85, 5.5)):
+            out.append(C(cx + dx, cy + dy, r, 3, "white"))
+        return "".join(out)
+    sx, sy = speaker_top
+    p1 = (sx + side * 14, sy - gap - 6)                  # small puff by the head
+    p2 = (sx + side * 40, sy - gap - 38)                 # bigger puff
+    base_y = p2[1] - 22                                  # cloud's flat base
+    ccx = sx + side * 1.05 * s if cx is None else cx
+    ccx = min(max(ccx, 52 + 1.6 * s), W - 52 - 1.7 * s)
+    return (cloud(ccx, base_y, s, sw) + C(p2[0], p2[1], 10, 3, "white") +
+            C(p1[0], p1[1], 6, 3, "white"))
+
+
+def _mirror_pts(pts):
+    return [(-x, y) for x, y in pts]
+
+
+def _sym_butterfly(k=1.0, sw=5):
+    """Big colorable butterfly for mirror pages, symmetric about x=0, ~200k
+    wide: closed upper + lower wings with spots, white segmented body, head,
+    knobbed antennae (the small butterfly() motif has a solid black body and
+    open lower wings — fine as a sticker, wrong for a colour-in half)."""
+    up = [(6, -8), (28, -60), (68, -88), (98, -74), (100, -36), (66, -8), (10, 2)]
+    lo = [(8, 6), (48, 12), (80, 38), (74, 76), (44, 88), (18, 62), (5, 24)]
+    out = []
+    for sx in (-1, 1):
+        f = (lambda p: p) if sx > 0 else _mirror_pts
+        out.append(smooth_path([(x * k, y * k) for x, y in f(up)], sw, "white", closed=True))
+        out.append(smooth_path([(x * k, y * k) for x, y in f(lo)], sw, "white", closed=True))
+        out.append(C(sx * 62 * k, -50 * k, 17 * k, sw - 1.5, "white"))    # wing spots
+        out.append(C(sx * 88 * k, -66 * k, 7 * k, sw - 2, "white"))
+        out.append(C(sx * 46 * k, 52 * k, 13 * k, sw - 1.5, "white"))
+        out.append(P(f"M {_f(sx * 4 * k)} {_f(-78 * k)} Q {_f(sx * 10 * k)} {_f(-112 * k)} "
+                     f"{_f(sx * 30 * k)} {_f(-124 * k)}", sw - 1))            # antenna
+        out.append(C(sx * 32 * k, -126 * k, 6 * k, sw - 1.5, "white"))
+    out.append(E(0, 4 * k, 10 * k, 64 * k, sw, "white"))                    # body
+    for yy in (-24, 4, 32):
+        out.append(P(f"M {_f(-9 * k)} {_f(yy * k)} Q 0 {_f((yy + 6) * k)} {_f(9 * k)} {_f(yy * k)}",
+                     sw - 2))
+    out.append(C(0, -70 * k, 14 * k, sw, "white"))                          # head
     return "".join(out)
 
 
+# symmetric motifs drawn at the LOCAL ORIGIN (axis = local x 0); k scales
+# geometry only — stroke widths stay at page weight at any size
 _SYMMETRY_MOTIFS = {
-    "butterfly": lambda cx, cy: G(cx, cy, butterfly(0, 0, 2.6)),
-    "heart": lambda cx, cy: G(cx, cy, heart(0, 0, 52, 5, "white")),
-    "star": lambda cx, cy: G(cx, cy, star(0, 0, 62, 5, "white")),
-    "flower": lambda cx, cy: G(cx, cy, flower(0, 0, s=3.4)),
-    "face": lambda cx, cy: G(cx, cy, face(0, 0, 52, hair="bob_bangs")),
+    "butterfly": lambda k: _sym_butterfly(k),
+    "heart": lambda k: heart(0, 0, 52 * k, 5, "white"),
+    "star": lambda k: star(0, 0, 62 * k, 5, "white"),
+    "flower": lambda k: flower(0, 0, s=3.4 * k, sw=4.5),
+    "face": lambda k: face(0, 0, 52 * k, hair="bob_bangs"),
 }
 
 
+def _fit_mirror_motif(make, size, band_top=170, band_bot=985):
+    """Build a motif (drawn around local x=0, the mirror axis) at the geometry
+    scale k where it spans `size` of the page width (height-capped to the
+    drawable band); return (fragment, centre-y offset for the band)."""
+    bb = fragment_bbox(make(1.0))
+    half = max(-bb[0], bb[2])                      # extent from the axis
+    k = min(size * W / (2 * half), (band_bot - band_top - 60) / (bb[3] - bb[1]))
+    local = make(k)
+    bb = fragment_bbox(local)
+    return local, bb, (band_top + band_bot) / 2 - (bb[1] + bb[3]) / 2
+
+
 def symmetry_page(motif="butterfly", title="Finish the Other Half!",
-                  num=None, caption=None, axis_x=None):
+                  num=None, caption=None, axis_x=None, size=0.60):
     """Creativity page: LEFT half drawn solid, right half shown as a dotted
-    hint — the child mirrors it. Uses per-element clipPath (cairosvg-safe)."""
+    hint — the child mirrors it. The whole motif (solid half + hint) is
+    MEASURED and sized to span `size` of the page width (0.55-0.65 reads
+    best), centred in the drawable band; the dashed mirror axis runs the
+    full drawable height. Uses per-element clipPath (cairosvg-safe)."""
     ax = axis_x or W / 2
-    frag = _SYMMETRY_MOTIFS[motif](ax, 540)
+    band_top, band_bot = 170, 985
+    local, _bb, cy = _fit_mirror_motif(_SYMMETRY_MOTIFS[motif], size, band_top, band_bot)
+    frag = G(ax, cy, local)
     defs = '<defs>' + _CLIP_L.format(i="sym") + _CLIP_R.format(i="sym") + '</defs>'
     body = (defs
             + _clipify(frag, "symL")
-            + _clipify(_dashify(frag), "symR")
-            + stitch_dash(ax, 300, ax, 800, sw=3, dash="4 9"))
+            + _clipify(_dashify(frag, dash="9 9"), "symR")
+            + stitch_dash(ax, band_top - 8, ax, band_bot + 5, sw=3, dash="4 9"))
     return spage(title, body, num=num, caption=caption, layout="creative")
 
 
 _FINISH_KINDS = {
-    # each draws around a LOCAL ORIGIN sitting ON the mirror axis (local x=0)
-    "house": lambda: G(-120, 330, house(0, 0, w=240)),
-    "rocket": lambda: G(0, 200, rocket(0, -105)),
-    "butterfly": lambda: butterfly(0, 0, 3.0),
-    "face": lambda: face(0, 0, 55, hair="curly"),
+    # each draws around a LOCAL ORIGIN sitting ON the mirror axis (local x=0);
+    # k scales geometry only, so strokes keep page weight at any size
+    "house": lambda k: house(0, 0, w=240 * k),
+    "rocket": lambda k: rocket(0, 0, h=210 * k),
+    "butterfly": lambda k: _sym_butterfly(k),
+    "face": lambda k: face(0, 0, 55 * k, hair="curly"),
 }
 
 
 def finish_page(kind="house", title="Finish the Picture!", num=None,
-                caption=None, axis_x=None):
+                caption=None, axis_x=None, size=0.60):
     """Creativity page: the LEFT half of the object is solid, the right half
-    a dotted ghost — the child completes it (following the hint or not)."""
-    ax = axis_x or (W / 2 + 30)
-    frag = G(ax, 500, _FINISH_KINDS[kind]())
+    a dotted ghost — the child completes it (following the hint or not).
+    The object straddles the axis and is MEASURED and sized to span `size`
+    of the page width, centred in the drawable band (it used to sit ~200px
+    wide beside the axis with almost nothing left to finish)."""
+    ax = axis_x or W / 2
+    band_top, band_bot = 170, 985
+    local, bb, cy = _fit_mirror_motif(_FINISH_KINDS[kind], size, band_top, band_bot)
+    frag = G(ax, cy, local)
+    sx = min(W - 70, ax + bb[2] + 40)              # idea sparks right of it
     defs = ('<defs>' + _CLIP_L.format(i="fin") + _CLIP_R.format(i="fin") + '</defs>')
     body = (defs
             + _clipify(frag, "finL")
-            + _clipify(_dashify(frag), "finR")
-            + stitch_dash(ax, 260, ax, 860, sw=3, dash="4 9")
-            + sparkle(ax + 150, 380, 10) + sparkle(ax + 200, 640, 8))
+            + _clipify(_dashify(frag, dash="9 9"), "finR")
+            + stitch_dash(ax, band_top - 8, ax, band_bot + 5, sw=3, dash="4 9")
+            + sparkle(sx, cy + bb[1] + 40, 10) + sparkle(sx, cy + bb[3] - 50, 8))
     return spage(title, body, num=num, caption=caption, layout="creative")
 
 
@@ -4637,22 +5329,34 @@ def design_template(kind="tee", cx=None, ground_y=860, sw=5):
     return "".join(out)
 
 
-def sticker_sheet(motifs, title="Stickers!", num=None, cols=3, cell=170,
-                  x0=70, y0=200, caption=None):
+def sticker_sheet(motifs, title="Stickers!", num=None, cols=3, cell=None,
+                  x0=None, y0=None, caption=None, fill=0.70):
     """Cut-and-play sheet: dashed cells with one motif each. `motifs` is a
-    list of FRAGMENT STRINGS drawn around a LOCAL ORIGIN (e.g.
-    butterfly(0, 0, 1.6) or G(0, 0, dino(0, 0, s=0.9))) — the sheet places
-    and centres each one in its cell."""
+    list of FRAGMENT STRINGS drawn around any origin (e.g. butterfly(0, 0,
+    1.6) or dino(0, 0, s=0.9)). Each motif is MEASURED (fragment_bbox) and
+    auto-scaled so its larger side fills `fill` (~70%) of the cell, centred,
+    with strokes kept at page weight. Cells default to the largest square
+    (>=200 px) that fits the drawable band; the grid is centred on the page
+    unless x0/y0 pin its top-left corner."""
+    n = len(motifs)
+    rows = max(1, (n + cols - 1) // cols)
+    band_top, band_bot = 170, 985                  # below title, above caption
+    if cell is None:
+        cell = min(250.0, (W - 110) / cols, (band_bot - band_top) / rows)
+        cell = max(cell, 200.0) if cols <= 3 else cell
+    gx = (W - cols * cell) / 2 if x0 is None else x0
+    gy = ((band_top + band_bot) / 2 - rows * cell / 2) if y0 is None else y0
     out = []
-    rows = (len(motifs) + cols - 1) // cols
-    for i in range(len(motifs)):
+    for i, frag in enumerate(motifs):
         r_, c_ = divmod(i, cols)
-        cx_ = x0 + cell * (c_ + 0.5)
-        cy_ = y0 + cell * (r_ + 0.5)
+        cx_ = gx + cell * (c_ + 0.5)
+        cy_ = gy + cell * (r_ + 0.5)
         out.append(rrect(cx_ - cell / 2 + 8, cy_ - cell / 2 + 8, cell - 16, cell - 16,
-                         10, 3, "white")
+                         12, 3, "white")
                    .replace('stroke="black" stroke-width="3"',
                             'stroke="black" stroke-width="3" stroke-dasharray="9 8"'))
-        out.append(G(cx_, cy_ + 6, motifs[i]))
+        out.append(fit_fragment(frag, cx_, cy_, fill * cell, fill * cell))
     body = "".join(out)
     return spage(title, body, num=num, caption=caption, layout="creative")
+
+

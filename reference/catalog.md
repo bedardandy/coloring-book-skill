@@ -13,7 +13,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - **flowers & garden**: `flower` `tulip` `sunflower` `apple_tree` `potted_plant` `cactus` `garden_strip` `tree_round` `tree_pine` `leaf`
 - **wild animals**: `lion` `elephant` `giraffe` `monkey` `owl` `frog` `turtle` `snail` `rabbit` `bird_side` `horse` `butterfly`
 - **farm**: `barn` `cow` `sheep` `chicken` `pig` `horse` `baby_goat` `fence_ranch` `tractor`
-- **pets**: `dog` `dog_sit` `dog_sleep` `cat_sitting` `teddy` `food_bowl` `bone` `kibble`
+- **pets**: `dog` `dog_sit` `dog_sleep` `dog_dig` `dirt_hole` `cat_sitting` `teddy` `food_bowl` `bone` `kibble`
 - **games & toys**: `kite` `scooter` `tricycle` `seesaw` `sandbox` `blocks` `dice` `drum` `puzzle_piece` `ice_cream` `soccer_ball` `ball` `swing_set` `balloon`
 - **buildings**: `house` `village_house` `castle_small` `treehouse` `schoolhouse` `lighthouse` `windmill` `barn` `tent` `fairy_door`
 - **landscapes**: `hill` `mountain` `mountain_range` `road` `rail_track` `fence_picket` `fence_ranch` `pond` `beach_shore` `forest_border` `skyline` `bridge` `ground_line`
@@ -31,7 +31,12 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `DOT`
 - `E`
 - `LINE`
-- `TXT`
+- `TXT` — Page text at (x, baseline y). Delegates to text_path() (glyph
+### page text engine
+
+- `text_width` — EXACT rendered width (px) of text_path(s, size): sum of the glyph
+- `text_path` — Text as filled Andika glyph paths, (x, y) = anchor point ON THE
+- `wrap_width` — Greedy word wrap on MEASURED glyph advances: every line's
 - `G`
 - `GM` — Mirror horizontally (flip left-right) WITHOUT turning upside-down.
 ### curve engine & line vocabulary
@@ -46,6 +51,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 ### motifs
 
 - `star`
+- `sky` — Tag EVERY shape in `fragment` data-sky="1" — sky decoration, excluded
 - `sparkle`
 - `heart`
 - `cloud`
@@ -63,12 +69,15 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `grass_tuft`
 ### faces
 
-- `face`
-- `face_traits` — face() driven by a character trait dict.
+- `face_seed_for` — Deterministic seed from a character name — put it in the trait dict as
+- `face` — Head with parametric hair/glasses/freckles. Draw AFTER body & arms.
+- `face_traits` — face() driven by a character trait dict. t["face_seed"] (or a name
 ### kid figures
 
 - `limb` — Tapered limb outline through shoulder s -> elbow e -> wrist wpt
 - `kid_stand` — (Public dispatcher — binds to the smooth rebuild unless
+- `kid_top` — PUBLIC pose-building part: the kid's head + torso (+ standing legs)
+- `arm` — PUBLIC pose-building part: one smooth two-segment arm from
 - `kid_sitting` — Kid sitting holding a game controller. Origin at seat.
 ### animals
 
@@ -77,10 +86,10 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 
 - `page`
 - `build` — builders: list of (name, fn) -> svg string. Writes svg/png/pdf per page,
-- `render_tiles`
+- `render_tiles` — Render full page + overlapping tiles (grid rows x cols) for VLM QA.
 ### room furniture, props & story helpers
 
-- `wrap_words`
+- `wrap_words` — Legacy CHARACTER-COUNT wrap (kept for callers that pass maxchars).
 - `spage` — Whole page: border, optional title, body, wrapped multi-line caption, page #.
 ### prop-characters
 
@@ -93,7 +102,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 ### furniture
 
 - `rrect`
-- `otext` — Hollow (outline) block letters for tracing.
+- `otext` — Hollow (outline) letters for tracing/coloring: white-filled Andika
 - `window`
 - `wall_picture` — Framed wall picture — a mid-band filler that is clearly wall-mounted.
 - `bookshelf` — Tall shelf unit — fills the vertical middle band on room pages.
@@ -119,10 +128,16 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 ### knockout mat
 
 - `matted` — Anti-tangency halo: returns a white 'mat' copy of `inner` (every stroke
+### fragment geometry
+
+- `fragment_bbox` — Tight world-space bbox (x0, y0, x1, y1) of the VISIBLE art in an SVG
+- `restroke` — Divide every stroke-width (and dash length) in a fragment by k — pair
+- `fit_fragment` — Scale a fragment (drawn around any origin) so its visible bbox fits
 ### scene & prop library (harvested from production books, 2026-07)
 
 - `dog_sit` — Sitting dog facing right, origin at ground. ~150 tall.
 - `dog_sleep` — Dog lying down 'asleep', head on paws, origin at ground. Facing right.
+- `dog_dig` — Dog DIGGING, facing right, origin at ground contact (GM() to flip).
 - `sock`
 - `cushion_fort`
 - `table`
@@ -205,12 +220,12 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `use_legacy_figures`
 ### colorable letters & words
 
-- `letter` — One glyph as an SVG path. (x, y_base) = LEFT edge ON THE BASELINE.
-- `word_width` — Exact rendered width of word() from glyph advances.
-- `word`
-- `banner`
+- `letter` — One HOLLOW glyph. (x, y_base) = LEFT edge of its advance box ON THE
+- `word_width` — Exact width of word(): glyph advances + the hollow dilation (D per
+- `word` — A run of hollow glyphs centered on x_center, sitting on y_base (the
+- `banner` — Ribbon sized EXACTLY for its text (glyph-metric width, hollow
 - `guideline`
-- `name_trace_page`
+- `name_trace_page` — Handwriting-practice page: per-name ruled guidelines (top/mid/base),
 ### world & landscape systems
 
 - `ground_line` — Plain ground stroke spanning the art band.
@@ -228,7 +243,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `bridge` — Arch footbridge: deck on ground_y, arch below, railing posts above.
 ### vehicles II
 
-- `school_bus` — Long school bus facing right: window row, door, stripe, wheels.
+- `school_bus` — Long school bus facing right: boxy body, low engine hood out FRONT
 - `dump_truck` — Dump truck facing right: cab + tilted open dump bed, 3 wheels.
 - `helicopter` — Helicopter facing right, centred on the BODY; rotor mast on top.
 - `hot_air_balloon` — Hot-air balloon centred on the ENVELOPE; basket hangs below.
@@ -238,13 +253,13 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `train_car` — Rolling stock for train_engine: kind = "box" | "passenger" | "caboose".
 ### space pack
 
-- `star_field` — Deterministic star/sparkle scatter (golden-ratio hops — never random).
-- `moon` — Moon disc with asymmetric craters (unpaired heights).
+- `star_field` — Deterministic star/sparkle scatter on a jittered grid — uniform
+- `moon` — Moon disc with asymmetric craters (unpaired heights). Sky decoration
 - `crater_ground` — Moon/lunar surface: ground stroke + shallow crater rims (ground = y).
 - `ufo` — Flying saucer centred (cx, cy): dome + saucer + lights (+ alien).
 - `satellite` — Satellite: body + solar panel wings + dish, centred (cx, cy).
-- `telescope` — Tripod telescope aimed up-right; a target sparkle at the eyepiece line.
-- `shooting_star` — Comet: star head + three swoosh trails up-left.
+- `telescope` — Tripod telescope aimed up-right, feet on ground_y: three legs splayed
+- `shooting_star` — Comet: star head + three swoosh trails up-left. Sky decoration: head
 ### nature pack
 
 - `fish` — Side-view fish swimming right, centred (cx, cy) — no ground line.
@@ -252,17 +267,17 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `snail` — Snail facing right: spiral shell + body with raised head.
 - `rabbit` — Sitting rabbit facing right, feet on ground_y.
 - `duck` — Duck floating right on waterline y.
-- `cow` — Side-view cow facing right, feet on ground_y.
+- `cow` — Side-view cow walking right, head turned to the viewer; feet on
 - `sheep` — Woolly sheep facing right: bumpy fleece, dark-outlined face, legs.
 - `chicken` — Hen facing right: comb, beak, wattle, wing, tail feathers.
 - `owl` — Owl standing on ground_y: ear tufts, big eyes, wing lines, feet.
-- `monkey` — Sitting monkey facing right with curled tail, feet on ground_y.
+- `monkey` — Sitting monkey facing the viewer, bottom on ground_y: round head with
 - `frog` — Crouched frog facing right: eye bumps, folded legs, front feet.
 - `tulip` — Tulip: three-point cup head on a stem with two leaves.
 - `sunflower` — Sunflower: petal ring + seeded centre + stem and leaves.
 - `apple_tree` — Round tree with colorable apples (fixed asymmetric positions).
 - `potted_plant` — Potted plant: rim pot + five-leaf fan.
-- `cactus` — Saguaro: trunk + two arms + spine ticks + bloom.
+- `cactus` — Saguaro cactus, base on ground_y: tall round-topped trunk, one arm each
 - `garden_strip` — Flower bed: alternating tulip/sunflower/daisy + grass, index-spaced.
 ### games pack
 
@@ -278,37 +293,33 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `ice_cream` — Two-scoop cone, tip-down at (cx, cy + h/2).
 ### structures pack
 
-- `barn` — Red-barn classic: gambrel roof, X-braced doors, loft window.
-- `schoolhouse` — One-room schoolhouse: wide body, cupola bell, flag, steps.
-- `lighthouse` — Lighthouse on rocks: striped taper, gallery, light rays.
-- `windmill` — Windmill: tapered body, cap, four lattice blades.
 - `barn` — Classic barn: gambrel roof, X-braced doors, loft diamond window.
 - `schoolhouse` — One-room schoolhouse: bell cupola, flag, three windows, steps.
 - `lighthouse` — Lighthouse on rocks: striped taper, gallery, lamp room, dashed rays.
 - `windmill` — Windmill: tapered body, domed cap, four lattice blades (reach 0.34h).
 ### people expansion
 
-- `kid_run` — Running kid: leaning stride, pumping arms. Origin at feet center.
+- `kid_run` — Running kid heading RIGHT (mirror with GM). Origin at feet center; the
 - `kid_jump` — Jumping/cheering kid: arms up, legs kicked out, motion ticks below.
 - `kid_point` — Kid pointing to the RIGHT (mirror with GM to point left).
 - `kid_carry` — Kid carrying a box in front (hands redrawn OVER the box corners).
 - `kid_in_bed` — Kid asleep in a side-view bed (head on pillow, blanket bump, closed
 - `kids_holding_hands` — Two kids holding hands, centred at cx on ground_y. Left kid aims both
-- `kid_wheelchair` — Wheelchair user, origin at ground under the big wheel. Side view
+- `kid_wheelchair` — Kid in a manual wheelchair, side view of the chair heading RIGHT with
 - `kid_toddler` — Toddler proportions: bigger head, shorter body (~170 tall at s=1).
 ### creativity layer
 
 - `speech_bubble` — BLANK speech balloon (draw the word/picture inside). tail points at
 - `thought_bubble` — Cloud-style thought bubble with trailing puffs (blank inside).
-- `symmetry_page`
-- `finish_page`
+- `symmetry_page` — Creativity page: LEFT half drawn solid, right half shown as a dotted
+- `finish_page` — Creativity page: the LEFT half of the object is solid, the right half
 - `pattern_menu` — Four pattern swatches (stripes/dots/checks/waves) with labels — kids
 - `design_template` — Blank 'design your own' outline + idea sparks. kind: tee | cake |
-- `sticker_sheet`
+- `sticker_sheet` — Cut-and-play sheet: dashed cells with one motif each. `motifs` is a
 
 ## scenes (scene kits — composite backgrounds)
 
-- `scene_meadow` — Sunny meadow. Ground: SCENE_GROUND. Sky lane stays clear above y=300
+- `scene_meadow` — Sunny meadow. Ground: SCENE_GROUND. variant=N re-lays the kit (sun
 - `scene_street` — City street. Vehicle/figure ground: STREET_GROUND (road near edge).
 - `scene_beach` — Beach: waves + shoreline + shells. Ground: BEACH_GROUND (the sand).
 - `scene_space` — Lunar surface. Ground: SPACE_GROUND (crater line). Sky filled with a
@@ -318,10 +329,10 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 
 - `load_photo` — EXIF-rotate, load, downscale, return (gray uint8, BGR).
 - `detect_subject` — Soft-rule fallback chain, all local. Returns
-- `extract_ink`
+- `extract_ink` — Binary ink mask (255 = line) from a grayscale photo.
 - `vectorize` — Ink mask -> ordered list of SVG path elements in PAGE coordinates.
 - `spage_wrap`
-- `photo_to_svg`
-- `photo_to_fragment`
-- `composite_page`
+- `photo_to_svg` — Photo file -> standalone coloring page SVG string. layout="creative
+- `photo_to_fragment` — Photo -> G()-placeable charlib fragment. Local origin = the traced
+- `composite_page` — Traced photo subject matted onto a scene kit body beside charlib
 - `synthetic_photo` — Deterministic photo-like fixture (soft gradients + shapes + grain)

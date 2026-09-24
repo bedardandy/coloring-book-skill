@@ -11,16 +11,18 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 
+import math  # noqa: E402
+
 import cv2  # noqa: E402
 import cairosvg  # noqa: E402
 
 import scenes  # noqa: E402
-from charlib import (W, G, GM, spage, sun, fence_picket, kid_stand, kid_run, kid_jump,          # noqa: E402
+from charlib import (W, G, spage, kid_stand, kid_run, kid_jump,          # noqa: E402
                      kid_point, kid_carry, kids_holding_hands, kid_wheelchair,
-                     kid_toddler, kid_in_bed, dog, cat_sitting, fish, turtle,
+                     kid_toddler, kid_in_bed, dog, dog_dig, fish, turtle,
                      snail, rabbit, duck, cow, sheep, chicken, owl, monkey,
                      frog, tulip, sunflower, apple_tree, potted_plant, cactus,
-                     garden_strip, kite, scooter, tricycle, seesaw, sandbox,
+                     kite, scooter, tricycle, seesaw, sandbox,
                      blocks, dice, drum, puzzle_piece, ice_cream, barn,
                      schoolhouse, lighthouse, windmill, school_bus, dump_truck,
                      helicopter, hot_air_balloon, sailboat, rowboat, canoe,
@@ -29,85 +31,236 @@ from charlib import (W, G, GM, spage, sun, fence_picket, kid_stand, kid_run, kid
                      planet_ringed, symmetry_page, finish_page, sticker_sheet,
                      speech_bubble, thought_bubble, pattern_menu,
                      design_template, name_trace_page, butterfly, star, heart,
-                     dino, soccer_ball)
+                     dino, soccer_ball, bird_side, crater_ground, fit_fragment,
+                     fragment_bbox, LINE, C, P, cloud, matted, flower,
+                     grass_tuft, lamppost, ball, castle_small, airplane, pond,
+                     tree_round, tree_pine)
 from validate import validate_svg  # noqa: E402
 
 T1 = {"hair": "pigtails", "outfit": "dress"}
 T2 = {"hair": "buzz", "outfit": "tee"}
 T3 = {"hair": "long_wavy", "outfit": "dress", "glasses": True}
+T4 = {"hair": "curly", "outfit": "tee", "freckles": True}
+P85 = {"scale": 0.85}              # one figure scale per page: sizes stay honest
+
+# ---------------------------------------------------------------- catalog grid
+# Catalog pages are tidy grids over the drawable band (below the title zone,
+# above the caption band). Every item is MEASURED (fragment_bbox) and scaled
+# to its cell with page-weight strokes (fit_fragment), so nothing overlaps
+# and small helpers get big enough for >=3mm colorable regions.
+BAND = (60, 172, 790, 988)          # x0, y0, x1, y1
+
+
+def grid(rows, band=BAND, fill_w=0.84, fill_h=0.80):
+    """rows: [(height_weight, [item, ...], ground), ...].
+    item = (fragment, mode[, opts]):
+      mode "ground" stands the art ON the row's base line (a short base
+      line is drawn under it when the row's ground is "line"); "sit" stands
+      it without a base line (boats on their own waves); "float" centres it.
+      opts: wt=cell width weight; scale=FIXED scale instead of fit-to-cell
+      (figures keep their relative sizes; origin placed on the base line).
+    ground: "line", None, or a callable(x0, x1, y) drawing a row-wide ground."""
+    x0, y0, x1, y1 = band
+    total = sum(r[0] for r in rows)
+    out, y = [], y0
+    for weight, items, ground in rows:
+        rh = (y1 - y0) * weight / total
+        items = [it if len(it) == 3 else (it[0], it[1], {}) for it in items]
+        wts = [it[2].get("wt", 1.0) for it in items]
+        base = y + rh - 0.07 * rh
+        if callable(ground):
+            out.append(ground(x0 + 10, x1 - 10, base))
+        cx0 = x0
+        for (frag, mode, opts), wt in zip(items, wts):
+            cw = (x1 - x0) * wt / sum(wts)
+            cx = cx0 + cw / 2
+            cx0 += cw
+            if "scale" in opts:
+                sc = opts["scale"]
+                bb = fragment_bbox(frag, stroke=False)
+                placed = G(cx - (bb[0] + bb[2]) / 2 * sc, base, frag, sc)
+            elif mode == "float":
+                placed = fit_fragment(frag, cx, y + rh * 0.47, fill_w * cw, fill_h * rh)
+            else:
+                placed = fit_fragment(frag, cx, base, fill_w * cw, fill_h * rh,
+                                      anchor="bottom")
+            if mode == "ground" and ground == "line":
+                bb = fragment_bbox(placed, stroke=False)
+                half = min(cw * 0.47, (bb[2] - bb[0]) / 2 + 16)
+                out.append(LINE(cx - half, base, cx + half, base, 3.5))
+            out.append(placed)
+        y += rh
+    return "".join(out)
+
+
+def creativity():
+    """Creativity catalog: a speaker with a speech bubble and a dog with a
+    thought bubble, both placed via speaker_top (the bubble tail ends 20px
+    above the MEASURED head top), then the pattern menu + design template."""
+    gy = 585
+    girl = G(215, gy, kid_stand(T1, "wave"), 0.95)
+    pup = G(560, gy, dog({"coat": "spots"}), 1.5)
+    girl_top = fragment_bbox(girl, stroke=False)[1]
+    pup_head = (560 + 58 * 1.5, gy - 130 * 1.5)            # dog head top (local 58,-130)
+    return (LINE(70, gy, 780, gy, 4) + girl + pup +
+            speech_bubble(speaker_top=(215, girl_top), w=240, h=104, lines=True) +
+            thought_bubble(speaker_top=pup_head, side=-1) +
+            pattern_menu(76, 752, w=330) +
+            design_template("tee", cx=615, ground_y=975))
+
+
+# ---------------------------------------------------------------- scene pages
+# Three-layer recipe (reference/drawing-guide.md): scene kit background,
+# midground anchors at reduced size, foreground figures/vehicles at
+# 1.2-1.4 scale standing ON (or a step in front of) the kit's ground line,
+# matted() where a background line would otherwise run tangent to them.
+def meadow_kite():
+    g = scenes.SCENE_GROUND
+    s, kx = 1.3, 205
+    flyer = {"hair": "tousled", "outfit": "tee"}        # pigtails would cover
+    hand = (kx + 55 * s, g - 186 * s)                   # the string hand (wave wrist)
+    # kite corner sits ON the kite's own string-stub direction (46,-40) so
+    # the long string and the stub read as one straight line
+    ux, uy = 46 / math.hypot(46, 40), -40 / math.hypot(46, 40)
+    corner = (hand[0] + ux * 480, hand[1] + uy * 480)
+    kw = 130
+    return (scenes.scene_meadow(variant=0, flowers=0, sky_fill=False,
+                                midground=False) +
+            cloud(380, 300, 22) +
+            tree_round(652, g, h=380) +          # midground anchor, top ~y575
+            matted(G(kx, g, kid_stand(flyer, "wave"), s)) +
+            matted(G(470, g + 26, dog_dig({"coat": "patch"}), 1.1)) +  # a step in front
+            grass_tuft(610, g + 24) +
+            LINE(hand[0], hand[1], corner[0], corner[1], 2.5) +
+            kite(corner[0] + kw / 2, corner[1], w=kw) +
+            sunflower(712, g, h=150) + tulip(768, g, h=104) +
+            grass_tuft(676, g - 2))
+
+
+def street_busstop():
+    road_y = scenes.SCENE_GROUND - 120                  # far edge of the road
+    near = road_y + scenes.ROAD_H                       # vehicles drive here
+    walk = 965                                          # near sidewalk
+    kids_x, sign_x = 575, 752
+    return (scenes.scene_street(variant=0, lampposts=False, midground=False) +
+            airplane(470, 360, w=230) +
+            G(98, near, lamppost(0, 0, h=250), 0.9) +              # midground
+            school_bus(300, near, w=320) +
+            LINE(50, walk, W - 50, walk, 4) +
+            # bus-stop sign on the sidewalk, the kids waiting beside it
+            LINE(sign_x, walk, sign_x, walk - 180, 5) +
+            C(sign_x, walk - 204, 26, 5, "white") + C(sign_x, walk - 204, 15, 3, "white") +
+            kids_holding_hands(T1, T2, kids_x, walk, s=1.2))
+
+
+def beach_day():
+    g = scenes.BEACH_GROUND
+    horizon = 722
+    far_sea = (LINE(50, horizon, W - 50, horizon, 3.5) +
+               sailboat(488, horizon, w=64) + sailboat(578, horizon, w=46) +
+               "".join(P(f"M {x - 16} {y} Q {x} {y - 9} {x + 16} {y}", 3)
+                       for x, y in ((452, 792), (598, 770), (740, 800), (150, 772))))
+    return (far_sea +                                                # drawn first
+            scenes.scene_beach(variant=0, midground=False) + cloud(440, 330, 24) +
+            lighthouse(132, g - 4, h=440) +          # midground: carries the top half
+            matted(G(300, g, kid_stand(T2, "up"), 1.36)) +
+            matted(castle_small(450, g + 4, w=150)) +
+            matted(ball(598, g + 50, 30)) +
+            star(168, g + 58, 24, 4, "white"))                        # starfish
+
+
+def space_landing():
+    g = scenes.SPACE_GROUND
+    s, kx = 1.25, 480
+    head = (kx, g - 188 * s)
+    return (scenes.scene_space(variant=0) +
+            G(606, 520, ufo(0, 0, w=190), 1.0) +                     # midground
+            matted(G(225, g, rocket(0, -105), 1.35)) +
+            # bubble helmet drawn FIRST in the group: hair and the waving
+            # hand overlap it, nothing is drawn over the face
+            matted(C(head[0], head[1], 37 * s * 1.45, 4) +
+                   G(kx, g, kid_stand(T4, "wave"), s)))
+
+
+def farm_day():
+    g = scenes.SCENE_GROUND
+    return (tree_round(232, g, h=400) +          # behind the kit's barn: midground
+            scenes.scene_farm(variant=0, pond_too=False, midground=False,
+                              fence=False) +
+            hot_air_balloon(470, 420, h=190) +
+            windmill(716, g, h=340) +                                # midground
+            pond(705, g + 4, w=180) + duck(700, g - 6, w=74) +
+            cow(470, g + 24, w=300) +          # crosses the lines behind it: no mat needed
+            matted(chicken(128, g + 24, w=118)))
 
 
 def pages():
-    G_ = 940
+    gr, fl = "ground", "float"
     return {
-        "01-animals": (
-            fish(140, 310, w=150) + turtle(340, 310, w=150) +
-            snail(520, 310, w=100) + rabbit(680, 310, w=130) +
-            duck(140, 490, w=120) + cow(370, 490, w=200) +
-            sheep(600, 490, w=150) + chicken(760, 490, w=95) +
-            owl(120, 670, w=100) + monkey(300, 670, w=150) +
-            frog(470, 670, w=130) + tulip(568, 670, h=95) +
-            sunflower(642, 670, h=130) + apple_tree(736, 670, h=160) +
-            potted_plant(106, 880, h=120) + cactus(180, 880, h=140) +
-            garden_strip(235, 415, 880)),
-        "02-vehicles": (
-            school_bus(190, G_, w=240) + dump_truck(480, G_, w=230) +
-            G(680, 260, helicopter(0, 0), 0.8) +
-            G(400, 250, hot_air_balloon(0, 0), 0.85) +
-            sailboat(680, 520, w=190) + rowboat(680, 660, w=160) +
-            canoe(680, 790, w=150) +
-            rail_track(60, 420, G_ + 20) + train_engine(180, G_ + 20, w=170) +
-            train_car(360, G_ + 20, w=140) +
-            train_car(505, G_ + 20, w=140, kind="passenger") +
-            train_car(650, G_ + 20, w=140, kind="caboose")),
-        "03-space": (
-            star_field(70, 180, W - 70, 700, n=14) +
-            moon(150, 300, r=55) + G(400, 320, ufo(0, 0, beam=True), 0.85) +
-            G(650, 300, satellite(0, 0), 0.7) +
-            telescope(140, 640, h=150) + shooting_star(430, 500, 1.0) +
-            planet_ringed(680, 560, r=60) +
-            G(350, G_, rocket(0, -105), 1.25)),
-        "04-games": (
-            G(178, 300, kite(0, 0, w=130), 1.1) +
-            scooter(125, G_, w=130) + tricycle(258, G_, w=130) +
-            seesaw(425, G_, w=190) + sandbox(595, G_, w=160) +
-            blocks(720, G_, s=0.8) + G(775, 815, dice(0, 0, s=38, rot=12), 1.0) +
-            drum(108, 700, w=105) + puzzle_piece(198, 660, s=64) +
-            ice_cream(260, 655, h=115)),
-        "05-places": (
-            sun(120, 140, r=40) + apple_tree(714, 660, h=200) +
-            barn(160, 660, w=220) + schoolhouse(415, 660, w=250) +
-            lighthouse(600, 660, h=280) + windmill(728, 660, h=230) +
-            fence_picket(60, 250, 880) + sandbox(400, 880, w=160) +
-            ice_cream(540, 830, h=115) + tricycle(680, 880, w=130)),
-        "06-people": (
-            G(120, 480, kid_run(T2), 1.0) +
-            G(390, G_, kid_jump(T1), 1.0) + G(540, G_, kid_point(T3), 1.0) +
-            G(700, G_, kid_carry(T2), 1.0) +
-            kids_holding_hands(T1, T2, 250, 700, s=0.85) +
-            G(520, 700, kid_wheelchair(T3), 0.9) +
-            G(680, 700, kid_toddler(T1), 1.0) +
-            kid_in_bed(T2, 72, floor=G_ + 20, w=230) +
-            G(400, 560, kid_stand({"hair": "curly", "outfit": "tee",
-                                   "freckles": True}, "wave",
-                                  accessories=("cap", "cape", "scarf")), 0.8)),
-        "07-scenes-meadow": scenes.scene_meadow() + G(
-            430, scenes.SCENE_GROUND, kid_stand(T1, "wave"), 1.0),
-        "08-scenes-street": scenes.scene_street() + G(
-            400, scenes.SCENE_GROUND - 120 + scenes.ROAD_H,
-            school_bus(0, 0, w=190), 0.9),
-        "09-scenes-beach": scenes.scene_beach() + G(
-            300, scenes.BEACH_GROUND, kid_stand(T2, "up"), 1.0),
-        "10-scenes-space": scenes.scene_space() + G(
-            300, scenes.SPACE_GROUND, rocket(0, -105), 1.1),
-        "11-scenes-farm": scenes.scene_farm() + G(
-            500, scenes.SCENE_GROUND, dog({"coat": "spots"}), 1.4),
-        "12-creativity": (
-            speech_bubble(190, 300, tail="down", lines=True) +
-            G(190, 440, kid_stand(T1, "wave"), 0.9) +
-            thought_bubble(590, 290) + G(590, 440, dog({"coat": "spots"}), 1.1) +
-            pattern_menu(90, 610) + design_template("tee", cx=590, ground_y=890)),
+        # three columns: at four, animals fit ~150px and legs/ears/horns drop
+        # under the 3x3mm colorable floor; plants get their own page (19)
+        "01-animals": grid([
+            (1, [(fish(0, 0), fl), (turtle(0, 0), gr), (snail(0, 0), gr)], "line"),
+            (1, [(rabbit(0, 0), gr), (duck(0, 0), "sit"), (cow(0, 0), gr)], "line"),
+            (1, [(sheep(0, 0), gr), (chicken(0, 0), gr), (owl(0, 0), gr)], "line"),
+            (1, [(monkey(0, 0, banana=True), gr), (frog(0, 0), gr),
+                 (bird_side(0, 0), gr)], "line"),
+        ]),
+        "02-vehicles": grid([
+            (1.2, [(hot_air_balloon(0, 0), fl), (helicopter(0, 0), fl)], None),
+            (1, [(sailboat(0, 0), "sit"), (rowboat(0, 0), "sit"),
+                 (canoe(0, 0), "sit")], None),
+            (1, [(school_bus(0, 0), gr), (dump_truck(0, 0), gr)],
+             lambda a, b, y: LINE(a, y, b, y, 4)),
+            (0.8, [(train_engine(0, 0), gr), (train_car(0, 0), gr),
+                   (train_car(0, 0, kind="passenger"), gr),
+                   (train_car(0, 0, kind="caboose"), gr)],
+             lambda a, b, y: rail_track(a, b, y)),
+        ], fill_w=0.92),
+        "03-space": grid([
+            (1, [(moon(0, 0), fl), (ufo(0, 0, beam=True), fl),
+                 (satellite(0, 0), fl)], None),
+            (1, [(planet_ringed(0, 0), fl), (shooting_star(0, 0, 1.6), fl),
+                 (star_field(0, 0, 200, 200, n=9), fl)], None),
+            (1.3, [(telescope(0, 0), gr), (rocket(0, -105), gr)],
+             lambda a, b, y: crater_ground(y, a, b)),
+        ]),
+        "04-games": grid([
+            (1.1, [(kite(0, 0), fl), (ice_cream(0, 0), fl), (puzzle_piece(0, 0), fl)], None),
+            (1, [(drum(0, 0), gr), (blocks(0, 0), gr), (dice(0, 0, rot=12), gr)], "line"),
+            (1, [(scooter(0, 0), gr), (tricycle(0, 0), gr)], "line"),
+            (1, [(seesaw(0, 0), gr), (sandbox(0, 0), gr)], "line"),
+        ]),
+        "05-places": grid([
+            (1, [(barn(0, 0), gr), (schoolhouse(0, 0), gr)], "line"),
+            (1, [(lighthouse(0, 0), gr), (windmill(0, 0), gr)], "line"),
+        ], fill_w=0.80, fill_h=0.84),
+        "06-people": grid([
+            (1, [(kid_run(T2), gr, P85), (kid_jump(T1), gr, P85),
+                 (kid_point(T3), gr, P85)], "line"),
+            (1, [(kid_carry(T4), gr, P85), (kid_wheelchair(T3), gr, P85),
+                 (kid_toddler(T1), gr, P85)], "line"),
+            (1, [(kids_holding_hands(T1, T2, 0, 0), gr, dict(P85, wt=1.25)),
+                 (kid_stand(T4, "wave", accessories=("cap", "cape", "scarf")), gr, P85),
+                 (kid_in_bed(T2, -100, floor=0, w=200), gr, {"scale": 1.0, "wt": 1.15})],
+             "line"),
+        ]),
+        "19-garden": grid([
+            (1, [(apple_tree(0, 0), gr), (tree_round(0, 0), gr),
+                 (tree_pine(0, 0), gr)], "line"),
+            (1, [(sunflower(0, 0), gr), (tulip(0, 0), gr),
+                 (potted_plant(0, 0), gr), (cactus(0, 0, pot=True), gr)], "line"),
+        ], fill_h=0.84),
+        "07-scenes-meadow": meadow_kite(),
+        "08-scenes-street": street_busstop(),
+        "09-scenes-beach": beach_day(),
+        "10-scenes-space": space_landing(),
+        "11-scenes-farm": farm_day(),
+        "12-creativity": creativity(),
     }
+
+
+CATALOG = ("01", "02", "03", "04", "05", "06", "12", "19")
 
 
 def main():
@@ -137,7 +290,8 @@ def main():
     for name in sorted(builders):
         kind, content = builders[name]
         svg = content if kind == "page" else spage(
-            name.split("-", 1)[1].replace("-", " ").title(), content)
+            name.split("-", 1)[1].replace("-", " ").title(), content,
+            layout="activity" if name[:2] in CATALOG else None)
         rep = validate_svg(svg)
         status = "OK " if rep["ok"] else "FAIL"
         print(f"{status} {name:22s} {rep['counts']}")

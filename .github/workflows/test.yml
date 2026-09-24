@@ -15,7 +15,7 @@ jobs:
       - name: Install system deps (ghostscript for PDF merge)
         run: sudo apt-get update && sudo apt-get install -y ghostscript libcairo2-dev
       - name: Install python deps
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt  # dev: build_font sync test
       - name: PII gate (no personal data in tracked files or image EXIF)
         run: python tools/pii_scan.py --gate
       - name: Fast tests (deterministic, no raster QA)
