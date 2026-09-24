@@ -31,7 +31,12 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `DOT`
 - `E`
 - `LINE`
-- `TXT`
+- `TXT` — Page text at (x, baseline y). Delegates to text_path() (glyph
+### page text engine
+
+- `text_width` — EXACT rendered width (px) of text_path(s, size): sum of the glyph
+- `text_path` — Text as filled Andika glyph paths, (x, y) = anchor point ON THE
+- `wrap_width` — Greedy word wrap on MEASURED glyph advances: every line's
 - `G`
 - `GM` — Mirror horizontally (flip left-right) WITHOUT turning upside-down.
 ### curve engine & line vocabulary
@@ -46,6 +51,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 ### motifs
 
 - `star`
+- `sky` — Tag EVERY shape in `fragment` data-sky="1" — sky decoration, excluded
 - `sparkle`
 - `heart`
 - `cloud`
@@ -81,7 +87,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `render_tiles` — Render full page + overlapping tiles (grid rows x cols) for VLM QA.
 ### room furniture, props & story helpers
 
-- `wrap_words`
+- `wrap_words` — Legacy CHARACTER-COUNT wrap (kept for callers that pass maxchars).
 - `spage` — Whole page: border, optional title, body, wrapped multi-line caption, page #.
 ### prop-characters
 
@@ -94,7 +100,7 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 ### furniture
 
 - `rrect`
-- `otext` — Hollow (outline) block letters for tracing.
+- `otext` — Hollow (outline) letters for tracing/coloring: white-filled Andika
 - `window`
 - `wall_picture` — Framed wall picture — a mid-band filler that is clearly wall-mounted.
 - `bookshelf` — Tall shelf unit — fills the vertical middle band on room pages.
@@ -211,10 +217,10 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 - `use_legacy_figures`
 ### colorable letters & words
 
-- `letter` — One glyph as an SVG path. (x, y_base) = LEFT edge ON THE BASELINE.
-- `word_width` — Exact rendered width of word() from glyph advances.
-- `word` — A run of glyphs centered on x_center, sitting on y_base.
-- `banner` — Ribbon sized EXACTLY for its text (glyph-metric width), centered by
+- `letter` — One HOLLOW glyph. (x, y_base) = LEFT edge of its advance box ON THE
+- `word_width` — Exact width of word(): glyph advances + the hollow dilation (D per
+- `word` — A run of hollow glyphs centered on x_center, sitting on y_base (the
+- `banner` — Ribbon sized EXACTLY for its text (glyph-metric width, hollow
 - `guideline`
 - `name_trace_page` — Handwriting-practice page: per-name ruled guidelines (top/mid/base),
 ### world & landscape systems
@@ -245,12 +251,12 @@ helpers. Signatures live in `lib/charlib.py` / `lib/scenes.py`.
 ### space pack
 
 - `star_field` — Deterministic star/sparkle scatter on a jittered grid — uniform
-- `moon` — Moon disc with asymmetric craters (unpaired heights).
+- `moon` — Moon disc with asymmetric craters (unpaired heights). Sky decoration
 - `crater_ground` — Moon/lunar surface: ground stroke + shallow crater rims (ground = y).
 - `ufo` — Flying saucer centred (cx, cy): dome + saucer + lights (+ alien).
 - `satellite` — Satellite: body + solar panel wings + dish, centred (cx, cy).
 - `telescope` — Tripod telescope aimed up-right, feet on ground_y: three legs splayed
-- `shooting_star` — Comet: star head + three swoosh trails up-left.
+- `shooting_star` — Comet: star head + three swoosh trails up-left. Sky decoration: head
 ### nature pack
 
 - `fish` — Side-view fish swimming right, centred (cx, cy) — no ground line.

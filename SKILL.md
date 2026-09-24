@@ -142,11 +142,11 @@ the bundled YuNet face model (Apache-2.0) never phones home.
 ### 4. Self-inspect + QA loop
 After building, run the DETERMINISTIC gate first: `python -m lib.validate
 pages/*.svg` (exit 1 on any HIGH finding). It checks, with exact arithmetic on
-the emitted SVG's embedded geometry: border clearance (>=12px), scene mass span
-(>=55% of page height from CONNECTED art, sky tokens excluded), mass
-distribution (MED when the middle third is hollow or only sky sits above the
-page midline — add a midground anchor reaching y~450-550), figure/face
-sizes, caption-band + title-zone intrusion, text width vs page, head-kill-radius
+the emitted SVG's embedded geometry: border clearance (>=12px), scene extent
+(HIGH when the non-sky scene spans < 330px or floats above y880 — sky tokens
+and lone thin strokes don't count), mass distribution (MED when the middle
+band y430-715 is hollow — add a midground anchor whose top reaches y~450-550;
+main figures ~300-380px tall), figure/face sizes, caption-band + title-zone intrusion, text width vs page, head-kill-radius
 prop clearance, hand/arm overlap, wheel ground tangency, near-parallel sliver
 gaps, knockout-mat halo swallowing, duplicate pages (`lib.validate.lint_book`).
 Fix every HIGH by moving/scaling per the message; MEDs need a look; LOWs are lint.

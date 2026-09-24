@@ -127,7 +127,9 @@ def test_landscape_pack():
             road(440, 790, G_ - 120) +
             forest_border(G_, n=3, x0=255, x1=425, h=115) +
             bridge(200, G_ - 170, w=260) + pond(690, G_ - 30))
-    _check("landscapes", spage("World", body))
+    # a bare background strip (no figures): helper smoke, not composition —
+    # scene extent/distribution are tests/test_validate.py's job
+    _check("landscapes", spage("World", body), require_span=False)
 
 
 def test_scene_kits():
@@ -136,8 +138,10 @@ def test_scene_kits():
             (scenes.scene_beach(), scenes.BEACH_GROUND),
             (scenes.scene_space(), scenes.SPACE_GROUND),
             (scenes.scene_farm(), scenes.SCENE_GROUND)]
+    # bare kits are BACKGROUNDS (they need a midground anchor + figures to
+    # compose a page), so only collision/border/band checks apply here
     for i, (body, _ground) in enumerate(kits):
-        _check(f"scene{i}", spage("Kit", body))
+        _check(f"scene{i}", spage("Kit", body), require_span=False)
     # fence=False drops only the ranch fence (posts between a foreground
     # animal's legs read as extra legs)
     assert (scenes.scene_farm().count("<line") >
@@ -146,7 +150,7 @@ def test_scene_kits():
     from charlib import kid_stand
     body, ground = kits[0]
     body += G(430, ground, kid_stand({"outfit": "tee"}, "wave"), 1.0)
-    _check("scene+figure", spage("Meadow", body))
+    _check("scene+figure", spage("Meadow", body), require_span=False)
 
 
 def test_showcase_pages_all_clean():

@@ -7,19 +7,22 @@ non-Claude models (GPT-5.6 variants via codex CLI). Findings below are observed,
 ## Universal finding (every tier, every first draft)
 **All models bottom-cram their first draft**: figures small on the ground line, 60% dead
 sky. Fix is procedural, not talent — BEFORE drawing, write a layout plan: ground line
-~905; at least one background element (tree/house/furniture) reaching up into y 300-600;
-sky fillers distributed; main figures ≥180px tall. Then verify NUMERICALLY after render:
-- scene bounding box spans ≥55% of page height (y from ≤450 to ≥900)
+~905; at least one midground element (tree/house/furniture) whose top reaches y≈450-550;
+sky fillers distributed; main figures ~300-380px tall (kid_stand 1.2-1.5). Then verify
+NUMERICALLY after render (`python -m lib.validate` does all of these):
+- scene (non-sky ink) spans ≥330px and reaches down to y≥900 (`scene_span`)
+- middle band y430-715 holds ≥40% of the heavier outer band's ink (`mass_distribution`)
 - every element ≥12px inside the border rect (compute extremes, don't eyeball)
 - main figures ≥180px tall; faces ≥ r28 (trait features crowd below that)
 
 **Do not game the span check.** In the 6-model re-run, models at EVERY tier — including
 the strongest — satisfied the bbox arithmetic with a corner sun and a high cloud while
 the actual scene sat in the bottom third (one model's own report admitted doing this
-knowingly). The check passes only when CONNECTED scene mass (structures/trees/figures)
-reaches y≈450; isolated sky tokens are excluded from the span by definition. Coverage
-numbers you report must be computed from rendered bounding boxes of that connected
-cluster — never estimated, and never quoted from your plan instead of the render.
+knowingly). That hole is closed: every part of a sky motif is tagged `data-sky` and
+excluded, rows holding a lone thin stroke don't extend the span, and a hollow middle
+band is flagged even when the span passes. Numbers you report must come from the
+validator's report (`span`, `mass`) on the render — never estimated, and never quoted
+from your plan.
 
 ## Tier profiles & operating modes
 

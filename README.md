@@ -29,7 +29,7 @@ built end-to-end by the skill.*
   (by subagents when available) for collisions, floaters, and ambiguous shapes.
 - **Deterministic validation gate**: `python -m lib.validate pages/*.svg` turns every
   numeric layout rule into exact arithmetic on the emitted SVG (border clearance,
-  connected-mass span, head clearance, mat-swallowing, ground tangency, text fit...)
+  scene extent + mass distribution, head clearance, mat-swallowing, ground tangency, text fit...)
   and fails on HIGH findings — guarded by a pytest suite.
 - **Smooth organic figures + line vocabulary**: a Catmull-Rom→Bézier engine
   (`smooth_path`, `limb`) rebuilds kid arms and animal silhouettes as tapered
@@ -110,8 +110,8 @@ non-negotiable, and skipping them is why hand-rolled attempts come out rough:
 2. **White fills, back-to-front.** Every solid shape is drawn with `fill="white"` over
    what's behind it, in depth order, and figures get `matted()` halos. Outline-only
    drawing produces transparent shapes whose strokes all cross each other.
-3. **Verify numerically** (see `reference/drawing-guide.md`): scene bbox ≥55% of page
-   height, nothing within 12px of the border, figures ≥180px. Every model bottom-crams
+3. **Verify numerically** (see `reference/drawing-guide.md`): scene ≥330px tall with a
+   filled middle band, nothing within 12px of the border, figures ≥180px. Every model bottom-crams
    first drafts; arithmetic catches it when eyeballing doesn't.
 
 If your environment can't run Python, the honest move is to say so rather than
