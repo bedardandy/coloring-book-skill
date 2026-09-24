@@ -3710,40 +3710,71 @@ def duck(cx, water_y, w=140, sw=4.5):
 
 
 def cow(cx, ground_y, w=240, sw=5):
-    """Side-view cow facing right, feet on ground_y."""
+    """Side-view cow walking right, head turned to the viewer; feet on
+    ground_y. Kids'-book read: big front-facing head (~30% of body length)
+    with a wide oval muzzle + nostrils, two ears, short curved horns, three
+    large patches, four hoofed legs, tufted tail and an udder hint."""
     x0, g = cx - w / 2, ground_y
+    dsw = max(2.5, sw - 2)                                  # detail stroke
+    X = lambda f: x0 + f * w                                # noqa: E731
+    Y = lambda f: g - f * w                                 # noqa: E731
     out = []
-    # tail (behind body)
-    out.append(P(f"M {_f(x0 + 0.06 * w)} {_f(g - 0.52 * w)} "
-                 f"Q {_f(x0 - 0.01 * w)} {_f(g - 0.36 * w)} {_f(x0 + 0.03 * w)} {_f(g - 0.20 * w)}", 3.5))
-    # legs
-    for lx in (0.18, 0.30, 0.60, 0.72):
-        px = x0 + lx * w
-        out.append(P(f"M {_f(px)} {_f(g - 0.26 * w)} L {_f(px)} {_f(g)}", sw - 0.5))
-        out.append(P(f"M {_f(px - 0.022 * w)} {_f(g)} L {_f(px + 0.03 * w)} {_f(g)}", sw - 1.5))
-    # body
-    out.append(smooth_path([(x0 + 0.08 * w, g - 0.44 * w), (x0 + 0.16 * w, g - 0.56 * w),
-                            (x0 + 0.42 * w, g - 0.58 * w), (x0 + 0.66 * w, g - 0.55 * w),
-                            (x0 + 0.76 * w, g - 0.42 * w), (x0 + 0.72 * w, g - 0.26 * w),
-                            (x0 + 0.40 * w, g - 0.24 * w), (x0 + 0.14 * w, g - 0.28 * w)],
-                           sw, closed=True, fill="white"))
-    # head (drawn after body): muzzle + horns + ears
-    hx, hy = x0 + 0.84 * w, g - 0.56 * w
-    out.append(P(f"M {_f(x0 + 0.72 * w)} {_f(g - 0.50 * w)} "
-                 f"Q {_f(x0 + 0.78 * w)} {_f(g - 0.62 * w)} {_f(x0 + 0.90 * w)} {_f(g - 0.60 * w)} "
-                 f"L {_f(x0 + 0.94 * w)} {_f(g - 0.46 * w)} "
-                 f"Q {_f(x0 + 0.84 * w)} {_f(g - 0.42 * w)} {_f(x0 + 0.74 * w)} {_f(g - 0.44 * w)} Z",
-                 sw, "white"))
-    out.append(E(x0 + 0.90 * w, g - 0.47 * w, 0.055 * w, 0.04 * w, 3, "white"))   # muzzle
-    out.append(DOT(x0 + 0.885 * w, g - 0.475 * w, 2.2))                            # nostril
-    out.append(DOT(x0 + 0.815 * w, g - 0.545 * w, 2.6))                            # eye
-    out.append(P(f"M {_f(x0 + 0.78 * w)} {_f(g - 0.615 * w)} L {_f(x0 + 0.755 * w)} {_f(g - 0.665 * w)} "
-                 f"L {_f(x0 + 0.81 * w)} {_f(g - 0.635 * w)} Z", 3, "white"))      # horn
-    out.append(E(x0 + 0.755 * w, g - 0.565 * w, 0.035 * w, 0.02 * w, 3, "white"))  # ear
-    # spots (asymmetric)
-    out.append(E(x0 + 0.28 * w, g - 0.42 * w, 0.07 * w, 0.05 * w, 3))
-    out.append(E(x0 + 0.50 * w, g - 0.34 * w, 0.055 * w, 0.04 * w, 3))
-    out.append(E(x0 + 0.60 * w, g - 0.50 * w, 0.045 * w, 0.035 * w, 3))
+    # tail + tuft (body caps the root)
+    out.append(P(f"M {_f(X(0.13))} {_f(Y(0.47))} Q {_f(X(0.03))} {_f(Y(0.45))} "
+                 f"{_f(X(0.05))} {_f(Y(0.26))}", sw - 1))
+    out.append(smooth_path([(X(0.05), Y(0.275)), (X(0.078), Y(0.225)),
+                            (X(0.06), Y(0.175)), (X(0.033), Y(0.19)),
+                            (X(0.022), Y(0.235))], dsw + 0.5, closed=True, fill="white"))
+    # legs: sturdy posts with a hoof band (body caps the tops)
+    lw = 0.085 * w
+    for lx in (0.20, 0.34, 0.56, 0.70):
+        out.append(rrect(X(lx) - lw / 2, Y(0.30), lw, 0.30 * w, lw * 0.3, sw - 0.5, "white"))
+        out.append(LINE(X(lx) - lw / 2, Y(0.055), X(lx) + lw / 2, Y(0.055), dsw))
+    # udder hint between the leg pairs (behind the belly)
+    out.append(P(f"M {_f(X(0.395))} {_f(Y(0.235))} Q {_f(X(0.40))} {_f(Y(0.15))} "
+                 f"{_f(X(0.45))} {_f(Y(0.15))} Q {_f(X(0.50))} {_f(Y(0.15))} "
+                 f"{_f(X(0.505))} {_f(Y(0.235))} Z", sw - 1, "white"))
+    for tx in (0.43, 0.47):
+        out.append(LINE(X(tx), Y(0.155), X(tx), Y(0.12), dsw))
+    # body: long rounded barrel
+    out.append(smooth_path([(X(0.12), Y(0.27)), (X(0.095), Y(0.40)), (X(0.15), Y(0.505)),
+                            (X(0.40), Y(0.525)), (X(0.64), Y(0.51)), (X(0.77), Y(0.43)),
+                            (X(0.77), Y(0.31)), (X(0.70), Y(0.235)), (X(0.44), Y(0.22)),
+                            (X(0.20), Y(0.23))], sw, closed=True, fill="white"))
+    # three big patches — different sizes AND heights (no pairs)
+    for pcx, pcy, rx, ry, rot in ((0.255, 0.40, 0.095, 0.075, 0.4),
+                                  (0.475, 0.31, 0.07, 0.05, 1.3),
+                                  (0.56, 0.445, 0.055, 0.04, 2.2)):
+        pts = []
+        for k in range(12):                    # organic blob: 2 low harmonics
+            a = k * math.pi / 6
+            wob = 1 + 0.13 * math.sin(2 * a + rot) + 0.09 * math.sin(3 * a + 2 * rot)
+            pts.append((X(pcx) + math.cos(a) * rx * w * wob,
+                        Y(pcy) + math.sin(a) * ry * w * wob))
+        out.append(smooth_path(pts, dsw, closed=True, fill="white"))
+    # head, turned to the viewer: horns + ears behind, then head, muzzle
+    hx, hy = X(0.80), Y(0.56)
+    for sx in (-1, 1):
+        out.append(smooth_path([(hx + sx * 0.045 * w, hy - 0.085 * w),
+                                (hx + sx * 0.10 * w, hy - 0.13 * w),
+                                (hx + sx * 0.105 * w, hy - 0.185 * w),
+                                (hx + sx * 0.125 * w, hy - 0.13 * w),
+                                (hx + sx * 0.085 * w, hy - 0.065 * w)],
+                               dsw + 0.5, closed=True, fill="white"))       # horn
+        out.append(smooth_path([(hx + sx * 0.085 * w, hy - 0.07 * w),
+                                (hx + sx * 0.16 * w, hy - 0.075 * w),
+                                (hx + sx * 0.205 * w, hy - 0.035 * w),
+                                (hx + sx * 0.15 * w, hy - 0.01 * w),
+                                (hx + sx * 0.085 * w, hy - 0.02 * w)],
+                               dsw + 0.5, closed=True, fill="white"))       # ear
+    out.append(E(hx, hy, 0.10 * w, 0.12 * w, sw, "white"))
+    out.append(E(hx, hy + 0.09 * w, 0.125 * w, 0.07 * w, sw - 0.5, "white"))  # muzzle
+    for sx in (-1, 1):
+        out.append(E(hx + sx * 0.048 * w, hy + 0.085 * w, max(2.6, 0.017 * w),
+                     max(3.4, 0.022 * w), dsw - 0.5, "black"))              # nostril
+        out.append(DOT(hx + sx * 0.045 * w, hy - 0.025 * w, max(2.8, 0.016 * w)))
+    out.append(P(f"M {_f(hx - 0.035 * w)} {_f(hy + 0.128 * w)} Q {_f(hx)} {_f(hy + 0.145 * w)} "
+                 f"{_f(hx + 0.035 * w)} {_f(hy + 0.128 * w)}", dsw))       # smile
     return "".join(out)
 
 
@@ -3848,35 +3879,66 @@ def owl(cx, ground_y, w=120, sw=4.5):
     return "".join(out)
 
 
-def monkey(cx, ground_y, w=180, sw=4.5):
-    """Sitting monkey facing right with curled tail, feet on ground_y."""
-    x0, g = cx - w / 2, ground_y
+def monkey(cx, ground_y, w=180, sw=4.5, banana=False):
+    """Sitting monkey facing the viewer, bottom on ground_y: round head with
+    a peanut-shaped face disc, ear circles either side, small pear body,
+    bent arms, long tail curling up on the left. banana=True raises the
+    right hand holding a banana (kept outside the 1.3r face zone)."""
+    g = ground_y
+    dsw = max(2.5, sw - 1.5)
     out = []
-    # tail: long curl behind
-    out.append(smooth_path([(x0 + 0.16 * w, g - 0.30 * w), (x0 - 0.02 * w, g - 0.34 * w),
-                            (x0 - 0.10 * w, g - 0.52 * w), (x0 + 0.02 * w, g - 0.62 * w),
-                            (x0 + 0.12 * w, g - 0.56 * w), (x0 + 0.06 * w, g - 0.48 * w)], 3.5))
-    # body: hunched sitting
-    out.append(smooth_path([(x0 + 0.20 * w, g), (x0 + 0.14 * w, g - 0.24 * w),
-                            (x0 + 0.26 * w, g - 0.44 * w), (x0 + 0.48 * w, g - 0.50 * w),
-                            (x0 + 0.66 * w, g - 0.42 * w), (x0 + 0.70 * w, g - 0.24 * w),
-                            (x0 + 0.62 * w, g)],
+    hx, hy, R = cx, g - 0.64 * w, 0.23 * w
+    # tail: long sweep out to the left, rising to a curl beside the shoulder
+    # (behind everything; curl kept clear of the elbow and the ear)
+    out.append(smooth_path([(cx - 0.10 * w, g - 0.05 * w), (cx - 0.30 * w, g - 0.04 * w),
+                            (cx - 0.44 * w, g - 0.12 * w), (cx - 0.50 * w, g - 0.28 * w),
+                            (cx - 0.47 * w, g - 0.43 * w), (cx - 0.39 * w, g - 0.49 * w),
+                            (cx - 0.33 * w, g - 0.44 * w), (cx - 0.355 * w, g - 0.375 * w),
+                            (cx - 0.415 * w, g - 0.385 * w)], sw))
+    # feet, body, belly
+    for sx in (-1, 1):
+        out.append(E(cx + sx * 0.13 * w, g - 0.04 * w, 0.085 * w, 0.04 * w, sw - 0.5, "white"))
+    out.append(smooth_path([(cx, g - 0.02 * w), (cx - 0.15 * w, g - 0.05 * w),
+                            (cx - 0.19 * w, g - 0.20 * w), (cx - 0.13 * w, g - 0.40 * w),
+                            (cx, g - 0.45 * w), (cx + 0.13 * w, g - 0.40 * w),
+                            (cx + 0.19 * w, g - 0.20 * w), (cx + 0.15 * w, g - 0.05 * w)],
                            sw, closed=True, fill="white"))
-    # arm + legs
-    out.append(limb((x0 + 0.56 * w, g - 0.40 * w), (x0 + 0.66 * w, g - 0.22 * w),
-                    (x0 + 0.72 * w, g - 0.06 * w), w0=5, w1=3.5, sw=sw - 0.5, hand_r=5))
-    out.append(P(f"M {_f(x0 + 0.30 * w)} {_f(g)} L {_f(x0 + 0.30 * w)} {_f(g - 0.14 * w)}", sw - 0.5))
-    out.append(P(f"M {_f(x0 + 0.26 * w)} {_f(g)} L {_f(x0 + 0.36 * w)} {_f(g)}", sw - 1.5))
-    # head with face disc + ears
-    hx, hy = x0 + 0.62 * w, g - 0.62 * w
-    out.append(C(hx, hy, 0.155 * w, sw, "white"))
-    out.append(E(hx - 0.155 * w, hy - 0.02 * w, 0.05 * w, 0.06 * w, 3.5, "white"))
-    out.append(E(hx + 0.155 * w, hy - 0.02 * w, 0.05 * w, 0.06 * w, 3.5, "white"))
-    out.append(E(hx + 0.02 * w, hy + 0.03 * w, 0.085 * w, 0.07 * w, 2.5))            # muzzle disc
-    out.append(DOT(hx - 0.055 * w, hy - 0.03 * w, 2.6))
-    out.append(DOT(hx + 0.085 * w, hy - 0.03 * w, 2.6))
-    out.append(P(f"M {_f(hx + 0.005 * w)} {_f(hy + 0.055 * w)} "
-                 f"Q {_f(hx + 0.035 * w)} {_f(hy + 0.075 * w)} {_f(hx + 0.065 * w)} {_f(hy + 0.05 * w)}", 2.5))
+    out.append(E(cx, g - 0.19 * w, 0.095 * w, 0.115 * w, dsw, "white"))
+    # arms (bent, elbows out); hands overlap the wrist ends
+    out.append(limb((cx - 0.12 * w, g - 0.36 * w), (cx - 0.27 * w, g - 0.25 * w),
+                    (cx - 0.20 * w, g - 0.10 * w), w0=0.045 * w, w1=0.03 * w, sw=sw - 0.5,
+                    hand_r=0.042 * w))
+    if banana:
+        bx, by = cx + 0.36 * w, g - 0.40 * w           # right hand, raised
+        out.append(limb((cx + 0.12 * w, g - 0.36 * w), (cx + 0.29 * w, g - 0.26 * w),
+                        (bx, by), w0=0.045 * w, w1=0.03 * w, sw=sw - 0.5))
+        # banana: curved tapered tube out of the fist, stem at the tip
+        tip = (bx + 0.075 * w, by - 0.20 * w)
+        out.append(limb((bx - 0.005 * w, by + 0.01 * w), (bx + 0.085 * w, by - 0.075 * w),
+                        tip, w0=0.042 * w, w1=0.022 * w, sw=sw - 0.5))
+        out.append(LINE(tip[0], tip[1] - 0.01 * w, tip[0] - 0.012 * w, tip[1] - 0.045 * w,
+                        sw - 0.5))
+        out.append(C(bx, by, 0.042 * w, max(3.5, sw - 1), "white", hand="1"))
+    else:
+        out.append(limb((cx + 0.12 * w, g - 0.36 * w), (cx + 0.27 * w, g - 0.25 * w),
+                        (cx + 0.20 * w, g - 0.10 * w), w0=0.045 * w, w1=0.03 * w,
+                        sw=sw - 0.5, hand_r=0.042 * w))
+    # ears (outer + inner, head caps the inside), head, face disc
+    for sx in (-1, 1):
+        out.append(C(hx + sx * 0.235 * w, hy + 0.01 * w, 0.085 * w, sw, "white"))
+        out.append(C(hx + sx * 0.25 * w, hy + 0.01 * w, 0.042 * w, dsw, "white"))
+    out.append(C(hx, hy, R, sw, "white"))
+    out.append(smooth_path([(hx, hy - 0.075 * w), (hx + 0.075 * w, hy - 0.13 * w),
+                            (hx + 0.15 * w, hy - 0.06 * w), (hx + 0.155 * w, hy + 0.05 * w),
+                            (hx + 0.10 * w, hy + 0.15 * w), (hx, hy + 0.175 * w),
+                            (hx - 0.10 * w, hy + 0.15 * w), (hx - 0.155 * w, hy + 0.05 * w),
+                            (hx - 0.15 * w, hy - 0.06 * w), (hx - 0.075 * w, hy - 0.13 * w)],
+                           dsw, closed=True, fill="white"))
+    for sx in (-1, 1):
+        out.append(DOT(hx + sx * 0.068 * w, hy - 0.045 * w, max(3.0, 0.02 * w)))
+        out.append(DOT(hx + sx * 0.022 * w, hy + 0.045 * w, max(1.8, 0.01 * w)))
+    out.append(P(f"M {_f(hx - 0.055 * w)} {_f(hy + 0.085 * w)} Q {_f(hx)} {_f(hy + 0.15 * w)} "
+                 f"{_f(hx + 0.055 * w)} {_f(hy + 0.085 * w)}", dsw))
     return "".join(out)
 
 
@@ -3983,25 +4045,78 @@ def potted_plant(cx, ground_y, h=150, sw=4):
     return "".join(out)
 
 
-def cactus(cx, ground_y, h=180, sw=4.5):
-    """Saguaro: trunk + two arms + spine ticks + bloom."""
-    tw = 0.20 * h
-    out = [rrect(cx - tw / 2, ground_y - h, tw, h, tw / 2, sw, "white")]
-    for sx, ah in ((-1, 0.52), (1, 0.36)):
-        aw = tw * 0.62
-        ay = ground_y - h * ah
-        out.append(P(f"M {_f(cx + sx * (tw / 2 - 2))} {_f(ay + aw * 0.9)} "
-                     f"L {_f(cx + sx * (tw / 2 + aw * 0.9))} {_f(ay + aw * 0.9)} "
-                     f"Q {_f(cx + sx * (tw / 2 + aw * 1.5))} {_f(ay + aw * 0.9)} "
-                     f"{_f(cx + sx * (tw / 2 + aw * 1.5))} {_f(ay + aw * 0.3)} "
-                     f"L {_f(cx + sx * (tw / 2 + aw * 0.6))} {_f(ay + aw * 0.3)} "
-                     f"L {_f(cx + sx * (tw / 2 + aw * 0.6))} {_f(ay + aw * 0.9 - 4)} "
-                     f"L {_f(cx + sx * tw / 2)} {_f(ay + aw * 0.9 - 4)} Z", sw - 0.5, "white"))
-    for i in range(6):                                                    # spines
-        px = cx - tw * 0.3 + (i % 3) * tw * 0.3
-        py = ground_y - h * (0.25 + 0.18 * (i // 3))
-        out.append(LINE(px, py, px, py - 7, 2))
-    out.append(C(cx, ground_y - h - 6, 6, 3, "white"))
+def cactus(cx, ground_y, h=180, sw=4.5, pot=False):
+    """Saguaro cactus, base on ground_y: tall round-topped trunk, one arm each
+    side at DIFFERENT heights curving up, rib lines, sparse spine ticks on
+    the silhouette and a small bloom. pot=True stands it in a clay pot
+    (total height stays h)."""
+    k = 0.5523                                  # cubic quarter-circle factor
+    dsw = max(2.5, sw - 1.5)
+    g = ground_y
+    out = []
+    if pot:
+        ph = 0.26 * h
+        base = g - 0.20 * h                     # plant base hides in the pot
+        h = 0.80 * h
+    else:
+        base = g
+    tw = 0.28 * h
+    T = tw / 2
+    top = base - h
+
+    def arm(sx, ya, reach, rise, aw):
+        """L-shaped arm tube leaving the trunk at centre-height ya."""
+        rc = aw * 0.75                          # elbow centreline radius
+        ex = cx + sx * (T + reach)
+        ecx, ecy = ex - sx * rc, ya - rc        # elbow arc centre
+        ro, ri = rc + aw / 2, rc - aw / 2
+        ytip = ya - rise
+        X = lambda v: _f(v)                     # noqa: E731
+        d = (f"M {X(cx)} {X(ya + aw / 2)} L {X(ecx)} {X(ya + aw / 2)} "
+             f"C {X(ecx + sx * ro * k)} {X(ya + aw / 2)} {X(ex + sx * aw / 2)} {X(ecy + ro * k)} "
+             f"{X(ex + sx * aw / 2)} {X(ecy)} "
+             f"L {X(ex + sx * aw / 2)} {X(ytip)} "
+             f"C {X(ex + sx * aw / 2)} {X(ytip - aw / 2 * k * 1.2)} {X(ex + sx * aw / 2 * k)} {X(ytip - aw / 2)} "
+             f"{X(ex)} {X(ytip - aw / 2)} "
+             f"C {X(ex - sx * aw / 2 * k)} {X(ytip - aw / 2)} {X(ex - sx * aw / 2)} {X(ytip - aw / 2 * k * 1.2)} "
+             f"{X(ex - sx * aw / 2)} {X(ytip)} "
+             f"L {X(ex - sx * aw / 2)} {X(ecy)} "
+             f"C {X(ex - sx * aw / 2)} {X(ecy + ri * k)} {X(ecx + sx * ri * k)} {X(ya - aw / 2)} "
+             f"{X(ecx)} {X(ya - aw / 2)} L {X(cx)} {X(ya - aw / 2)} Z")
+        out.append(P(d, sw, "white"))
+        out.append(LINE(ex, ecy - 0.02 * h, ex, ytip - 0.02 * h, dsw - 0.5))  # arm rib
+        return ex, ytip - aw / 2
+
+    aw = 0.17 * h
+    tipL = arm(-1, base - 0.42 * h, 0.13 * h, 0.22 * h, aw)   # lower arm, left
+    tipR = arm(1, base - 0.60 * h, 0.12 * h, 0.20 * h, aw)    # higher arm, right
+    # trunk: straight sides, domed top (drawn over the arm roots)
+    out.append(P(f"M {_f(cx - T)} {_f(base)} L {_f(cx - T)} {_f(top + T)} "
+                 f"C {_f(cx - T)} {_f(top + T - T * k)} {_f(cx - T * k)} {_f(top)} {_f(cx)} {_f(top)} "
+                 f"C {_f(cx + T * k)} {_f(top)} {_f(cx + T)} {_f(top + T - T * k)} {_f(cx + T)} {_f(top + T)} "
+                 f"L {_f(cx + T)} {_f(base)} Z", sw, "white"))
+    for rx in (-0.40, 0.40):                    # two ribs, bowed to the dome
+        out.append(P(f"M {_f(cx + rx * T)} {_f(base - 0.05 * h)} "
+                     f"L {_f(cx + rx * T)} {_f(top + T * 1.1)} "
+                     f"Q {_f(cx + rx * T)} {_f(top + T * 0.45)} {_f(cx + rx * T * 0.55)} {_f(top + T * 0.30)}",
+                     dsw - 0.5))
+    # sparse spine ticks OUTSIDE the silhouette, staggered heights
+    for sx, fy in ((-1, 0.14), (1, 0.25), (-1, 0.66), (1, 0.84), (-1, 0.90)):
+        yy = base - fy * h
+        out.append(LINE(cx + sx * T, yy, cx + sx * (T + 0.05 * h), yy - 0.025 * h, 2.2))
+    for (tx, ty), sx in ((tipL, -1), (tipR, 1)):
+        out.append(LINE(tx + sx * aw / 2, ty + 0.12 * h, tx + sx * (aw / 2 + 0.045 * h),
+                        ty + 0.10 * h, 2.2))
+    # bloom on the dome
+    bs = max(1.25, h / 170)                     # petals stay >= 3mm regions
+    out.append(flower(cx + 0.2 * T, top - 3 * bs, s=bs, sw=dsw - 0.5))
+    if pot:
+        pw = 0.62 * (h / 0.80) * 0.62
+        rim_h = 0.07 * (h / 0.80)
+        out.append(P(f"M {_f(cx - pw * 0.44)} {_f(g - ph + rim_h)} L {_f(cx - pw * 0.34)} {_f(g)} "
+                     f"L {_f(cx + pw * 0.34)} {_f(g)} L {_f(cx + pw * 0.44)} {_f(g - ph + rim_h)} Z",
+                     sw, "white"))
+        out.append(rrect(cx - pw / 2, g - ph, pw, rim_h, 4, sw, "white"))
     return "".join(out)
 
 
