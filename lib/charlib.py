@@ -4574,7 +4574,7 @@ def kid_wheelchair(t, outfit=None):
     outfit = outfit or t.get("outfit", "tee")
     out = []
     wx, wy, wr = -20, -50, 50               # rear wheel (tangent to y=0)
-    # ---- chair behind the child: backrest + handle, seat, frame, caster
+    # chair behind the child: backrest + handle, seat, frame, caster
     out.append(LINE(-36, -64, -38, -152, 5))                  # backrest post
     out.append(LINE(-38, -152, -60, -156, 5))                 # push handle
     out.append(rrect(-48, -74, 90, 10, 4, 4.5, "white"))      # seat
@@ -4583,7 +4583,7 @@ def kid_wheelchair(t, outfit=None):
     out.append(C(40, -13, 13, 4.5, "white", ground=_f(0)))    # front caster
     out.append(C(40, -13, 3.5, 2.5, "white"))
     out.append(rrect(38, -42, 38, 8, 3, 4, "white"))          # footplate
-    # ---- child: legs first (thigh along the seat, shin down to the plate)
+    # child: legs first (thigh along the seat, shin down to the plate)
     out.append(limb((-8, -80), (44, -80), (52, -46), w0=8, w1=5.5, sw=5))
     out.append(P("M 50 -44 Q 50 -40 56 -40 L 70 -40", 4.5))   # shoe on plate
     if outfit == "dress":
@@ -4601,7 +4601,7 @@ def kid_wheelchair(t, outfit=None):
         sh = (-18, -142), (18, -142)
     # far arm: hand resting on the lap
     out.append(_arm(sh[1], (34, -88), bulge=8, lift=4))
-    # ---- near rear wheel in FRONT of the hip: tyre, push rim, spokes, hub
+    # near rear wheel in FRONT of the hip: tyre, push rim, spokes, hub
     out.append(C(wx, wy, wr, 5, "white", ground=_f(0)))
     out.append(C(wx, wy, wr - 13, 3.5))
     for i in range(6):

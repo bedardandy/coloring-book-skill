@@ -65,7 +65,16 @@ def parse_module(path):
         if m and not m.group(1).startswith("_"):
             name = m.group(1)
             doc = ""
-            j = i + 1
+            j = i
+            # multi-line signatures: the docstring follows the line that
+            # closes the def (paren balance back to zero, ends with ':')
+            depth = 0
+            while j < len(lines):
+                depth += lines[j].count("(") - lines[j].count(")")
+                if depth <= 0 and lines[j].rstrip().endswith(":"):
+                    break
+                j += 1
+            j += 1
             if j < len(lines) and lines[j].strip().startswith('"""'):
                 doc = lines[j].strip().strip('"')
                 if len(lines[j].strip()) == 3:  # multiline docstring
