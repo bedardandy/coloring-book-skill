@@ -221,3 +221,18 @@ def test_bubbles_speaker_top_tail_ends_above_the_head():
     assert fragment_bbox(tb, stroke=False)[3] <= 480.5   # last puff ends 20px above
     # legacy positional call unchanged
     assert speech_bubble(200, 300).startswith('<rect x="95.0" y="250.0"')
+
+
+def test_finish_page_object_straddles_axis_and_fills_width():
+    import re
+    from charlib import finish_page, fragment_bbox
+    for kind in ("house", "rocket", "butterfly", "face"):
+        svg = finish_page(kind)
+        g = re.search(r'<g transform="translate\(([0-9.]+),([0-9.]+)\)[^"]*">', svg)
+        ax = float(g.group(1))
+        # the solid copy (first placed group) must straddle the mirror axis
+        # so the dashed right-half ghost actually has something to show
+        body = svg[g.start():svg.index("</g>", g.start()) + 4]
+        x0, y0, x1, y1 = fragment_bbox(body)
+        assert x0 < ax - 150 and x1 > ax + 150, (kind, x0, x1, ax)
+        assert x1 - x0 >= 0.5 * W and y0 >= 150 and y1 <= 1000, kind

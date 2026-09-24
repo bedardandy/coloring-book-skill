@@ -4759,6 +4759,18 @@ _SYMMETRY_MOTIFS = {
 }
 
 
+def _fit_mirror_motif(make, size, band_top=170, band_bot=985):
+    """Build a motif (drawn around local x=0, the mirror axis) at the geometry
+    scale k where it spans `size` of the page width (height-capped to the
+    drawable band); return (fragment, centre-y offset for the band)."""
+    bb = fragment_bbox(make(1.0))
+    half = max(-bb[0], bb[2])                      # extent from the axis
+    k = min(size * W / (2 * half), (band_bot - band_top - 60) / (bb[3] - bb[1]))
+    local = make(k)
+    bb = fragment_bbox(local)
+    return local, bb, (band_top + band_bot) / 2 - (bb[1] + bb[3]) / 2
+
+
 def symmetry_page(motif="butterfly", title="Finish the Other Half!",
                   num=None, caption=None, axis_x=None, size=0.60):
     """Creativity page: LEFT half drawn solid, right half shown as a dotted
@@ -4768,13 +4780,7 @@ def symmetry_page(motif="butterfly", title="Finish the Other Half!",
     full drawable height. Uses per-element clipPath (cairosvg-safe)."""
     ax = axis_x or W / 2
     band_top, band_bot = 170, 985
-    make = _SYMMETRY_MOTIFS[motif]
-    bb = fragment_bbox(make(1.0))
-    half = max(-bb[0], bb[2])                      # symmetric about x=0
-    k = min(size * W / (2 * half), (band_bot - band_top - 60) / (bb[3] - bb[1]))
-    local = make(k)
-    bb = fragment_bbox(local)
-    cy = (band_top + band_bot) / 2 - (bb[1] + bb[3]) / 2
+    local, _bb, cy = _fit_mirror_motif(_SYMMETRY_MOTIFS[motif], size, band_top, band_bot)
     frag = G(ax, cy, local)
     defs = '<defs>' + _CLIP_L.format(i="sym") + _CLIP_R.format(i="sym") + '</defs>'
     body = (defs
@@ -4785,26 +4791,33 @@ def symmetry_page(motif="butterfly", title="Finish the Other Half!",
 
 
 _FINISH_KINDS = {
-    # each draws around a LOCAL ORIGIN sitting ON the mirror axis (local x=0)
-    "house": lambda: G(-120, 330, house(0, 0, w=240)),
-    "rocket": lambda: G(0, 200, rocket(0, -105)),
-    "butterfly": lambda: butterfly(0, 0, 3.0),
-    "face": lambda: face(0, 0, 55, hair="curly"),
+    # each draws around a LOCAL ORIGIN sitting ON the mirror axis (local x=0);
+    # k scales geometry only, so strokes keep page weight at any size
+    "house": lambda k: house(0, 0, w=240 * k),
+    "rocket": lambda k: rocket(0, 0, h=210 * k),
+    "butterfly": lambda k: _sym_butterfly(k),
+    "face": lambda k: face(0, 0, 55 * k, hair="curly"),
 }
 
 
 def finish_page(kind="house", title="Finish the Picture!", num=None,
-                caption=None, axis_x=None):
+                caption=None, axis_x=None, size=0.60):
     """Creativity page: the LEFT half of the object is solid, the right half
-    a dotted ghost — the child completes it (following the hint or not)."""
-    ax = axis_x or (W / 2 + 30)
-    frag = G(ax, 500, _FINISH_KINDS[kind]())
+    a dotted ghost — the child completes it (following the hint or not).
+    The object straddles the axis and is MEASURED and sized to span `size`
+    of the page width, centred in the drawable band (it used to sit ~200px
+    wide beside the axis with almost nothing left to finish)."""
+    ax = axis_x or W / 2
+    band_top, band_bot = 170, 985
+    local, bb, cy = _fit_mirror_motif(_FINISH_KINDS[kind], size, band_top, band_bot)
+    frag = G(ax, cy, local)
+    sx = min(W - 70, ax + bb[2] + 40)              # idea sparks right of it
     defs = ('<defs>' + _CLIP_L.format(i="fin") + _CLIP_R.format(i="fin") + '</defs>')
     body = (defs
             + _clipify(frag, "finL")
-            + _clipify(_dashify(frag), "finR")
-            + stitch_dash(ax, 260, ax, 860, sw=3, dash="4 9")
-            + sparkle(ax + 150, 380, 10) + sparkle(ax + 200, 640, 8))
+            + _clipify(_dashify(frag, dash="9 9"), "finR")
+            + stitch_dash(ax, band_top - 8, ax, band_bot + 5, sw=3, dash="4 9")
+            + sparkle(sx, cy + bb[1] + 40, 10) + sparkle(sx, cy + bb[3] - 50, 8))
     return spage(title, body, num=num, caption=caption, layout="creative")
 
 
