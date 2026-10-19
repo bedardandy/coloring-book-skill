@@ -309,6 +309,12 @@ def main():
          heart(0, 0, 26, 4, "white"), dino(0, 0, s=0.9),
          rocket(0, -60, h=140), soccer_ball(0, 0, 34)]))
     builders["16-tracing"] = ("page", name_trace_page(["Harper", "Max", "Lily"]))
+    # likeness: a model sheet for a (fictional) child's individual features
+    from likeness import model_sheet
+    builders["21-likeness"] = ("page", model_sheet(
+        {"name": "Rosa", "hair": "ponytail", "glasses": True, "mouth": "gap_tooth",
+         "freckles": "light",
+         "outfit": "dress", "height": 0.95}))
     import photolib as _pl
     # a real photo (Agnes the golden retriever, CC BY-SA 4.0 — CREDITS.md):
     # the traced subject is matted onto the meadow kit like any helper, a
