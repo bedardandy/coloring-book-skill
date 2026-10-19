@@ -517,7 +517,31 @@ def grass_tuft(gx, gy, sw=3):
 
 
 # ---------------------------------------------------------------- faces
-HAIR_STYLES = ("bob_bangs", "bob", "tousled", "long_wavy", "pigtails", "curly", "buzz")
+HAIR_STYLES = ("bob_bangs", "bob", "tousled", "long_wavy", "pigtails", "curly", "buzz",
+               "ponytail", "afro", "bun", "braids", "side_part", "bald")
+# facial-feature vocabularies (trait dict keys in parentheses). Every default
+# is the classic geometry, so a trait dict that sets none of them draws the
+# same face it always did.
+FACE_SHAPES = ("round", "oval", "long", "heart", "square")   # face_shape
+EYE_STYLES = ("dot", "round", "almond", "smile")              # eyes
+NOSE_STYLES = ("none", "button", "round", "long")             # nose
+MOUTH_STYLES = ("smile", "open", "grin", "gap_tooth", "none")  # mouth
+EAR_STYLES = (False, "small", "big")                          # ears
+BROW_STYLES = (False, True, "soft", "thick")                  # brows
+HEADWEAR = (None, "hijab")                                    # headwear
+# hair (or headwear) reaching past the 1.3r head-kill radius, in r: stock
+# wave/up hands hide behind it — use the wave_high / cheer poses
+WIDE_HAIR = {"pigtails": 1.7, "long_wavy": 1.45, "afro": 1.62, "braids": 1.42,
+             "hijab": 1.5}
+
+# head outlines as (rx, ry, centre dy, chin pinch, squareness) in r units —
+# rx/ry within ~10% of the circle so every hair silhouette still fits
+_FACE_GEOM = {
+    "oval": (0.94, 1.06, 0.04, 0.0, 2.0),
+    "long": (0.88, 1.12, 0.08, 0.0, 2.0),
+    "heart": (1.0, 1.04, 0.02, 0.34, 2.0),
+    "square": (0.98, 1.0, 0.02, 0.0, 3.4),
+}
 
 
 def face_seed_for(name):
@@ -530,31 +554,40 @@ def face_seed_for(name):
     return h % 99991 or 0
 
 
-def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
-         headband=False, extras=True, brows=False, mouth="smile", cheeks=True,
-         beard=False, seed=0):
-    """Head with parametric hair/glasses/freckles. Draw AFTER body & arms.
-    Hair+face occupy roughly a 1.3*r radius — keep props outside it.
-    Friendliness defaults (anti-eerie): brows OFF (brows close to dot eyes read
-    as scheming), smile is a narrow deep U, mouth="open" gives an unambiguous
-    happy D-mouth, cheeks adds small colorable blush circles.
-    seed (from face_seed_for(name) via the trait dict's face_seed) drives
-    subtle per-character micro-variation: eye spacing/size, smile width.
-    seed=0 keeps the classic geometry exactly."""
-    s = C(cx, cy, r, SW, "white", face=f"{_f(cx)},{_f(cy)},{_f(r)}")
-    ey, ex = cy + r * 0.08, r * 0.38
-    # seeded micro-variation (seed=0 -> exact classic geometry)
-    if seed:
-        j1 = ((seed * 73 + 41) % 1000) / 999.0     # 0..1
-        j2 = ((seed * 151 + 97) % 1000) / 999.0
-        j3 = ((seed * 211 + 13) % 1000) / 999.0
-        ex *= 0.88 + 0.24 * j1                     # eye spacing +-12%
-        eye_r = 3.5 * (0.82 + 0.36 * j2)           # eye size +-18%
-        smile_k = 0.84 + 0.32 * j3                 # smile width +-16%
-        ey += (j1 - 0.5) * r * 0.05                # eye height +-2.5%r
-    else:
-        eye_r, smile_k = 3.5, 1.0
-    hairsvg = ""
+def _head_outline(cx, cy, r, shape):
+    """Closed head silhouette for a non-round face_shape, tagged data-face
+    with the nominal circle (the validator's face size / kill radius keep
+    meaning the same thing). Returns (svg, chin_y)."""
+    rx, ry, dy, pinch, sq = _FACE_GEOM[shape]
+    pts = []
+    n = 28
+    for i in range(n):
+        a = 2 * math.pi * i / n
+        ca, sa = math.cos(a), math.sin(a)
+        k = 2.0 / sq                                   # superellipse exponent
+        x = rx * r * math.copysign(abs(ca) ** k, ca)
+        y = ry * r * math.copysign(abs(sa) ** k, sa)
+        if pinch and sa > 0:                           # heart: narrow the jaw
+            x *= 1.0 - pinch * sa ** 2
+        pts.append((cx + x, cy + dy * r + y))
+    d = smooth_path(pts, SW, fill="white", closed=True)
+    d = d.replace("<path ", f'<path data-face="{_f(cx)},{_f(cy)},{_f(r)}" ', 1)
+    return d, cy + (dy + ry) * r
+
+
+def _side_hair(cx, cy, r, part, top, inner):
+    """Hair path mirrored for hair_part: `top` and `inner` are point lists
+    drawn for part="left" (x offsets in r units, + to the right)."""
+    sx = -1.0 if part == "right" else 1.0
+    pts = [(cx + sx * x * r, cy + y * r) for x, y in top + inner]
+    return smooth_path(pts, 4.5, fill="white", closed=True)
+
+
+def _hair(cx, cy, r, hair, headband, part):
+    """Hair drawn OVER the head (and the parts drawn BEHIND it). Returns
+    (behind_svg, over_svg). The classic seven styles are byte-identical to
+    the 2026-07 geometry."""
+    hairsvg = behind = ""
     if hair == "tousled":
         d = (f"M {cx - r * 1.02} {cy + r * 0.05} Q {cx - r * 1.15} {cy - r * 0.9} {cx - r * 0.35} {cy - r * 1.12} "
              f"Q {cx} {cy - r * 1.3} {cx + r * 0.45} {cy - r * 1.08} Q {cx + r * 1.15} {cy - r * 0.85} {cx + r * 1.0} {cy + r * 0.05} "
@@ -592,18 +625,44 @@ def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
              f"Q {cx - r * 0.85} {cy - r * 0.3} {cx - r * 0.9} {cy + r * 0.05} L {cx - r * 0.92} {cy + r * 1.05} "
              f"Q {cx - r * 1.05} {cy + r * 1.35} {cx - r * 1.3} {cy + r * 1.15} Z")
         hairsvg = P(d, 4.5, "white")
-    elif hair == "pigtails":
+    elif hair in ("pigtails", "braids", "ponytail", "bun"):
         d = (f"M {cx - r * 1.05} {cy + r * 0.2} Q {cx - r * 1.25} {cy - r * 0.9} {cx - r * 0.4} {cy - r * 1.16} "
              f"Q {cx + r * 0.4} {cy - r * 1.32} {cx + r * 1.02} {cy - r * 0.58} Q {cx + r * 1.2} {cy - r * 0.1} {cx + r * 1.05} {cy + r * 0.2} "
              f"L {cx + r * 0.86} {cy - r * 0.28} "
              f"Q {cx + r * 0.45} {cy - r * 0.5} {cx + r * 0.1} {cy - r * 0.34} "
              f"Q {cx - r * 0.3} {cy - r * 0.52} {cx - r * 0.86} {cy - r * 0.3} Z")
         hairsvg = P(d, 4.5, "white")
-        for sx in (-1, 1):
-            px = cx + sx * r * 1.32
-            hairsvg += C(px, cy - r * 0.1, r * 0.38, 4, "white")
-            hairsvg += C(px, cy + r * 0.42, r * 0.3, 4, "white")
-            hairsvg += LINE(px - r * 0.2, cy + r * 0.12, px + r * 0.2, cy + r * 0.12, 3)
+        if hair == "ponytail":
+            # a tail swinging out from behind the head on the part side
+            sx = -1.0 if part == "right" else 1.0
+            tx, ty = cx + sx * r * 0.86, cy - r * 0.62
+            behind = P(f"M {tx - sx * r * 0.1} {ty - r * 0.12} Q {tx + sx * r * 0.85} {ty - r * 0.2} "
+                       f"{tx + sx * r * 0.74} {ty + r * 0.75} Q {tx + sx * r * 0.62} {ty + r * 1.25} "
+                       f"{tx + sx * r * 0.3} {ty + r * 1.38} Q {tx + sx * r * 0.42} {ty + r * 0.8} "
+                       f"{tx} {ty + r * 0.3} Z", 4.5, "white")
+            hairsvg += E(tx + sx * r * 0.06, ty, r * 0.1, r * 0.16, 3.5, "white")
+        elif hair == "bun":
+            behind = C(cx, cy - r * 1.3, r * 0.42, 4.5, "white")
+            behind += P(f"M {cx - r * 0.22} {cy - r * 1.36} Q {cx} {cy - r * 1.5} {cx + r * 0.22} {cy - r * 1.36}", 3)
+        elif hair == "pigtails":
+            for sx in (-1, 1):
+                px = cx + sx * r * 1.32
+                hairsvg += C(px, cy - r * 0.1, r * 0.38, 4, "white")
+                hairsvg += C(px, cy + r * 0.42, r * 0.3, 4, "white")
+                hairsvg += LINE(px - r * 0.2, cy + r * 0.12, px + r * 0.2, cy + r * 0.12, 3)
+        else:
+            # two plaits hanging from behind the ears to the shoulders: a
+            # column of overlapping lobes (each white-filled over the last)
+            # with a tie and a small tuft at the end
+            for sx in (-1, 1):
+                bx = cx + sx * r * 1.08
+                for i in range(4):
+                    yy = cy + r * (0.12 + 0.3 * i)
+                    behind += E(bx + sx * r * 0.02 * i, yy, r * 0.2, r * 0.19, 4, "white")
+                ty = cy + r * 1.12
+                behind += LINE(bx - r * 0.16, ty, bx + r * 0.16, ty, 3.5)
+                behind += P(f"M {bx - r * 0.12} {ty + r * 0.04} Q {bx} {ty + r * 0.36} "
+                            f"{bx + r * 0.12} {ty + r * 0.04}", 3.5, "white")
     elif hair == "curly":
         bumps = []
         n = 7
@@ -623,50 +682,275 @@ def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
         hairsvg = P(f"M {cx - r * 0.97} {cy - r * 0.18} Q {cx} {cy - r * 1.22} {cx + r * 0.97} {cy - r * 0.18}", 4.5)
         hairsvg += "".join(LINE(cx + dx * r, cy - r * 0.62 + abs(dx) * r * 0.3, cx + dx * r, cy - r * 0.48 + abs(dx) * r * 0.3, 3)
                            for dx in (-0.5, -0.17, 0.17, 0.5))
+    elif hair == "afro":
+        # a big round cloud: scallops on an ellipse wider than the head,
+        # closed along a soft forehead hairline
+        n, pts = 11, []
+        a0, a1 = math.radians(196), math.radians(-16)
+        for i in range(n + 1):
+            a = a0 + (a1 - a0) * i / n
+            pts.append((cx + r * 1.42 * math.cos(a), cy - r * 0.2 - r * 1.3 * math.sin(a)))
+        d = f"M {pts[0][0]:.1f} {pts[0][1]:.1f} "
+        for i in range(n):
+            mx, my = (pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2
+            ox, oy = mx - cx, my - (cy - r * 0.2)
+            L = math.hypot(ox, oy) or 1.0
+            d += (f"Q {mx + ox / L * r * 0.3:.1f} {my + oy / L * r * 0.3:.1f} "
+                  f"{pts[i + 1][0]:.1f} {pts[i + 1][1]:.1f} ")
+        d += (f"Q {cx + r * 1.02} {cy + r * 0.1} {cx + r * 0.94} {cy - r * 0.12} "
+              f"Q {cx + r * 0.7} {cy - r * 0.5} {cx} {cy - r * 0.56} "
+              f"Q {cx - r * 0.7} {cy - r * 0.5} {cx - r * 0.94} {cy - r * 0.12} "
+              f"Q {cx - r * 1.02} {cy + r * 0.1} {pts[0][0]:.1f} {pts[0][1]:.1f} Z")
+        hairsvg = P(d, 4.5, "white")
+    elif hair == "side_part":
+        # short cap with a swoop: the part sits off-centre and the fringe
+        # sweeps across to the other temple (mirrored by hair_part)
+        hairsvg = _side_hair(cx, cy, r, part,
+                             [(-0.98, -0.02), (-1.08, -0.62), (-0.7, -1.08), (0.0, -1.2),
+                              (0.68, -1.08), (1.06, -0.62), (0.98, -0.02)],
+                             [(0.88, -0.24), (0.62, -0.42), (0.2, -0.5), (-0.28, -0.66),
+                              (-0.62, -0.6), (-0.86, -0.32)])
+        sx = -1.0 if part == "right" else 1.0
+        hairsvg += P(f"M {cx - sx * r * 0.3} {cy - r * 0.68} Q {cx - sx * r * 0.36} {cy - r * 0.96} "
+                     f"{cx - sx * r * 0.28} {cy - r * 1.14}", 3)
+    elif hair == "bald":
+        # grandparent fringe: a tuft above each ear, the crown left bare
+        for sx in (-1, 1):
+            hairsvg += P(f"M {cx + sx * r * 0.9} {cy + r * 0.12} Q {cx + sx * r * 1.2} {cy - r * 0.1} "
+                         f"{cx + sx * r * 0.98} {cy - r * 0.5} Q {cx + sx * r * 0.88} {cy - r * 0.22} "
+                         f"{cx + sx * r * 0.86} {cy + r * 0.0} Z", 4, "white")
+    return behind, hairsvg
+
+
+def _hijab(cx, cy, r):
+    """Head scarf: a drape behind the head down onto the shoulders, and a
+    front band framing the face opening (even-odd fill keeps the face
+    visible). Returns (behind_svg, over_svg)."""
+    behind = P(f"M {cx - r * 1.02} {cy - r * 0.6} Q {cx - r * 1.3} {cy + r * 0.6} {cx - r * 1.5} {cy + r * 1.55} "
+               f"Q {cx} {cy + r * 1.85} {cx + r * 1.5} {cy + r * 1.55} "
+               f"Q {cx + r * 1.3} {cy + r * 0.6} {cx + r * 1.02} {cy - r * 0.6} Z", 4.5, "white")
+    oy, orx, ory = cy + r * 0.06, r * 0.8, r * 0.86
+    outer = (f"M {cx - r * 1.14} {cy + r * 0.2} Q {cx - r * 1.24} {cy - r * 1.28} {cx} {cy - r * 1.3} "
+             f"Q {cx + r * 1.24} {cy - r * 1.28} {cx + r * 1.14} {cy + r * 0.2} "
+             f"Q {cx + r * 1.02} {cy + r * 1.22} {cx} {cy + r * 1.3} "
+             f"Q {cx - r * 1.02} {cy + r * 1.22} {cx - r * 1.14} {cy + r * 0.2} Z ")
+    hole = (f"M {cx - orx} {oy} A {orx} {ory} 0 1 0 {cx + orx} {oy} "
+            f"A {orx} {ory} 0 1 0 {cx - orx} {oy} Z")
+    over = (f'<path d="{_norm_d(outer + hole)}" fill="white" fill-rule="evenodd" '
+            f'stroke="black" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>')
+    return behind, over
+
+
+def _eye(x, y, style, eye_r, r, lashes, outward, look):
+    """One eye at (x, y). outward = -1 left eye / +1 right eye (lash side);
+    look shifts the pupil toward the gaze. Lashes are two short flicks
+    fanning OUT from the outer corner — ticks along the top lid read as a
+    scowling brow."""
+    o = outward
+    if style == "round":
+        er = r * 0.15 * eye_r / 3.5
+        out = C(x, y, er, 3, "white") + DOT(x + look * er * 0.35, y + er * 0.12, er * 0.52)
+        corner = (x + o * er * 0.75, y - er * 0.65)
+    elif style == "almond":   # open lens, high top lid, big pupil (a flat lid reads sly)
+        w, h = r * 0.16 * eye_r / 3.5, r * 0.12 * eye_r / 3.5
+        out = P(f"M {x - w} {y} Q {x} {y - h * 2.3} {x + w} {y} Q {x} {y + h * 1.3} {x - w} {y} Z", 3, "white")
+        out += DOT(x + look * w * 0.3, y - h * 0.2, h)
+        corner = (x + o * w, y - h * 0.1)
+    elif style == "smile":                        # closed happy eyes: ∩
+        w = r * 0.12 * eye_r / 3.5
+        out = P(f"M {x - w} {y + w * 0.35} Q {x} {y - w * 1.15} {x + w} {y + w * 0.35}", 3.5)
+        corner = (x + o * w, y + w * 0.35)
+    else:
+        out = DOT(x, y, eye_r)
+        corner = (x + o * eye_r * 0.8, y - eye_r * 0.6)
+    if lashes:
+        (ax, ay), L = corner, r * 0.09
+        out += LINE(ax, ay, ax + o * L * 0.9, ay - L * 0.45, 2.5)
+        if style != "dot":                        # two flicks on a dot read as a squint ><
+            bx, by = ax - o * r * 0.05, ay - r * 0.05
+            out += LINE(bx, by, bx + o * L * 0.55, by - L * 0.8, 2.5)
+    return out
+
+
+def face(cx, cy, r=38, hair="tousled", glasses=False, freckles=False,
+         headband=False, extras=True, brows=False, mouth="smile", cheeks=True,
+         beard=False, seed=0, face_shape="round", eyes="dot", eye_spacing=None,
+         eye_size=None, lashes=False, nose="none", ears=False, dimples=False,
+         moles=(), smile_width=None, look=0.0, hair_part="left", headwear=None):
+    """Head with parametric hair/glasses/freckles. Draw AFTER body & arms.
+    Hair+face occupy roughly a 1.3*r radius — keep props outside it.
+    Friendliness defaults (anti-eerie): brows OFF (brows close to dot eyes read
+    as scheming), smile is a narrow deep U, mouth="open" gives an unambiguous
+    happy D-mouth, cheeks adds small colorable blush circles.
+    seed (from face_seed_for(name) via the trait dict's face_seed) drives
+    subtle per-character micro-variation: eye spacing/size, smile width.
+    seed=0 keeps the classic geometry exactly.
+
+    Individual features (all default to the classic face — see
+    reference/likeness-guide.md for how to read them off a person):
+      face_shape  round | oval | long | heart | square
+      eyes        dot | round (open, with pupil; dot behind glasses) | almond |
+                  smile (closed ∩)
+      eye_spacing eye centre offset in r (classic 0.38; clamped 0.30-0.46)
+      eye_size    eye scale (0.8-1.4); lashes adds two lash ticks
+      nose        none | button | round | long
+      ears        False | small | big (drawn behind the head and hair)
+      mouth       smile | open | grin (teeth line) | gap_tooth | none
+      smile_width smile scale (0.8-1.3); dimples adds corner commas
+      moles       [(dx, dy), ...] beauty marks, offsets in r from centre
+      freckles    True | "light" | "heavy" (heavy also crosses the nose)
+      brows       False | True/"soft" (high arcs) | "thick"
+      look        -1..1 head turn toward image-left/right: features slide
+                  toward the gaze, the far ear hides (3/4 view)
+      hair_part   left | right — mirrors ponytail / side_part
+      headwear    None | "hijab" (replaces the hair silhouette)
+    Explicit eye_spacing / eye_size / smile_width win over the seed jitter."""
+    if face_shape != "round" and face_shape in _FACE_GEOM:
+        s, chin_y = _head_outline(cx, cy, r, face_shape)
+    else:
+        s, chin_y = C(cx, cy, r, SW, "white", face=f"{_f(cx)},{_f(cy)},{_f(r)}"), cy + r
+    ey, ex = cy + r * 0.08, r * 0.38
+    # seeded micro-variation (seed=0 -> exact classic geometry)
+    if seed:
+        j1 = ((seed * 73 + 41) % 1000) / 999.0     # 0..1
+        j2 = ((seed * 151 + 97) % 1000) / 999.0
+        j3 = ((seed * 211 + 13) % 1000) / 999.0
+        ex *= 0.88 + 0.24 * j1                     # eye spacing +-12%
+        eye_r = 3.5 * (0.82 + 0.36 * j2)           # eye size +-18%
+        smile_k = 0.84 + 0.32 * j3                 # smile width +-16%
+        ey += (j1 - 0.5) * r * 0.05                # eye height +-2.5%r
+    else:
+        eye_r, smile_k = 3.5, 1.0
+    # measured individual proportions override the jitter
+    if eye_spacing is not None:
+        ex = r * min(0.46, max(0.30, float(eye_spacing)))
+    if eye_size is not None:
+        eye_r = 3.5 * min(1.4, max(0.8, float(eye_size)))
+    if smile_width is not None:
+        smile_k = min(1.3, max(0.8, float(smile_width)))
+    look = min(1.0, max(-1.0, float(look or 0.0)))
+    fx = cx + look * r * 0.16 if look else cx      # feature centre slides with the turn
+    if look:
+        ex *= 1.0 - 0.15 * abs(look)               # foreshortened eye spacing
+    if headwear == "hijab":
+        behind, hairsvg = _hijab(cx, cy, r)
+    else:
+        behind, hairsvg = _hair(cx, cy, r, hair, headband, hair_part)
+    earsvg = ""
+    if ears in ("small", "big"):
+        erx, ery = (r * 0.16, r * 0.24) if ears == "small" else (r * 0.22, r * 0.31)
+        for sx in (-1, 1):
+            if look * sx > 0.35:                   # the far ear hides behind the turn
+                continue
+            exx = cx + sx * (r * 0.97 + erx * 0.35)
+            earsvg += E(exx, ey + r * 0.04, erx, ery, 4, "white")
+            earsvg += P(f"M {exx + sx * erx * 0.2} {ey - ery * 0.4} Q {exx + sx * erx * 0.55} {ey + r * 0.04} "
+                        f"{exx + sx * erx * 0.15} {ey + ery * 0.5}", 2.5)
     browsvg = ""
-    if brows:  # raised high = friendly-surprised; never close above the eyes
-        browsvg = P(f"M {cx - ex - 6} {ey - 19} Q {cx - ex} {ey - 23} {cx - ex + 6} {ey - 19}", 3) + \
-                  P(f"M {cx + ex - 6} {ey - 19} Q {cx + ex} {ey - 23} {cx + ex + 6} {ey - 19}", 3)
+    if brows in (True, "soft"):  # raised high = friendly-surprised; never close above the eyes
+        browsvg = P(f"M {fx - ex - 6} {ey - 19} Q {fx - ex} {ey - 23} {fx - ex + 6} {ey - 19}", 3) + \
+                  P(f"M {fx + ex - 6} {ey - 19} Q {fx + ex} {ey - 23} {fx + ex + 6} {ey - 19}", 3)
+    elif brows == "thick":
+        bw, by = r * 0.15, ey - r * 0.36
+        browsvg = "".join(P(f"M {fx + sx * ex - bw} {by + r * 0.03} Q {fx + sx * ex} {by - r * 0.1} "
+                            f"{fx + sx * ex + bw} {by + r * 0.03}", 4.5) for sx in (-1, 1))
     beardsvg = ""
     if beard:
         # under-jaw fringe: a crescent hanging BELOW the face circle. No stroke
         # crosses the face interior (an inner edge across the face reads as a
         # giant grin), so the standard mouth stays untouched.
-        beardsvg = P(f"M {cx - r * 0.82} {cy + r * 0.57} "
-                     f"Q {cx - r * 0.55} {cy + r * 1.28} {cx} {cy + r * 1.30} "
-                     f"Q {cx + r * 0.55} {cy + r * 1.28} {cx + r * 0.82} {cy + r * 0.57} "
-                     f"Q {cx + r * 0.52} {cy + r * 0.98} {cx} {cy + r * 1.00} "
-                     f"Q {cx - r * 0.52} {cy + r * 0.98} {cx - r * 0.82} {cy + r * 0.57} Z", 3.5, "white")
-    eyes = DOT(cx - ex, ey, eye_r) + DOT(cx + ex, ey, eye_r)
+        by = chin_y - (cy + r)                     # follow a longer/shorter chin
+        beardsvg = P(f"M {cx - r * 0.82} {cy + by + r * 0.57} "
+                     f"Q {cx - r * 0.55} {cy + by + r * 1.28} {cx} {cy + by + r * 1.30} "
+                     f"Q {cx + r * 0.55} {cy + by + r * 1.28} {cx + r * 0.82} {cy + by + r * 0.57} "
+                     f"Q {cx + r * 0.52} {cy + by + r * 0.98} {cx} {cy + by + r * 1.00} "
+                     f"Q {cx - r * 0.52} {cy + by + r * 0.98} {cx - r * 0.82} {cy + by + r * 0.57} Z", 3.5, "white")
+    if glasses and eyes == "round":
+        eyes = "dot"                               # ring eyes in lenses read as hypnotic spirals
+    if eyes == "dot" and not lashes:
+        eyesvg = DOT(fx - ex, ey, eye_r) + DOT(fx + ex, ey, eye_r)
+    else:
+        eyesvg = (_eye(fx - ex, ey, eyes, eye_r, r, lashes, -1, look)
+                  + _eye(fx + ex, ey, eyes, eye_r, r, lashes, 1, look))
+    nosesvg = ""
+    nx, ny = (cx + look * r * 0.3 if look else cx), cy + r * 0.24
+    if nose == "button":
+        nosesvg = P(f"M {nx - r * 0.08} {ny - r * 0.03} Q {nx} {ny + r * 0.08} {nx + r * 0.08} {ny - r * 0.03}", 3)
+    elif nose == "round":
+        nosesvg = P(f"M {nx - r * 0.1} {ny - r * 0.06} Q {nx - r * 0.14} {ny + r * 0.08} {nx} {ny + r * 0.08} "
+                    f"Q {nx + r * 0.14} {ny + r * 0.08} {nx + r * 0.1} {ny - r * 0.06}", 3)
+    elif nose == "long":
+        sd = 1.0 if look >= 0 else -1.0           # the bridge line faces away from the turn
+        nosesvg = P(f"M {nx - sd * r * 0.02} {ny - r * 0.22} Q {nx + sd * r * 0.1} {ny} "
+                    f"{nx + sd * r * 0.06} {ny + r * 0.06} Q {nx} {ny + r * 0.1} {nx - sd * r * 0.06} {ny + r * 0.05}", 3)
+    mx = cx + look * r * 0.18 if look else cx
     if mouth == "open":  # closed D-shape: unambiguously joyful
-        msvg = P(f"M {cx - r * 0.22} {cy + r * 0.40} Q {cx} {cy + r * 0.80} {cx + r * 0.22} {cy + r * 0.40} Z", 3.5, "white")
+        msvg = P(f"M {mx - r * 0.22} {cy + r * 0.40} Q {mx} {cy + r * 0.80} {mx + r * 0.22} {cy + r * 0.40} Z", 3.5, "white")
+    elif mouth == "grin":  # wide D with an upper-teeth line
+        gw = r * 0.27 * smile_k
+        msvg = P(f"M {mx - gw} {cy + r * 0.38} Q {mx} {cy + r * 0.86} {mx + gw} {cy + r * 0.38} Z", 3.5, "white")
+        msvg += P(f"M {mx - gw * 0.8} {cy + r * 0.47} Q {mx} {cy + r * 0.53} {mx + gw * 0.8} {cy + r * 0.47}", 2.5)
+    elif mouth == "gap_tooth":  # open D with two front teeth and the gap between
+        gw = r * 0.26 * smile_k
+        msvg = P(f"M {mx - gw} {cy + r * 0.38} Q {mx} {cy + r * 0.88} {mx + gw} {cy + r * 0.38} Z", 3.5, "white")
+        for sx in (-1, 1):
+            tx0, tx1 = mx + sx * r * 0.05, mx + sx * r * 0.17
+            msvg += P(f"M {tx0} {cy + r * 0.39} L {tx0} {cy + r * 0.52} L {tx1} {cy + r * 0.52} L {tx1} {cy + r * 0.39}", 2.5)
     elif mouth == "none":
         msvg = ""
     else:  # narrow deep U (a wide flat arc reads as a smirk) — bearded faces too
         mw = r * 0.24 * smile_k
-        msvg = P(f"M {cx - mw:.1f} {cy + r * 0.40} Q {cx} {cy + r * 0.70} {cx + mw:.1f} {cy + r * 0.40}", 4)
+        msvg = P(f"M {mx - mw:.1f} {cy + r * 0.40} Q {mx} {cy + r * 0.70} {mx + mw:.1f} {cy + r * 0.40}", 4)
+    if dimples:
+        # a short crease on the cheek, clear below-outside each mouth corner —
+        # beside the corner it reads as smirk brackets, touching it as a
+        # wavy mouth
+        dw = (r * 0.27 * smile_k if mouth in ("open", "grin", "gap_tooth") else r * 0.24 * smile_k) + r * 0.12
+        for sx in (-1, 1):
+            msvg += P(f"M {mx + sx * dw} {cy + r * 0.5} Q {mx + sx * (dw + r * 0.04)} {cy + r * 0.55} "
+                      f"{mx + sx * dw} {cy + r * 0.61}", 2.5)
     cheeksvg = ""
     if cheeks and extras and not freckles:  # under-jaw beard leaves cheeks free
-        cheeksvg = C(cx - r * 0.56, cy + r * 0.34, r * 0.10, 2.5) + \
-                   C(cx + r * 0.56, cy + r * 0.34, r * 0.10, 2.5)
-    out = s + hairsvg + beardsvg + browsvg + eyes + msvg + cheeksvg
+        cheeksvg = C(fx - r * 0.56, cy + r * 0.34, r * 0.10, 2.5) + \
+                   C(fx + r * 0.56, cy + r * 0.34, r * 0.10, 2.5)
+    out = s + hairsvg + beardsvg + browsvg + eyesvg + nosesvg + msvg + cheeksvg
+    if behind or earsvg:
+        out = behind + earsvg + out
     if glasses:
         gr = r * 0.30  # scale with the head — fixed-size lenses read as owl eyes on small figures
-        out += C(cx - ex, ey, gr, 3.5) + C(cx + ex, ey, gr, 3.5) + LINE(cx - ex + gr, ey, cx + ex - gr, ey, 3.5)
+        out += C(fx - ex, ey, gr, 3.5) + C(fx + ex, ey, gr, 3.5) + LINE(fx - ex + gr, ey, fx + ex - gr, ey, 3.5)
     if freckles and extras:
-        out += "".join(DOT(x, y, 2) for x, y in
-                       [(cx - r * 0.55, cy + r * 0.32), (cx - r * 0.42, cy + r * 0.42), (cx - r * 0.62, cy + r * 0.45),
-                        (cx + r * 0.55, cy + r * 0.32), (cx + r * 0.42, cy + r * 0.42), (cx + r * 0.62, cy + r * 0.45)])
+        spots = [(-0.55, 0.32), (-0.42, 0.42), (-0.62, 0.45), (0.55, 0.32), (0.42, 0.42), (0.62, 0.45)]
+        if freckles == "light":
+            spots = [(-0.5, 0.36), (-0.6, 0.44), (0.5, 0.36), (0.6, 0.44)]
+        elif freckles == "heavy":
+            spots += [(-0.48, 0.26), (-0.7, 0.36), (0.48, 0.26), (0.7, 0.36),
+                      (-0.14, 0.16), (0.0, 0.12), (0.14, 0.16)]
+        out += "".join(DOT(fx + x * r, cy + y * r, 2) for x, y in spots)
+    for dx, dy in (moles or ()):
+        out += DOT(fx + float(dx) * r, cy + float(dy) * r, max(1.8, r * 0.05))
     return out
+
+
+# trait-dict keys forwarded to face() (name -> face() kwarg)
+_FACE_TRAIT_KEYS = ("face_shape", "eyes", "eye_spacing", "eye_size", "lashes", "nose",
+                    "ears", "dimples", "moles", "smile_width", "look", "hair_part",
+                    "headwear", "brows")
 
 
 def face_traits(cx, cy, r, t, extras=True):
     """face() driven by a character trait dict. t["face_seed"] (or a name
-    via face_seed_for) gives the character its own consistent micro-face."""
+    via face_seed_for) gives the character its own consistent micro-face.
+    Every individual-feature key in _FACE_TRAIT_KEYS is forwarded, and
+    t["mouth"] sets the character's resting mouth (pages override it with
+    dict(t, mouth="open") for a celebration)."""
     seed = int(t.get("face_seed") or face_seed_for(t.get("name", "")) or 0)
+    kw = {k: t[k] for k in _FACE_TRAIT_KEYS if k in t}
+    if "mouth" in t:
+        kw["mouth"] = t["mouth"]
     return face(cx, cy, r, hair=t.get("hair", "tousled"), glasses=t.get("glasses", False),
                 freckles=t.get("freckles", False), headband=t.get("headband", False),
-                beard=t.get("beard", False), extras=extras, seed=seed)
+                beard=t.get("beard", False), extras=extras, seed=seed, **kw)
 
 
 # ---------------------------------------------------------------- kid figures
