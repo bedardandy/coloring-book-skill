@@ -318,5 +318,37 @@
  "photo:bedroom|sketch|subject_ink_ratio": [
   0.0,
   0.14500000000000002
+ ],
+ "face_features|clean|strokes": [
+  16,
+  20
+ ],
+ "face_features|clean|slivers": [
+  0,
+  5
+ ],
+ "face_features|clean|ink_coverage_pct": [
+  3.0272,
+  3.8528
+ ],
+ "face_features|clean|feature_fidelity": [
+  0.92,
+  1.0
+ ],
+ "face_features|sketch|strokes": [
+  18,
+  22
+ ],
+ "face_features|sketch|slivers": [
+  0,
+  5
+ ],
+ "face_features|sketch|ink_coverage_pct": [
+  3.1064,
+  3.9536
+ ],
+ "face_features|sketch|feature_fidelity": [
+  0.92,
+  1.0
  ]
 }

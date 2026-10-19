@@ -7,9 +7,13 @@ plus reference metrics (synthetic fixtures only, where the subject's true
 shape is known). A second, REAL-PHOTO tier traces the open-licensed sample
 photos in assets/photos/ (plus any *.jpg/*.png in --photos DIR, which
 never enters the repo) and scores them reference-free: subject-ink ratio
-inside the GrabCut subject mask, sliver count, region count. Produces a
-markdown scorecard, and --gate mode fails when a metric leaves its
-calibrated acceptance band.
+inside the GrabCut subject mask, sliver count, region count. A third,
+FEATURE-FIDELITY tier traces a synthetic portrait with KNOWN landmarks
+(glasses, a mole) through vision hints and scores feature_fidelity — the
+share of facial features (eyes, nose, mouth corners, declared features)
+with traced ink on them — with protect_face on (banded) and off (reported,
+to show what the protection buys). Produces a markdown scorecard, and
+--gate mode fails when a metric leaves its calibrated acceptance band.
 
     python tools/eval_photo.py                 # report
     python tools/eval_photo.py --gate          # CI: exit 1 out of band
@@ -40,6 +44,7 @@ from charlib import qa_page  # noqa: E402
 
 FIXTURES = ("animal", "house", "car", "crisp_toy", "soft_portrait",
             "textured_foliage", "low_light")
+FIDELITY_FIXTURES = ("face_features",)   # known landmarks, scored via hints
 BANDS_PATH = os.path.join(ROOT, "tools", "eval_bands.json")
 PHOTOS_DIR = os.path.join(ROOT, "assets", "photos")     # open-licensed samples
 PHOTO_EXT = (".jpg", ".jpeg", ".png")
@@ -207,6 +212,25 @@ def run(styles, tmp, photos=()):
             else:
                 m["subject_hit_ratio"] = None
             rows.append(m)
+    for kind in FIDELITY_FIXTURES:
+        p = fixture_path(kind, tmp)
+        truth = photolib.synthetic_face_truth()
+        hints = photolib.synthetic_face_hints()
+        shape = photolib.synthetic_photo(kind).shape
+        for style in styles:
+            svg = photolib.photo_to_svg(p, style=style, qa=False, hints=hints)
+            m = metrics_for(svg)
+            m["fixture"] = kind
+            m["style"] = style
+            m["subject_hit_ratio"] = None
+            fid = photolib.feature_fidelity(svg, truth, shape)
+            m["feature_fidelity"] = fid["score"]
+            m["fidelity_missing"] = ",".join(fid["missing"]) or "-"
+            off = photolib.photo_to_svg(p, style=style, qa=False, hints=hints,
+                                        protect_face=False)
+            m["feature_fidelity_off"] = photolib.feature_fidelity(
+                off, truth, shape)["score"]
+            rows.append(m)
     for name, path in photos:
         for style in styles:
             svg = photolib.photo_to_svg(path, style=style, qa=False)
@@ -225,12 +249,24 @@ def scorecard(rows):
              "subject hit | print safe |",
              "|---|---|---|---|---|---|---|---|"]
     for r in rows:
-        if r["fixture"].startswith("photo:"):
+        if r["fixture"].startswith("photo:") or "feature_fidelity" in r:
             continue
         lines.append(
             f"| {r['fixture']} | {r['style']} | {r['strokes']} | "
             f"{r['slivers']} | {r['regions']} | {r['ink_coverage_pct']} | "
             f"{r['subject_hit_ratio']} | {r['print_safe']} |")
+    fid_rows = [r for r in rows if "feature_fidelity" in r]
+    if fid_rows:
+        lines += ["", "## Feature fidelity (synthetic portrait, via hints)", "",
+                  "| fixture | style | strokes | slivers | ink% | fidelity | "
+                  "fidelity, protect_face off | missing | print safe |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+        for r in fid_rows:
+            lines.append(
+                f"| {r['fixture']} | {r['style']} | {r['strokes']} | "
+                f"{r['slivers']} | {r['ink_coverage_pct']} | "
+                f"{r['feature_fidelity']} | {r['feature_fidelity_off']} | "
+                f"{r['fidelity_missing']} | {r['print_safe']} |")
     photo_rows = [r for r in rows if r["fixture"].startswith("photo:")]
     if photo_rows:
         lines += ["", "## Real photos (reference-free)", "",
@@ -300,7 +336,8 @@ def main(argv):
         cal = {}
         for r in rows:
             for metric in ("strokes", "slivers", "ink_coverage_pct",
-                           "subject_hit_ratio", "regions", "subject_ink_ratio"):
+                           "subject_hit_ratio", "regions", "subject_ink_ratio",
+                           "feature_fidelity"):
                 v = r.get(metric)
                 if v is None:
                     continue
@@ -313,7 +350,8 @@ def main(argv):
         # tolerance margins: cross-version/platform float drift is real
         # (counts +-2, relative metrics +-12%); real photos have hundreds
         # of strokes riding on GrabCut + bilateral filtering, so their
-        # counts get +-15% (min 3) and their ratios +-0.08
+        # counts get +-15% (min 3) and their ratios +-0.08; feature
+        # fidelity gets +-0.08 too (one missed feature of 7 is -0.14)
         for key, (lo, hi) in list(cal.items()):
             photo = key.startswith("photo:")
             if "slivers" in key or "strokes" in key or "regions" in key:
@@ -321,7 +359,7 @@ def main(argv):
                 cal[key] = [max(0, lo - pad), hi + pad]
                 if "slivers" in key:
                     cal[key][0] = 0              # fewer slivers is never a regression
-            elif "subject_ink_ratio" in key:
+            elif "subject_ink_ratio" in key or "feature_fidelity" in key:
                 cal[key] = [max(0.0, lo - 0.08), min(1.0, hi + 0.08)]
             else:
                 pad = max(abs(lo), abs(hi)) * 0.12
