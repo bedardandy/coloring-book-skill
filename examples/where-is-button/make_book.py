@@ -20,6 +20,7 @@ import sys
 SKILL_LIB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib")
 sys.path.insert(0, SKILL_LIB)
 from charlib import *          # primitives, motifs, figures, furniture, letters, creativity, build
+from story import StoryBible   # the book's continuity bible (story.json)
 
 OUTDIR = os.path.dirname(os.path.abspath(__file__))
 FLOOR = 890                    # wall/floor line: furniture stands here
@@ -215,31 +216,43 @@ def intro():
                          "Lily love their teddy bear Button, who goes everywhere with them.")
 
 
+def mirrored(body):
+    """Flip a page's art left-right about the page centre (GM for a whole
+    composition): keeps a recurring room's layout consistent with the
+    page that established it."""
+    return GM(W, 0, body)
+
+
 def problem():
+    # composed facing the other way, then mirrored so the bedroom matches
+    # 03-intro and 08-solve: window + bed on the LEFT (story.json anchors)
     b = []
     b.append(wall_line())
     b.append(wardrobe(145, FLOOR, w=180, h=430, doors=False))
     b.append(wall_clock(372, 330, 36))
     b.append(curtained_window(575, 290, 170, 150))
     b.append(place(bed(0, 0, w=190), 515, FLOOR, 1.35))       # the EMPTY bed
-    # a big colorable question mark over the empty pillow
-    b.append(word("?", 592, 690, size=190))
     b.append(sparkle(515, 560, 12) + sparkle(680, 610, 12) + sparkle(715, 515, 9))
     # Lily points at the empty bed, Max wonders, Biscuit checks the wardrobe
     b.append(matted(GM(165, FEET, dog_sit(BISCUIT), 1.1)))      # sniffs the wardrobe
     b.append(matted(G(305, FEET, kid_stand(MAX, pose="down"), MAX_S)))
     b.append(matted(G(478, FEET, kid_point(LILY), LILY_S)))
-    return spage("Where Is Button?", "".join(b), num=4,
+    # a big colorable question mark over the empty pillow (text is never mirrored)
+    art = mirrored("".join(b)) + word("?", W - 592, 690, size=190)
+    return spage("Where Is Button?", art, num=4,
                  caption="Oh no! Button is not on the bed. Where is Button? Max and Lily "
                          "and Biscuit look everywhere. Come and help Max and Lily search!")
 
 
 def search_bedroom():
+    # the wall (window left, bookshelf right) matches 03-intro; the search
+    # cluster is composed with the bed on the right and mirrored so the
+    # bed sits on the LEFT under the window, as on every bedroom page
+    w = [wall_line(),
+         curtained_window(84, 290, 170, 150),
+         wall_picture(340, 330, 110, 90, "star"),
+         place(bookshelf(0, 0), 645, FLOOR, 1.4)]
     b = []
-    b.append(wall_line())
-    b.append(curtained_window(84, 290, 170, 150))
-    b.append(wall_picture(340, 330, 110, 90, "star"))
-    b.append(place(bookshelf(0, 0), 645, FLOOR, 1.4))
     b.append(GM(765, FLOOR, restroke(bed(0, 0, w=210), 1.35), 1.35))   # headboard right
     # the flashlight's pool of light under the bed (a dashed ellipse)
     b.append(E(575, 877, 46, 9, 3).replace("/>", ' stroke-dasharray="7 6"/>'))
@@ -257,7 +270,7 @@ def search_bedroom():
     hx, hy = mx + 40 * MAX_S, FEET - 103 * MAX_S          # between the hold_r wrists
     b.append(matted(G(mx, FEET, kid_stand(MAX, pose="hold_r"), MAX_S) +
                     flashlight(hx + 4, hy + 8, -40)))
-    return spage("Look in the Bedroom", "".join(b), num=5,
+    return spage("Look in the Bedroom", "".join(w) + mirrored("".join(b)), num=5,
                  caption="Max looks under the bed. Lily peeks in the toy box. Biscuit "
                          "sniffs the soft blanket. Button is not here! Max and Lily keep looking.")
 
@@ -284,7 +297,7 @@ def search_living():
     # Biscuit sniffs along the couch
     b.append(matted(GM(705, FEET, dog(BISCUIT), 1.1)))
     return spage("Look in the Living Room", "".join(b), num=6,
-                 caption="Now Max and Lily look in the living room. Lily checks behind the "
+                 caption="Max and Lily and Biscuit look everywhere! Lily checks behind the "
                          "big chair. Max lifts the couch cushions. Where is Button hiding?")
 
 
@@ -360,8 +373,8 @@ def solve():
     # Lily claps and cheers
     b.append(matted(G(640, FEET, kid_stand(LILY, pose="up"), LILY_S)))
     b.append(heart(560, 470, 16, 4) + sparkle(470, 520, 12) + heart(300, 540, 14, 4))
-    return spage("Biscuit Found Him!", "".join(b), num=9,
-                 caption="Biscuit found him! Button is under Max's bed. Max reaches down and "
+    return spage("Biscuit Finds Him!", "".join(b), num=9,
+                 caption="Biscuit finds him! Button is under Max's bed. Max reaches down and "
                          "pulls Button out. Lily claps and cheers. Good dog, Biscuit!")
 
 
@@ -382,7 +395,7 @@ def celebrate():
     b.append(matted(G(668, FEET, dog(BISCUIT), DOG_S)))
     b.append(music_note(610, 700, 1.4) + music_note(750, 650, 1.2))
     return spage("Hooray for Button!", "".join(b), num=10,
-                 caption="Max and Lily and Biscuit found Button! Everyone dances in a happy "
+                 caption="Hooray! Button is home again! Everyone dances in a happy "
                          "circle. Now Max and Lily snuggle into bed with Button.")
 
 
@@ -419,6 +432,17 @@ BUILDERS = [
     ("09-celebrate",         celebrate),
     ("10-back-cover",        back_cover),
 ]
+
+# every page carries its story.json record, so `python3 -m lib.story
+# story.json pages/*.svg` can cross-check the rendered book against the bible
+BIBLE = StoryBible.load(os.path.join(OUTDIR, "story.json"))
+
+
+def _annotated(page_id, fn):
+    return lambda: BIBLE.annotate(fn(), page_id)
+
+
+BUILDERS = [(pid, _annotated(pid, fn)) for pid, fn in BUILDERS]
 
 if __name__ == "__main__":
     build(BUILDERS, OUTDIR, only=sys.argv[1:] or None,
