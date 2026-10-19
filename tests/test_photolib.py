@@ -258,3 +258,309 @@ def test_real_photo_traces_deterministically():
     gray, bgr = photolib.load_photo(p)
     mask, label, meta = photolib.detect_subject(gray, bgr)
     assert mask is not None and 0.05 < meta["mask_frac"] < 0.7
+
+
+# ---------------------------------------------------------------- faces, hints, feature protection
+FACE_KEYS = {"eye_l", "eye_r", "nose", "mouth_l", "mouth_r"}
+
+
+@pytest.fixture(scope="module")
+def face_photo(tmp_path_factory):
+    p = tmp_path_factory.mktemp("face") / "face_features.png"
+    cv2.imwrite(str(p), photolib.synthetic_photo("face_features"))
+    return str(p)
+
+
+@pytest.fixture(scope="module")
+def face_traces(face_photo):
+    """The portrait fixture traced with its hints, protect_face on / off."""
+    hints = photolib.synthetic_face_hints()
+    return {pf: photolib.photo_to_svg(face_photo, qa=False, hints=hints,
+                                      protect_face=pf)
+            for pf in (True, False)}
+
+
+def test_detect_faces_full_dict_contract(face_photo):
+    """YuNet fires on the portrait fixture: the dict shape is a contract
+    (charlib.traits_from_landmarks consumes it), _l/_r are IMAGE-left/right,
+    and _detect_faces still returns the same boxes as tuples."""
+    gray, bgr = photolib.load_photo(face_photo)
+    full = photolib.detect_faces_full(gray, bgr)
+    assert len(full) == 1
+    f = full[0]
+    assert {"box", "score", "landmarks"} <= set(f)
+    assert set(f["landmarks"]) == FACE_KEYS
+    x, y, w, h = f["box"]
+    for px, py in f["landmarks"].values():
+        assert x <= px <= x + w and y <= py <= y + h
+    lm = f["landmarks"]
+    assert lm["eye_l"][0] < lm["eye_r"][0] and lm["mouth_l"][0] < lm["mouth_r"][0]
+    assert lm["eye_l"][1] < lm["nose"][1] < lm["mouth_l"][1]
+    assert 0.0 < f["score"] <= 1.0
+    assert photolib._detect_faces(gray, bgr) == [tuple(f["box"])]
+    # landmarks land near the fixture's known geometry (within 0.2 IOD)
+    truth = photolib.synthetic_face_truth()[0]["landmarks"]
+    iod = truth["eye_r"][0] - truth["eye_l"][0]
+    for k in ("eye_l", "eye_r", "nose"):
+        assert np.hypot(lm[k][0] - truth[k][0], lm[k][1] - truth[k][1]) < 0.2 * iod
+
+
+def test_no_faces_on_existing_fixtures(fixtures):
+    for p in fixtures.values():
+        gray, bgr = photolib.load_photo(p)
+        assert photolib.detect_faces_full(gray, bgr) == []
+
+
+def test_face_landmarks_hint_overrides_detection(face_photo):
+    faces = photolib.face_landmarks(face_photo, photolib.synthetic_face_hints())
+    assert len(faces) == 1                       # the hint replaced YuNet's face
+    f = faces[0]
+    assert f["source"] == "hint" and f["features"] == ["glasses", "mole"]
+    assert "mole" in f["feature_boxes"]
+    assert f["landmarks"] == photolib.synthetic_face_truth()[0]["landmarks"]
+
+
+def test_parse_hints_px_norm_and_image_size():
+    shape = (640, 640)
+    px = photolib.parse_hints(photolib.synthetic_face_hints(units="px"), shape)
+    nm = photolib.parse_hints(photolib.synthetic_face_hints(units="norm"), shape)
+    for k in FACE_KEYS:
+        a, b = px["faces"][0]["landmarks"][k], nm["faces"][0]["landmarks"][k]
+        assert abs(a[0] - b[0]) < 0.6 and abs(a[1] - b[1]) < 0.6
+    # px coordinates refer to the ORIGINAL photo (or image_size): a 1280px
+    # original traced at 640 halves them
+    big = photolib.parse_hints({"subject_box": [200, 100, 600, 800]}, shape,
+                               photo_size=(1280, 1280))
+    assert big["subject_box"] == (100.0, 50.0, 300.0, 400.0)
+    sized = photolib.parse_hints({"image_size": [320, 320],
+                                  "keep": [[10, 10, 20, 20]]}, shape)
+    assert sized["keep"] == [(20.0, 20.0, 40.0, 40.0)]
+    # a box-only face gets canonical landmarks inside its box
+    f = photolib.parse_hints({"faces": [{"box": [100, 100, 200, 240]}]},
+                             shape)["faces"][0]
+    assert set(f["landmarks"]) == FACE_KEYS
+    assert f["landmarks"]["eye_l"][0] < f["landmarks"]["eye_r"][0]
+    # subject-left given as eye_l by mistake is re-ordered by x
+    sw = photolib.parse_hints({"faces": [{"box": [100, 100, 200, 240],
+                                          "landmarks": {"eye_l": [250, 200],
+                                                        "eye_r": [150, 200]}}]},
+                              shape)["faces"][0]["landmarks"]
+    assert sw["eye_l"] == (150.0, 200.0)
+
+
+@pytest.mark.parametrize("bad, words", [
+    ({"subjct_box": [1, 2, 3, 4]}, "unknown key"),
+    ({"units": "inches"}, "units"),
+    ({"label": "dragon"}, "not a policy"),
+    ({"subject_box": [1, 2, 3]}, "[x, y, w, h]"),
+    ({"subject_box": [10, 10, -5, 20]}, "> 0"),
+    ({"subject_box": [5000, 10, 50, 50]}, "outside"),
+    ({"subject_box": [0.1, 0.2, 0.5, 0.5]}, "looks normalized"),
+    ({"units": "norm", "keep": [[0.1, 0.2, 1.5, 0.5]]}, "0-1"),
+    ({"drop": "fence"}, "list"),
+    ({"faces": {"box": [1, 1, 5, 5]}}, "list"),
+    ({"faces": [{"landmarks": {}}]}, "box"),
+    ({"faces": [{"box": [100, 100, 80, 80],
+                 "landmarks": {"left_eye": [120, 130]}}]}, "eye_l"),
+    ({"faces": [{"box": [100, 100, 80, 80], "features": ["mole"]}]}, "needs a box"),
+    ({"faces": [{"box": [100, 100, 80, 80], "score": 3}]}, "[0, 1]"),
+    ({"faces": [{"box": [100, 100, 80, 80], "landmarks": {"nose": ["a", 1]}}]},
+     "number"),
+    ("not-a-dict-or-file.json", "hints file"),
+])
+def test_parse_hints_rejects_malformed(bad, words):
+    with pytest.raises(photolib.HintError) as e:
+        photolib.parse_hints(bad, (640, 640))
+    assert words in str(e.value)
+
+
+def test_hints_absent_or_empty_change_nothing(fixtures):
+    base = photolib.photo_to_svg(fixtures["animal"], qa=False)
+    assert photolib.photo_to_svg(fixtures["animal"], qa=False, hints={},
+                                 backends={}) == base
+    assert "data-fidelity" not in base
+
+
+def test_hint_label_and_subject_box(fixtures):
+    svg = photolib.photo_to_svg(fixtures["animal"], qa=False,
+                                hints={"label": "building"})
+    assert 'data-policy="building"' in svg
+    gray, bgr = photolib.load_photo(fixtures["animal"])
+    mask, label, meta = photolib.detect_subject(
+        gray, bgr, hints={"subject_box": [100, 120, 440, 330]})
+    assert meta["detector"] == "hint-box" and mask is not None
+    ys, xs = np.nonzero(mask)
+    assert xs.min() >= 95 and ys.min() >= 115          # GrabCut stays in the rect
+
+
+def _art_points(svg):
+    import re
+    body = re.sub(r'<g data-ground="1">.*?</g>', "", svg, flags=re.S)
+    body = re.sub(r'<path [^>]*data-knockout="1"/>', "", body)
+    art = body[body.index("data-policy"):]
+    art = art[:art.index("<g data-chrome")] if "<g data-chrome" in art else art
+    return [(float(a), float(b)) for d in re.findall(r' d="([^"]+)"', art)
+            for a, b in zip(*[iter(re.findall(r"-?\d+\.?\d*", d))] * 2)]
+
+
+def test_drop_and_keep_boxes(tmp_path):
+    """drop boxes erase traced ink; keep boxes survive the background drop
+    (the fence of the clutter test is kept when the hints say so)."""
+    img = photolib.synthetic_photo("animal")
+    for x in range(40, 200, 24):
+        cv2.line(img, (x, 20), (x, 150), (60, 50, 45), 3)
+    p = str(tmp_path / "fence.png")
+    cv2.imwrite(p, img)
+    s, ox, oy = photolib._page_fit(640, 640)
+
+    def in_box(svg, box):
+        x, y, w, h = box
+        return [(px, py) for px, py in _art_points(svg)
+                if ox + x * s <= px <= ox + (x + w) * s
+                and oy + y * s <= py <= oy + (y + h) * s]
+    fence = [30, 10, 180, 150]
+    assert not in_box(photolib.photo_to_svg(p, qa=False), fence)
+    kept = photolib.photo_to_svg(p, qa=False, hints={"keep": [fence]})
+    assert len(in_box(kept, fence)) >= 4
+    eye = [470, 240, 50, 40]                             # the animal's light eye
+    base = photolib.photo_to_svg(p, qa=False)
+    dropped = photolib.photo_to_svg(p, qa=False, hints={"drop": [eye]})
+    assert base != dropped
+    inner = [eye[0] + 8, eye[1] + 8, eye[2] - 16, eye[3] - 16]
+    assert not in_box(dropped, inner)
+
+
+def test_protection_zones_cover_features():
+    faces = photolib.synthetic_face_truth()
+    z = photolib.protection_zones(faces, (640, 640))
+    lm = faces[0]["landmarks"]
+    for k in FACE_KEYS:
+        assert z[int(lm[k][1]), int(lm[k][0])] == 255
+    mid = ((lm["eye_l"][0] + lm["eye_r"][0]) / 2, lm["eye_l"][1])
+    assert z[int(mid[1]), int(mid[0])] == 255             # glasses bridge (declared)
+    assert z[600, 50] == 0 and 0.01 < z.mean() / 255 < 0.15
+    assert photolib.protection_zones([], (64, 64)) is None
+
+
+def test_feature_fidelity_metric():
+    faces = photolib.synthetic_face_truth()
+    s, ox, oy = photolib._page_fit(640, 640)
+    ex, ey = faces[0]["landmarks"]["eye_l"]
+    dot = photolib.P(f"M {ox + ex * s:.1f} {oy + ey * s:.1f} L "
+                     f"{ox + ex * s + 2:.1f} {oy + ey * s:.1f}", 3.6)
+    r = photolib.feature_fidelity([dot], faces, (640, 640))
+    assert r["faces"][0]["features"]["eye_l"]["hit"]
+    assert r["hits"] == 1 and r["total"] == 7           # 5 landmarks + glasses + mole
+    assert r["score"] == round(1 / 7, 3) and "face0.nose" in r["missing"]
+    assert photolib.feature_fidelity([], faces, (640, 640))["score"] == 0.0
+    assert photolib.feature_fidelity([dot], [], (640, 640))["score"] is None
+    # knockout fills never count as ink
+    ko = dot.replace('fill="none" stroke="black"', 'fill="white" stroke="none"')
+    assert photolib.feature_fidelity([ko], faces, (640, 640))["hits"] == 0
+
+
+def test_protect_face_improves_feature_fidelity(face_traces):
+    """The point of protect_face: on a portrait with known landmarks, eyes,
+    nostrils and the mole survive with protection and are lost without it,
+    while mottled skin still drops (stroke count stays sane)."""
+    truth = photolib.synthetic_face_truth()
+    on = photolib.feature_fidelity(face_traces[True], truth, (640, 640))
+    off = photolib.feature_fidelity(face_traces[False], truth, (640, 640))
+    assert on["score"] >= 0.85, on["missing"]
+    assert on["score"] - off["score"] >= 0.3, (on["missing"], off["missing"])
+    assert "face0.nose" in off["missing"] and "face0.nose" not in on["missing"]
+    strokes_on = face_traces[True].count("<path")
+    assert strokes_on - face_traces[False].count("<path") <= 12
+    # recorded on the page for the integrator / CLI
+    assert photolib.read_fidelity(face_traces[True]) == pytest.approx(on["score"], abs=0.01)
+    rep = validate_svg(face_traces[True], require_span=False)
+    assert not [f for f in rep["findings"] if f["severity"] == "HIGH"]
+
+
+def _face_lineart(scale=2, eye_shift=0.0):
+    """A clean line drawing of the portrait fixture (what an image model
+    asked to 'redraw as a coloring page' returns), at scale x the photo's
+    resolution. eye_shift (x IOD) moves the eyes down: identity drift."""
+    f = photolib.synthetic_face_truth()[0]
+    lm = {k: (v[0] * scale, v[1] * scale) for k, v in f["landmarks"].items()}
+    iod = lm["eye_r"][0] - lm["eye_l"][0]
+    n = 640 * scale
+    img = np.full((n, n), 255, np.uint8)
+    t = 3 * scale
+
+    def q(p):
+        return (int(round(p[0])), int(round(p[1])))
+    cv2.ellipse(img, (n // 2, int(0.505 * n)), (int(0.165 * n), int(0.205 * n)),
+                0, 0, 360, 0, t)
+    dy = eye_shift * iod
+    for k in ("eye_l", "eye_r"):
+        c = (lm[k][0], lm[k][1] + dy)
+        cv2.ellipse(img, q(c), (int(0.3 * iod), int(0.14 * iod)), 0, 0, 360, 0, t)
+        cv2.circle(img, q(c), int(0.08 * iod), 0, -1)
+        cv2.ellipse(img, q(c), (int(0.55 * iod), int(0.4 * iod)), 0, 0, 360, 0, t)
+    cv2.line(img, q((lm["eye_l"][0] + 0.55 * iod, lm["eye_l"][1] + dy)),
+             q((lm["eye_r"][0] - 0.55 * iod, lm["eye_r"][1] + dy)), 0, t)
+    nx, ny = lm["nose"]
+    for sx in (-1, 1):
+        cv2.circle(img, q((nx + sx * 0.12 * iod, ny)), int(0.05 * iod), 0, -1)
+    mc = ((lm["mouth_l"][0] + lm["mouth_r"][0]) / 2, lm["mouth_l"][1] - 0.05 * iod)
+    cv2.ellipse(img, q(mc), (int((lm["mouth_r"][0] - lm["mouth_l"][0]) / 2),
+                             int(0.12 * iod)), 0, 10, 170, 0, t)
+    mb = f["feature_boxes"]["mole"]
+    cv2.circle(img, q(((mb[0] + mb[2] / 2) * scale, (mb[1] + mb[3] / 2) * scale)),
+               int(0.05 * iod), 0, -1)
+    return img
+
+
+def test_trace_lineart_standalone():
+    """A synthetic line drawing alone: thresholded, centreline-traced (a
+    thick drawn line becomes ONE stroke), stroke-tiered, valid page."""
+    img = np.full((600, 600), 255, np.uint8)
+    cv2.circle(img, (300, 300), 200, 0, 9)
+    cv2.line(img, (200, 260), (400, 260), 0, 7)
+    cv2.circle(img, (300, 360), 14, 0, -1)
+    svg = photolib.trace_lineart(img, title="Lines")
+    ET.fromstring(svg)
+    art = svg[svg.index("data-policy"):svg.index("<g data-chrome")]
+    assert 2 <= art.count("<path") <= 5
+    rep = validate_svg(svg, require_span=False)
+    assert not [f for f in rep["findings"] if f["severity"] == "HIGH"]
+    assert "data-fidelity" not in svg                     # no faces, no metric
+    with pytest.raises(ValueError, match="photo"):
+        photolib.photo_to_svg(None)
+
+
+def test_trace_lineart_aligned_and_identity_drift(face_photo):
+    """Line art from a 'generative model' at 2x the photo's resolution is
+    aligned onto the photo: landmarks come from the photo + hints, so a
+    faithful redraw scores high and a redraw with moved eyes falls below
+    FIDELITY_MIN (reject / re-generate)."""
+    hints = photolib.synthetic_face_hints()
+    good = photolib.trace_lineart(_face_lineart(), photo=face_photo, hints=hints,
+                                  qa=False)
+    drift = photolib.trace_lineart(_face_lineart(eye_shift=0.9), photo=face_photo,
+                                   hints=hints, qa=False)
+    assert photolib.read_fidelity(good) >= photolib.FIDELITY_MIN
+    assert photolib.read_fidelity(drift) < photolib.FIDELITY_MIN
+    assert "face0.eye_l" in drift
+    with pytest.raises(ValueError, match="aspect"):
+        photolib.trace_lineart(np.full((300, 600), 255, np.uint8), photo=face_photo)
+    frag = photolib.trace_lineart(_face_lineart(), photo=face_photo, fragment=True)
+    assert 'data-el="photo-trace"' in frag
+
+
+def test_cli_hints_prints_fidelity(face_photo, tmp_path):
+    import json
+    hp = tmp_path / "hints.json"
+    hp.write_text(json.dumps(photolib.synthetic_face_hints()))
+    out = tmp_path / "page.svg"
+    r = subprocess.run([sys.executable, "-m", "lib.photolib", face_photo,
+                        "-o", str(out), "--hints", str(hp)],
+                       capture_output=True, text=True, timeout=300, cwd=REPO)
+    assert r.returncode == 0, r.stderr
+    assert "feature fidelity" in r.stdout
+    hp.write_text(json.dumps({"faces": [{"box": [1, 2, 3]}]}))
+    r = subprocess.run([sys.executable, "-m", "lib.photolib", face_photo,
+                        "-o", str(out), "--hints", str(hp)],
+                       capture_output=True, text=True, timeout=300, cwd=REPO)
+    assert r.returncode == 2 and "bad hints" in r.stderr

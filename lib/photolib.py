@@ -33,13 +33,36 @@ Subject understanding is a soft-rule fallback chain (all local):
   simplify epsilon, angle snapping, background mode) that bias — never
   hard-gate — the trace.
 
-All processing is local; every stage is deterministic (fixed iteration
-counts, no randomness). Photos of real people stay on disk: the pipeline
-extracts LINE ART only, never likeness shading.
+Faces: detect_faces_full / face_landmarks return YuNet boxes WITH their
+five landmarks ({"box", "score", "landmarks": eye_l, eye_r, nose, mouth_l,
+mouth_r}; _l/_r = IMAGE-left/right). With protect_face (face/person/animal
+policies, or any hinted face) the landmarks become FEATURE-PROTECTION
+ZONES — eye ellipses scaled by the interocular distance, a brow band,
+nose, mouth, declared glasses/moles/... — inside which small dark blobs
+(pupils, nostrils) survive the dot filter, length floors and the texture
+rule relax, simplify is finer and strokes draw at the interior weight.
+feature_fidelity() scores whether traced ink sits on each feature; pages
+with faces carry it as data-fidelity.
+
+Optional inputs, all off by default (output is byte-identical without):
+  hints=      a JSON-able dict an agent writes by LOOKING at the photo
+              (label, subject_box, faces + features, keep/drop boxes) —
+              see parse_hints and reference/photo-guide.md
+  backends=   {"segment"|"landmarks"|"depth"|"lineart": registered name},
+              from lib/imagemodels.py (local ONNX models, callables);
+              remote backends are refused unless allow_remote=True
+  lineart=    a line drawing from an image model, vectorized by the house
+              pipeline (trace_lineart); landmarks/mask still come from
+              the photo, so feature_fidelity guards against identity drift
+
+All processing is local by default; every stage is deterministic (fixed
+iteration counts, no randomness). Photos of real people stay on disk: the
+pipeline extracts LINE ART only, never likeness shading.
 
 CLI:
     python -m lib.photolib photo.jpg -o page.svg [--style sketch]
-        [--detail medium] [--fragment out_fragment.svg]
+        [--detail medium] [--fragment out_fragment.svg] [--hints h.json]
+        [--lineart drawing.png] [--no-protect-face]
 """
 import math
 import os
@@ -67,6 +90,7 @@ GRABCUT_WORK = 640                 # GrabCut runs on a <=640px copy (fast, deter
 GRABCUT_MARGIN = 0.025             # border ring seeded as background (subject may fill the frame)
 DROP_MASK_FRAC = (0.05, 0.70)      # subject-area window in which a mask is trusted for bg drop
 DROP_BORDER_TOUCH = 0.30           # >30% of the frame border inside the mask = not a single subject
+DEPTH_FAR = 0.35                   # depth backend: farthest 35% of the GrabCut rect seeds as background
 BLOB_ELONGATION = 3.0              # perimeter/(4*inscribed radius) below this = solid blob
 BLOB_DARK_RATIO = 0.55             # interior blob kept if darker than 55% of the subject median
 BLOB_LARGE_FRAC = 0.02             # ...or if it covers >=2% of the subject area
@@ -81,6 +105,33 @@ FEET_BAND = 0.08                   # bottom 8% of the subject: ring tightened to
 FEET_RADIUS = 7                    # ...to this many px (keeps the paw outline band, not the grass)
 SW_SILHOUETTE, SW_SUBJECT, SW_BACKGROUND = 4.6, 3.6, 2.6
 SKETCH_MIN_LENGTH = 400.0          # page px of traced line below which sketch falls back to clean
+# feature protection (protect_face / keep boxes). Zone sizes are fractions
+# of the interocular distance (IOD, eye centre to eye centre)
+EYE_ZONE = (0.40, 0.26)            # eye ellipse semi-axes (along, across the eye line) x IOD
+BROW_RISE, BROW_ZONE = 0.36, (0.50, 0.20)   # brow band: centre above each eye, semi-axes
+NOSE_ZONE = (0.36, 0.30)           # nose-tip ellipse semi-axes (nostrils sit either side)
+MOUTH_PAD = (0.20, 0.28)           # mouth ellipse: half corner span + this, and this across
+GLASSES_ZONE = (1.15, 0.50)        # declared glasses: rect half-extent around the eye midpoint
+PROTECT_MIN_COMPONENT = 6          # ink component area kept inside a protection zone
+PROTECT_MIN_LEN = 8.0              # image-px floor for protected strokes (pupil ring, nostril)
+PROTECT_SPUR = 4.0                 # spur pruning inside zones (a short brow is not a spur)
+PROTECT_DARK_RATIO = 0.85          # protected blob kept if darker than 85% of the median
+PROTECT_SIMPLIFY = 0.4             # simplify epsilon x this inside zones (small shapes stay round)
+PROTECT_MAX_STROKES = 80           # protected strokes ride outside the max_strokes cut, up to this
+FIDELITY_RADIUS = 0.20             # feature_fidelity: ink within this x IOD of a feature = present
+FIDELITY_MIN = 0.80                # line art from a generative model below this = identity drift
+FACE_KEYS = ("eye_l", "eye_r", "nose", "mouth_l", "mouth_r")   # _l/_r = IMAGE left/right
+# canonical landmark positions as fractions of a frontal face box — fills
+# in the landmarks a face hint leaves out (a box alone still protects)
+CANON_LANDMARKS = {"eye_l": (0.32, 0.40), "eye_r": (0.68, 0.40),
+                   "nose": (0.50, 0.60), "mouth_l": (0.36, 0.78),
+                   "mouth_r": (0.64, 0.78)}
+# declared features whose zone is derived from the landmarks; any other
+# feature name (mole, birthmark, earring, hair_clip ...) needs its own box
+DERIVED_FEATURES = ("glasses", "gap_tooth", "braces", "freckles", "dimples",
+                    "headband")
+HINT_KEYS = ("units", "image_size", "label", "subject_box", "faces", "keep",
+             "drop", "notes")
 
 # soft-rule policies per subject label; QA may adjust within bounds.
 # bg="drop": ink outside the dilated subject mask is removed (single-subject
@@ -126,10 +177,9 @@ _YUNET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                       "assets", "models", "face_detection_yunet_2023mar.onnx")
 
 
-def _detect_faces(gray, bgr=None):
-    """YuNet face detection (Apache-2.0 model bundled in assets/models).
-    Returns [x, y, w, h] list. OpenCV 5 removed Haar cascades; YuNet is the
-    supported detector and runs fully local."""
+def _yunet_rows(gray, bgr=None):
+    """Raw YuNet rows (x, y, w, h, right-eye xy, left-eye xy, nose xy,
+    right-mouth xy, left-mouth xy, score) for faces >= 1/16 of the width."""
     if not os.path.exists(_YUNET):
         return []
     bgr = bgr if bgr is not None else cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
@@ -141,45 +191,497 @@ def _detect_faces(gray, bgr=None):
         _ret, faces = det.detect(bgr)
     except cv2.error:
         return []
+    if faces is None:
+        return []
+    return [f for f in faces if f[2] >= w / 16]
+
+
+def _detect_faces(gray, bgr=None):
+    """YuNet face detection (Apache-2.0 model bundled in assets/models).
+    Returns [x, y, w, h] list. OpenCV 5 removed Haar cascades; YuNet is the
+    supported detector and runs fully local. detect_faces_full keeps the
+    landmarks too."""
+    return [(int(f[0]), int(f[1]), int(f[2]), int(f[3]))
+            for f in _yunet_rows(gray, bgr)]
+
+
+def _pt(p):
+    return (round(float(p[0]), 1), round(float(p[1]), 1))
+
+
+def _lr(a, b):
+    """Order two points IMAGE-left first (smaller x)."""
+    return (a, b) if a[0] <= b[0] else (b, a)
+
+
+def detect_faces_full(gray, bgr=None):
+    """YuNet faces WITH landmarks, in image px:
+        [{"box": [x, y, w, h], "score": s,
+          "landmarks": {"eye_l": (x, y), "eye_r": (x, y), "nose": (x, y),
+                        "mouth_l": (x, y), "mouth_r": (x, y)}}]
+    _l / _r mean IMAGE-left / IMAGE-right (smaller / larger x), never the
+    subject's own left/right: a frontal subject's RIGHT eye is "eye_l".
+    (YuNet names its points from the subject's side; they are re-ordered
+    by x here so no consumer has to think about it.) Same faces, same
+    order as _detect_faces."""
     out = []
-    if faces is not None:
-        for f in faces:
-            x, y, fw, fh = f[0], f[1], f[2], f[3]
-            if fw >= w / 16:
-                out.append((int(x), int(y), int(fw), int(fh)))
+    for f in _yunet_rows(gray, bgr):
+        eye_l, eye_r = _lr(_pt(f[4:6]), _pt(f[6:8]))
+        mouth_l, mouth_r = _lr(_pt(f[10:12]), _pt(f[12:14]))
+        out.append({"box": [int(f[0]), int(f[1]), int(f[2]), int(f[3])],
+                    "score": round(float(f[14]), 3),
+                    "landmarks": {"eye_l": eye_l, "eye_r": eye_r,
+                                  "nose": _pt(f[8:10]), "mouth_l": mouth_l,
+                                  "mouth_r": mouth_r},
+                    "source": "yunet"})
     return out
 
 
-def detect_subject(gray, bgr=None):
+def face_landmarks(photo_path, hints=None, *, backends=None,
+                   allow_remote=False, max_dim=1600):
+    """Faces of a photo file in the detect_faces_full dict format: YuNet,
+    augmented by a "landmarks" backend and overridden by hinted faces
+    (a hint face overlapping a detection replaces it). Coordinates are px
+    of the WORKING image (load_photo at max_dim — pass a large max_dim for
+    the original resolution); ratios (IOD / box width, ...) are scale-free
+    either way. Hint faces carry "features" (names) and "feature_boxes"."""
+    gray, bgr = load_photo(photo_path, max_dim)
+    hz = parse_hints(hints, gray.shape, _upright_size(photo_path))
+    return _all_faces(gray, bgr, hz, backends, allow_remote)
+
+
+def _all_faces(gray, bgr, hz, backends, allow_remote):
+    faces = detect_faces_full(gray, bgr)
+    name = (backends or {}).get("landmarks")
+    if name:
+        import imagemodels
+        # the privacy gate counts hinted faces too (a profile YuNet misses)
+        extra = imagemodels.run_backend(name, bgr if bgr is not None else
+                                        cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR),
+                                        "landmarks", allow_remote=allow_remote,
+                                        faces=len(faces) + len(hz["faces"] if hz else ()))
+        faces = _merge_faces(faces, extra)       # validated by run_backend
+    if hz and hz["faces"]:
+        faces = _merge_faces(faces, hz["faces"])
+    return faces
+
+
+# ---------------------------------------------------------------- vision hints
+class HintError(ValueError):
+    """Malformed hints dict (raised with the offending field named)."""
+
+
+def _upright_size(path):
+    """(w, h) of a photo file after EXIF rotation, without decoding it."""
+    if path is None or not isinstance(path, (str, os.PathLike)):
+        return None
+    from PIL import Image
+    with Image.open(path) as im:
+        w, h = im.size
+        try:
+            orient = im.getexif().get(0x0112, 1)
+        except Exception:
+            orient = 1
+    return (h, w) if orient in (5, 6, 7, 8) else (w, h)
+
+
+def _num(v, where):
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+        raise HintError(f"{where}: expected a number, got {v!r}")
+    return float(v)
+
+
+def _box_iou(a, b):
+    ax1, ay1, bx1, by1 = a[0] + a[2], a[1] + a[3], b[0] + b[2], b[1] + b[3]
+    iw = max(0.0, min(ax1, bx1) - max(a[0], b[0]))
+    ih = max(0.0, min(ay1, by1) - max(a[1], b[1]))
+    inter = iw * ih
+    union = a[2] * a[3] + b[2] * b[3] - inter
+    return inter / union if union > 0 else 0.0
+
+
+def normalize_face(f, shape, source="hint"):
+    """Validate one face dict (box required; landmarks, score, features
+    optional) in IMAGE px and return it in the detect_faces_full format.
+    Missing landmarks come from CANON_LANDMARKS inside the box; eyes and
+    mouth corners are re-ordered so _l is the smaller x."""
+    if not isinstance(f, dict):
+        raise HintError(f"face: expected a dict, got {type(f).__name__}")
+    unknown = set(f) - {"box", "score", "landmarks", "features",
+                        "feature_boxes", "source"}
+    if unknown:
+        raise HintError(f"face: unknown key(s) {sorted(unknown)}; allowed: "
+                        "box, landmarks, score, features")
+    if "box" not in f:
+        raise HintError("face: 'box' [x, y, w, h] is required")
+    box = _check_box(f["box"], "face.box", shape)
+    lm_in = f.get("landmarks") or {}
+    if not isinstance(lm_in, dict):
+        raise HintError("face.landmarks: expected a dict of name -> [x, y]")
+    bad = set(lm_in) - set(FACE_KEYS)
+    if bad:
+        raise HintError(f"face.landmarks: unknown name(s) {sorted(bad)}; use "
+                        f"{', '.join(FACE_KEYS)} (_l/_r = IMAGE left/right)")
+    lm, given = {}, []
+    for k in FACE_KEYS:
+        if k in lm_in:
+            lm[k] = _pt(_check_point(lm_in[k], f"face.landmarks.{k}"))
+            given.append(k)
+        else:
+            fx, fy = CANON_LANDMARKS[k]
+            lm[k] = _pt((box[0] + fx * box[2], box[1] + fy * box[3]))
+    lm["eye_l"], lm["eye_r"] = _lr(lm["eye_l"], lm["eye_r"])
+    lm["mouth_l"], lm["mouth_r"] = _lr(lm["mouth_l"], lm["mouth_r"])
+    score = _num(f.get("score", 1.0), "face.score")
+    if not 0.0 <= score <= 1.0:
+        raise HintError(f"face.score: must be in [0, 1], got {score}")
+    out = {"box": [int(round(v)) for v in box], "score": round(score, 3),
+           "landmarks": lm, "source": f.get("source", source)}
+    if len(given) < len(FACE_KEYS):
+        out["_given"] = given                   # merge may borrow the rest
+    names, fboxes = [], {}
+    for i, feat in enumerate(f.get("features") or []):
+        if isinstance(feat, str):
+            name, fb = feat, None
+        elif isinstance(feat, dict) and isinstance(feat.get("name"), str):
+            extra = set(feat) - {"name", "box"}
+            if extra:
+                raise HintError(f"face.features[{i}]: unknown key(s) {sorted(extra)}")
+            name = feat["name"]
+            fb = _check_box(feat["box"], f"face.features[{i}].box", shape) \
+                if feat.get("box") is not None else None
+        else:
+            raise HintError(f"face.features[{i}]: expected a name or "
+                            f"{{'name': ..., 'box': [x, y, w, h]}}, got {feat!r}")
+        if fb is None and isinstance(f.get("feature_boxes"), dict) \
+                and name in f["feature_boxes"]:
+            fb = _check_box(f["feature_boxes"][name], f"face.feature_boxes.{name}",
+                            shape)
+        if fb is None and name not in DERIVED_FEATURES:
+            raise HintError(f"face.features[{i}]: '{name}' needs a box (it can "
+                            f"be anywhere on the face); features placed from the "
+                            f"landmarks alone are: {', '.join(DERIVED_FEATURES)}")
+        names.append(name)
+        if fb is not None:
+            fboxes[name] = [round(v, 1) for v in fb]
+    if names:
+        out["features"] = names
+        out["feature_boxes"] = fboxes
+    return out
+
+
+def _check_point(p, where):
+    if not isinstance(p, (list, tuple)) or len(p) != 2:
+        raise HintError(f"{where}: expected [x, y], got {p!r}")
+    return (_num(p[0], where), _num(p[1], where))
+
+
+def _check_box(b, where, shape):
+    """[x, y, w, h] in IMAGE px, positive size, overlapping the image."""
+    if not isinstance(b, (list, tuple)) or len(b) != 4:
+        raise HintError(f"{where}: expected [x, y, w, h], got {b!r}")
+    x, y, w, h = (_num(v, where) for v in b)
+    if w <= 0 or h <= 0:
+        raise HintError(f"{where}: width and height must be > 0, got {list(b)}")
+    ih, iw = shape[:2]
+    if x >= iw or y >= ih or x + w <= 0 or y + h <= 0:
+        raise HintError(f"{where}: {list(b)} lies outside the {iw}x{ih} image "
+                        "(wrong units? px boxes are in photo pixels, norm in 0-1)")
+    return (x, y, w, h)
+
+
+def parse_hints(hints, shape, photo_size=None):
+    """Validate a vision-hints dict (or a path to its JSON file) and return
+    it converted to WORKING-image px, or None when hints is None.
+
+    shape is the working image (h, w); photo_size the (w, h) the photo's
+    px coordinates refer to (the original upright photo — load_photo may
+    have downscaled it). units "norm" means 0-1 fractions of the frame;
+    "image_size": [w, h] overrides photo_size (an agent that looked at a
+    resized copy says which). Raises HintError naming the bad field."""
+    if hints is None:
+        return None
+    if isinstance(hints, dict) and hints.get("_parsed"):
+        return hints
+    if isinstance(hints, (str, os.PathLike)):
+        import json
+        try:
+            with open(hints) as fh:
+                hints = json.load(fh)
+        except (OSError, ValueError) as e:
+            raise HintError(f"hints file {hints!r}: {e}") from None
+    if not isinstance(hints, dict):
+        raise HintError(f"hints: expected a dict, got {type(hints).__name__}")
+    unknown = set(hints) - set(HINT_KEYS)
+    if unknown:
+        raise HintError(f"hints: unknown key(s) {sorted(unknown)}; allowed: "
+                        f"{', '.join(HINT_KEYS)}")
+    ih, iw = shape[:2]
+    units = hints.get("units", "px")
+    if units not in ("px", "norm"):
+        raise HintError(f"hints.units: 'px' or 'norm', got {units!r}")
+    if units == "norm":
+        sx, sy = float(iw), float(ih)
+    else:
+        ref = hints.get("image_size") or photo_size or (iw, ih)
+        if hints.get("image_size") is not None:
+            ref = _check_point(ref, "hints.image_size")
+            if min(ref) <= 0:
+                raise HintError(f"hints.image_size: must be positive, got {ref}")
+        sx, sy = iw / float(ref[0]), ih / float(ref[1])
+
+    def conv_box(b, where):
+        if not isinstance(b, (list, tuple)) or len(b) != 4:
+            raise HintError(f"{where}: expected [x, y, w, h], got {b!r}")
+        v = [_num(c, where) for c in b]
+        if units == "norm" and not all(-0.01 <= c <= 1.01 for c in v):
+            raise HintError(f"{where}: norm units must be 0-1, got {list(b)}")
+        if units == "px" and all(0 <= c <= 1.0 for c in v) and max(iw, ih) > 4:
+            raise HintError(f"{where}: {list(b)} looks normalized — set "
+                            "\"units\": \"norm\" (px boxes are photo pixels)")
+        return [v[0] * sx, v[1] * sy, v[2] * sx, v[3] * sy]
+
+    def conv_pt(p, where):
+        x, y = _check_point(p, where)
+        if units == "norm" and not (-0.01 <= x <= 1.01 and -0.01 <= y <= 1.01):
+            raise HintError(f"{where}: norm units must be 0-1, got {list(p)}")
+        return [x * sx, y * sy]
+
+    out = {"_parsed": True, "label": None, "subject_box": None, "faces": [],
+           "keep": [], "drop": []}
+    label = hints.get("label")
+    if label is not None:
+        if label not in POLICIES:
+            raise HintError(f"hints.label: {label!r} is not a policy; use one "
+                            f"of {', '.join(POLICIES)}")
+        out["label"] = label
+    if hints.get("subject_box") is not None:
+        out["subject_box"] = _check_box(conv_box(hints["subject_box"],
+                                                 "hints.subject_box"),
+                                        "hints.subject_box", shape)
+    for key in ("keep", "drop"):
+        boxes = hints.get(key) or []
+        if not isinstance(boxes, (list, tuple)):
+            raise HintError(f"hints.{key}: expected a list of [x, y, w, h]")
+        out[key] = [_check_box(conv_box(b, f"hints.{key}[{i}]"),
+                               f"hints.{key}[{i}]", shape)
+                    for i, b in enumerate(boxes)]
+    faces = hints.get("faces") or []
+    if not isinstance(faces, (list, tuple)):
+        raise HintError("hints.faces: expected a list of face dicts")
+    for i, f in enumerate(faces):
+        if not isinstance(f, dict):
+            raise HintError(f"hints.faces[{i}]: expected a dict, got {f!r}")
+        g = dict(f)
+        if "box" in g:
+            g["box"] = conv_box(g["box"], f"hints.faces[{i}].box")
+        if isinstance(g.get("landmarks"), dict):
+            g["landmarks"] = {k: conv_pt(v, f"hints.faces[{i}].landmarks.{k}")
+                              if k in FACE_KEYS else v
+                              for k, v in g["landmarks"].items()}
+        feats = []
+        for j, feat in enumerate(g.get("features") or []):
+            if isinstance(feat, dict) and feat.get("box") is not None:
+                feat = dict(feat, box=conv_box(feat["box"],
+                                               f"hints.faces[{i}].features[{j}].box"))
+            feats.append(feat)
+        if feats:
+            g["features"] = feats
+        if isinstance(g.get("feature_boxes"), dict):
+            g["feature_boxes"] = {
+                k: conv_box(v, f"hints.faces[{i}].feature_boxes.{k}")
+                for k, v in g["feature_boxes"].items()}
+        try:
+            out["faces"].append(normalize_face(g, shape))
+        except HintError as e:
+            raise HintError(f"hints.faces[{i}]: {e}") from None
+    return out
+
+
+def _merge_faces(base, extra):
+    """extra faces (hints, backends) override overlapping base faces
+    (IoU >= 0.3) — borrowing the base face's landmarks for any the extra
+    face left out — and are appended otherwise. Deterministic order: base
+    order, then unmatched extras."""
+    out = [dict(f) for f in base]
+    for e in extra:
+        e = dict(e)
+        hit = None
+        for i, b in enumerate(out):
+            if _box_iou(e["box"], b["box"]) >= 0.3:
+                hit = i
+                break
+        given = e.pop("_given", None)
+        if hit is not None and given is not None:
+            lm = dict(out[hit]["landmarks"])
+            lm.update({k: e["landmarks"][k] for k in given})
+            lm["eye_l"], lm["eye_r"] = _lr(lm["eye_l"], lm["eye_r"])
+            lm["mouth_l"], lm["mouth_r"] = _lr(lm["mouth_l"], lm["mouth_r"])
+            e["landmarks"] = lm
+        if hit is not None:
+            out[hit] = e
+        else:
+            out.append(e)
+    for f in out:
+        f.pop("_given", None)
+    return out
+
+
+def _iod(face):
+    lm = face["landmarks"]
+    d = math.hypot(lm["eye_r"][0] - lm["eye_l"][0], lm["eye_r"][1] - lm["eye_l"][1])
+    return max(d, 0.25 * face["box"][2], 2.0)
+
+
+def _face_frame(face):
+    """(iod, angle_deg of the eye line, unit 'up' vector) for one face."""
+    lm = face["landmarks"]
+    (x0, y0), (x1, y1) = lm["eye_l"], lm["eye_r"]
+    ang = math.degrees(math.atan2(y1 - y0, x1 - x0))
+    a = math.radians(ang)
+    return _iod(face), ang, (math.sin(a), -math.cos(a))
+
+
+def protection_zones(faces, shape, keep=()):
+    """uint8 mask (255 = protected) of FEATURE zones in image px: per face
+    two eye ellipses and a brow band (scaled by the interocular distance,
+    rotated with the eye line), nose, mouth, plus declared features
+    (glasses rect around both eyes, freckle cheeks, dimples, headband,
+    and any feature box) and the hints' keep boxes. None when empty."""
+    ih, iw = shape[:2]
+    z = np.zeros((ih, iw), np.uint8)
+
+    def ell(c, ax, ang):
+        cv2.ellipse(z, (int(round(c[0])), int(round(c[1]))),
+                    (max(1, int(round(ax[0]))), max(1, int(round(ax[1])))),
+                    ang, 0, 360, 255, -1)
+
+    def rect(cx, cy, hw, hh, ang):
+        pts = cv2.boxPoints(((cx, cy), (2 * hw, 2 * hh), ang))
+        cv2.fillPoly(z, [np.round(pts).astype(np.int32)], 255)
+
+    for f in faces:
+        lm = f["landmarks"]
+        iod, ang, up = _face_frame(f)
+        feats = set(f.get("features") or ())
+        for e in (lm["eye_l"], lm["eye_r"]):
+            ell(e, (EYE_ZONE[0] * iod, EYE_ZONE[1] * iod), ang)
+            ell((e[0] + up[0] * BROW_RISE * iod, e[1] + up[1] * BROW_RISE * iod),
+                (BROW_ZONE[0] * iod, BROW_ZONE[1] * iod), ang)
+        ell(lm["nose"], (NOSE_ZONE[0] * iod, NOSE_ZONE[1] * iod), ang)
+        ml, mr = lm["mouth_l"], lm["mouth_r"]
+        half = math.hypot(mr[0] - ml[0], mr[1] - ml[1]) / 2
+        mc = ((ml[0] + mr[0]) / 2, (ml[1] + mr[1]) / 2)
+        ell(mc, (half + MOUTH_PAD[0] * iod, MOUTH_PAD[1] * iod), ang)
+        mid = ((lm["eye_l"][0] + lm["eye_r"][0]) / 2,
+               (lm["eye_l"][1] + lm["eye_r"][1]) / 2)
+        if "glasses" in feats:
+            rect(mid[0], mid[1], GLASSES_ZONE[0] * iod, GLASSES_ZONE[1] * iod, ang)
+        if "freckles" in feats:
+            for e in (lm["eye_l"], lm["eye_r"]):
+                ell((e[0] - up[0] * 0.55 * iod, e[1] - up[1] * 0.55 * iod),
+                    (0.42 * iod, 0.28 * iod), ang)
+        if "dimples" in feats:
+            for p, sgn in ((ml, -1), (mr, 1)):
+                ell((p[0] + sgn * 0.22 * iod, p[1]), (0.18 * iod, 0.18 * iod), ang)
+        if "headband" in feats:
+            bx, by, bw, bh = f["box"]
+            rect(bx + bw / 2, by + 0.02 * bh, 0.6 * bw, 0.14 * bh, ang)
+        for fb in (f.get("feature_boxes") or {}).values():
+            x, y, w, h = fb
+            pad = 0.1 * iod
+            cv2.rectangle(z, (int(x - pad), int(y - pad)),
+                          (int(math.ceil(x + w + pad)), int(math.ceil(y + h + pad))),
+                          255, -1)
+    for x, y, w, h in keep:
+        cv2.rectangle(z, (int(x), int(y)), (int(math.ceil(x + w)),
+                      int(math.ceil(y + h))), 255, -1)
+    return z if z.any() else None
+
+
+def _box_mask(boxes, shape):
+    z = np.zeros(shape[:2], np.uint8)
+    for x, y, w, h in boxes:
+        cv2.rectangle(z, (int(x), int(y)), (int(math.ceil(x + w)),
+                      int(math.ceil(y + h))), 255, -1)
+    return z if z.any() else None
+
+
+def detect_subject(gray, bgr=None, *, hints=None, backends=None,
+                   allow_remote=False):
     """Soft-rule fallback chain, all local. Returns
     (subject_mask or None, label, meta dict). meta carries mask_frac and
     border_touch so callers can judge whether the mask is a silhouette
-    (single subject, framed) or merely a hint."""
+    (single subject, framed) or merely a hint; meta["faces_full"] holds the
+    faces with landmarks.
+
+    hints (parse_hints output, or a raw dict in this image's px/norm):
+    subject_box seeds GrabCut with that rect; hinted faces join YuNet's;
+    label overrides the policy (a non-face label keeps hinted faces for
+    protection only, not subject detection). backends ({capability: name},
+    lib/imagemodels.py): "segment" replaces GrabCut when its mask is
+    usable, "landmarks" augments YuNet, "depth" seeds GrabCut near/far."""
     h, w = gray.shape
     meta = {}
     img = bgr if bgr is not None else gray
+    hz = parse_hints(hints, gray.shape)
+    backends = _check_backends(backends)
 
-    # 1) YuNet face detection (bundled Apache-2.0 model)
-    faces = _detect_faces(gray, bgr)
+    # 1) YuNet face detection (bundled Apache-2.0 model), plus a landmarks
+    # backend and hinted faces when given
+    full = people = _all_faces(gray, bgr, hz, backends, allow_remote)
+    if full:
+        meta["faces_full"] = full
+    label_hint = hz["label"] if hz else None
+    if label_hint not in (None, "face", "person"):
+        full = [f for f in full if f.get("source") != "hint"]
+    faces = [tuple(f["box"]) for f in full]
+    if hz and hz["subject_box"] is not None:
+        if faces:
+            meta["faces"] = faces
+        x, y, bw, bh = hz["subject_box"]
+        mask = _backend_mask(img, backends, allow_remote, people, meta, rect=True)
+        if mask is None:
+            mask = _grabcut_seeded(img, backends, allow_remote, people,
+                                   (int(x), int(y), max(2, int(bw)), max(2, int(bh))))
+            meta["detector"] = "hint-box"
+        _mask_meta(mask, meta)
+        if label_hint:
+            label = label_hint
+        elif faces:
+            label = "face" if _big_single_face(faces, w, h) else "person"
+        else:
+            label = _heuristic_label(gray, mask, meta)
+        return mask, label, meta
     if len(faces):
         meta["faces"] = faces
         x0 = max(0, min(f[0] for f in faces) - w // 12)
         y0 = max(0, min(f[1] for f in faces) - h // 12)
         x1 = min(w, max(f[0] + f[2] for f in faces) + w // 12)
         y1 = min(h, max(f[1] + f[3] for f in faces) + int(h * 0.35))
-        mask = _grabcut(img, (x0, y0, x1 - x0, y1 - y0))
-        meta["detector"] = "face"
+        mask = _backend_mask(img, backends, allow_remote, people, meta, rect=True)
+        if mask is None:
+            mask = _grabcut_seeded(img, backends, allow_remote, people,
+                                   (x0, y0, x1 - x0, y1 - y0))
+            meta["detector"] = "face"
         _mask_meta(mask, meta)
-        return mask, ("face" if _big_single_face(faces, w, h) else "person"), meta
+        return mask, label_hint or ("face" if _big_single_face(faces, w, h)
+                                    else "person"), meta
+
+    # 1b) a segmentation backend's mask, when it looks like a framed subject
+    mask = _backend_mask(img, backends, allow_remote, people, meta)
+    if mask is not None:
+        _mask_meta(mask, meta)
+        return mask, label_hint or _heuristic_label(gray, mask, meta), meta
 
     # 2) colour GrabCut seeded by a thin border ring: everything but the
     # frame edge starts as probable subject, so a subject that nearly fills
     # the frame (tail to nose) is not clipped by a fixed centre rect
-    mask = _grabcut(img)
+    mask = _grabcut_seeded(img, backends, allow_remote, people, None)
     if mask is not None and 0.04 < mask.mean() / 255 < 0.92:
-        meta["detector"] = "grabcut"
+        meta["detector"] = "grabcut" if not backends.get("depth") else "grabcut+depth"
         _mask_meta(mask, meta)
-        return mask, _heuristic_label(gray, mask, meta), meta
+        return mask, label_hint or _heuristic_label(gray, mask, meta), meta
 
     # 3) center-prior saliency on gradient magnitude
     grad = cv2.Sobel(cv2.GaussianBlur(gray, (5, 5), 0), cv2.CV_32F, 1, 1)
@@ -208,14 +710,70 @@ def _big_single_face(faces, w, h):
     return len(faces) == 1 and faces[0][2] > w * 0.12
 
 
-def _grabcut(img, rect=None, iters=5):
+def _check_backends(backends):
+    """{capability: registered backend name} -> validated dict ({} if None)."""
+    if not backends:
+        return {}
+    import imagemodels
+    if not isinstance(backends, dict):
+        raise imagemodels.BackendError(
+            "backends: expected {capability: backend name}, e.g. "
+            "{'segment': 'my-seg'}")
+    for cap, name in backends.items():
+        if cap not in imagemodels.CAPABILITIES:
+            raise imagemodels.BackendError(
+                f"backends: unknown capability {cap!r}; use one of "
+                f"{', '.join(imagemodels.CAPABILITIES)}")
+        b = imagemodels.get_backend(name)          # raises when unregistered
+        if b["capability"] != cap:
+            raise imagemodels.BackendError(
+                f"backends[{cap!r}]: {name!r} is a {b['capability']!r} backend")
+    return dict(backends)
+
+
+def _run_backend(cap, img, backends, allow_remote, faces):
+    import imagemodels
+    bgr = img if img.ndim == 3 else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    return imagemodels.run_backend(backends[cap], bgr, cap,
+                                   allow_remote=allow_remote, faces=len(faces))
+
+
+def _backend_mask(img, backends, allow_remote, faces, meta, rect=False):
+    """A "segment" backend's mask when it is usable — a framed single
+    subject (_mask_usable), or for the face / subject-box branches any
+    mask of sane size (2-95% of the frame; there it is a hint) — else None
+    and GrabCut runs."""
+    if not backends.get("segment"):
+        return None
+    m = _run_backend("segment", img, backends, allow_remote, faces)
+    frac = float((m > 0).mean())
+    ok = (0.02 <= frac <= 0.95) if rect else _mask_usable(m)
+    if not ok:
+        meta["backend_rejected"] = backends["segment"]
+        return None
+    meta["detector"] = "backend:" + backends["segment"]
+    return m
+
+
+def _grabcut_seeded(img, backends, allow_remote, faces, rect):
+    """_grabcut, with a "depth" backend's map as an extra near/far seed."""
+    depth = None
+    if backends.get("depth"):
+        depth = _run_backend("depth", img, backends, allow_remote, faces)
+    return _grabcut(img, rect, depth=depth)
+
+
+def _grabcut(img, rect=None, iters=5, depth=None):
     """GrabCut subject mask; None on failure/empty. `img` is BGR (colour
     separates a white dog from red barn + green grass — grayscale cannot)
     or gray. Runs on a <=GRABCUT_WORK px copy (the GMM does not need more
     and it is ~10x faster), with a fixed RNG seed so the k-means init is
     reproducible call after call. rect=None seeds a GRABCUT_MARGIN border
     ring as background. Small islands (< 25% of the largest component) are
-    dropped; comparable components stay (a toy beside a toy)."""
+    dropped; comparable components stay (a toy beside a toy).
+    depth (optional float map, larger = nearer, from a depth backend): the
+    farthest DEPTH_FAR share of the rect starts as probable background
+    instead of probable subject — a separation cue where colours match."""
     try:
         if img.ndim == 2:
             img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
@@ -237,7 +795,19 @@ def _grabcut(img, rect=None, iters=5):
         fgd = np.zeros((1, 65), np.float64)
         mask = np.zeros((sh, sw), np.uint8)
         cv2.setRNGSeed(0)
-        cv2.grabCut(small, mask, r, bgd, fgd, iters, cv2.GC_INIT_WITH_RECT)
+        if depth is None:
+            cv2.grabCut(small, mask, r, bgd, fgd, iters, cv2.GC_INIT_WITH_RECT)
+        else:
+            d = cv2.resize(depth.astype(np.float32), (sw, sh),
+                           interpolation=cv2.INTER_AREA)
+            rx, ry, rw_, rh_ = r
+            mask[:] = cv2.GC_BGD
+            mask[ry:ry + rh_, rx:rx + rw_] = cv2.GC_PR_FGD
+            inside = mask == cv2.GC_PR_FGD
+            if inside.any():
+                far = float(np.percentile(d[inside], DEPTH_FAR * 100))
+                mask[inside & (d <= far)] = cv2.GC_PR_BGD
+            cv2.grabCut(small, mask, None, bgd, fgd, iters, cv2.GC_INIT_WITH_MASK)
         m = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD),
                      255, 0).astype(np.uint8)
         m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
@@ -269,13 +839,15 @@ def _heuristic_label(gray, mask, meta):
 
 # ---------------------------------------------------------------- ink extraction
 def extract_ink(gray, style="clean", policy=None, subject_mask=None,
-                detail="medium", drop=False):
+                detail="medium", drop=False, protect=None):
     """Binary ink mask (255 = line) from a grayscale photo. subject_mask
     (optional) applies the soft background rule, or — with drop=True —
     zones the clean style's wide-block pass: lenient on the silhouette
     ring (catch the low-contrast outline), strict inside the subject
     (fur/skin SHADING is not a line on a coloring page). _trace removes
-    the background itself afterwards."""
+    the background itself afterwards. protect (uint8 zone mask, optional):
+    feature zones keep the lenient pass, skip the bright-area ceiling and
+    — in sketch style — add the clean fine pass (ridges miss small dots)."""
     policy = dict(policy or POLICIES["generic"])
     mult = DETAIL_MULT.get(detail, 1.0)
     leveled = gray.mean() < 70
@@ -287,6 +859,12 @@ def extract_ink(gray, style="clean", policy=None, subject_mask=None,
 
     if style == "sketch":
         ink = _flow_dog(smooth, policy)
+        if protect is not None:
+            block = max(9, int(policy["block"] * mult) // 2 * 2 + 1)
+            fine = cv2.adaptiveThreshold(smooth, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                         cv2.THRESH_BINARY_INV, block,
+                                         max(3.0, policy["edge_c"] * mult))
+            ink = np.where(protect > 0, cv2.bitwise_or(ink, fine), ink).astype(np.uint8)
     else:
         block = max(9, int(policy["block"] * mult) // 2 * 2 + 1)
         c = max(3.0, policy["edge_c"] * mult)
@@ -304,7 +882,10 @@ def extract_ink(gray, style="clean", policy=None, subject_mask=None,
                                            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                            cv2.THRESH_BINARY_INV, wblock,
                                            c * WIDE_INTERIOR_C)
-            ink2 = np.where(zone == 2, strict, ink2).astype(np.uint8)
+            interior = zone == 2
+            if protect is not None:
+                interior &= protect == 0
+            ink2 = np.where(interior, strict, ink2).astype(np.uint8)
         ink = cv2.bitwise_or(ink, ink2)
         # soften flat-area noise via Otsu ceiling — but never clear more than
         # 55% of the ink (guard against killing whole subjects on dark photos)
@@ -312,33 +893,49 @@ def extract_ink(gray, style="clean", policy=None, subject_mask=None,
                                 cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         ceiling = (smooth > otsu + 55)
         if ceiling.mean() < 0.55:
+            if protect is not None:
+                ceiling &= protect == 0
             ink[ceiling] = 0
 
-    ink = _desplinter(ink, mult)
+    ink = _desplinter(ink, mult, protect)
     if subject_mask is not None and not drop:
-        ink = _focus_subject(ink, subject_mask, mult)
+        ink = _focus_subject(ink, subject_mask, mult, protect)
     return ink
 
 
-def _desplinter(ink, mult):
-    """Morphological anti-splinter: bridge gaps, delete specks/short runs."""
+def _desplinter(ink, mult, protect=None):
+    """Morphological anti-splinter: bridge gaps, delete specks/short runs.
+    Inside protect zones the opening is skipped (it erases 2px glasses
+    frames) and components down to PROTECT_MIN_COMPONENT px survive (a
+    nostril, a mole)."""
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     ink = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, k, iterations=2)
+    closed = ink
     ink = cv2.morphologyEx(ink, cv2.MORPH_OPEN, k)
+    if protect is not None:
+        ink = np.where(protect > 0, closed, ink).astype(np.uint8)
     n, labels, stats, _ = cv2.connectedComponentsWithStats(ink, 8)
     keep = np.zeros_like(ink)
     min_area = MIN_COMPONENT * (1.5 if mult > 1.2 else 1.0)
+    prot = None
+    if protect is not None and n > 1:
+        from scipy import ndimage
+        prot = np.asarray(ndimage.mean(protect > 0, labels, np.arange(1, n))) >= 0.5
     for i in range(1, n):
         x, y, w_, h_, area = stats[i]
         if area >= min_area and max(w_, h_) >= 5:
             keep[labels == i] = 255
+        elif prot is not None and prot[i - 1] and area >= PROTECT_MIN_COMPONENT:
+            keep[labels == i] = 255
     return keep
 
 
-def _focus_subject(ink, subject_mask, mult):
+def _focus_subject(ink, subject_mask, mult, protect=None):
     """Soft rule (bg="soft" policies): background ink thinned (thicker
     threshold), subject kept — implemented as extra erosion of ink OUTSIDE
-    the subject mask."""
+    the subject mask (and outside any protect zone)."""
+    if protect is not None:
+        subject_mask = cv2.bitwise_or(subject_mask, protect)
     bg = cv2.bitwise_and(ink, cv2.bitwise_not(subject_mask))
     bg = cv2.erode(bg, np.ones((2, 2), np.uint8), iterations=1)
     fg = cv2.bitwise_and(ink, subject_mask)
@@ -365,11 +962,11 @@ def _zone_radius(shape, policy, mult):
     return max(4, int(policy["block"] * mult * 0.75))
 
 
-def _drop_background(ink, subject_mask, policy, mult):
+def _drop_background(ink, subject_mask, policy, mult, protect=None):
     """Hard rule (bg="drop" policies): keep ink inside the DILATED subject
     mask only; everything else (fence boards, grass, wallpaper) goes. The
     survivors are re-desplintered because cutting at the mask edge leaves
-    stubs."""
+    stubs. protect zones (feature zones, keep boxes) always survive."""
     r = _zone_radius(ink.shape, policy, mult)
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
     zone = cv2.dilate(subject_mask, k)
@@ -384,8 +981,10 @@ def _drop_background(ink, subject_mask, policy, mult):
             cv2.MORPH_ELLIPSE, (2 * FEET_RADIUS + 1, 2 * FEET_RADIUS + 1)))
         zone[feet:, :] = tight[feet:, :]
         zone[min(ink.shape[0], bottom + 3):, :] = 0
+    if protect is not None:
+        zone = cv2.bitwise_or(zone, protect)
     keep = cv2.bitwise_and(ink, zone)
-    return _desplinter(keep, mult)
+    return _desplinter(keep, mult, protect)
 
 
 def _flow_dog(gray, policy, sigma=1.4, tau=1.0, iters=2,
@@ -698,7 +1297,7 @@ def _zones(shape, subject_mask, policy, mult):
 
 
 def vectorize(ink, policy=None, detail="medium", subject_mask=None,
-              gray=None, drop=False):
+              gray=None, drop=False, protect=None):
     """Ink mask -> ordered list of SVG path elements in PAGE coordinates.
 
     Every 8-connected ink component is classified by its shape:
@@ -716,6 +1315,13 @@ def vectorize(ink, policy=None, detail="medium", subject_mask=None,
     White-fill layering: the largest closed shape is drawn first with a
     white fill (knocks out what is behind — charlib doctrine), thin
     strokes after (fill none).
+    protect (uint8 zone mask, optional — feature zones from landmarks and
+    keep boxes): components mostly inside it are FEATURES — small blobs
+    (pupil, nostril, mole) are kept when darker than PROTECT_DARK_RATIO x
+    their own surround, even below the dot radius; strokes
+    there need only PROTECT_MIN_LEN, skip the texture rule, simplify with
+    PROTECT_SIMPLIFY x epsilon, draw at the interior weight and ride
+    outside the max_strokes cut (up to PROTECT_MAX_STROKES).
     """
     policy = policy or POLICIES["generic"]
     mult = DETAIL_MULT.get(detail, 1.0)
@@ -723,6 +1329,7 @@ def vectorize(ink, policy=None, detail="medium", subject_mask=None,
     maxdim = max(ih, iw)
     s, ox, oy = _page_fit(iw, ih)
     eps = max(1.0, policy["simplify"] * mult)
+    eps_p = max(0.5, eps * PROTECT_SIMPLIFY)
     max_strokes = policy["max_strokes"]
     zone = _zones(ink.shape, subject_mask, policy, mult)
 
@@ -739,11 +1346,25 @@ def vectorize(ink, policy=None, detail="medium", subject_mask=None,
         lab = int(labels[c[0][0][1], c[0][0][0]])
         perim[lab] = max(perim[lab], cv2.arcLength(c, True))
     area = stats[:, cv2.CC_STAT_AREA].astype(np.float64)
+    prot = np.zeros(n - 1, bool)
+    if protect is not None:
+        prot = np.asarray(ndimage.mean(protect > 0, labels, idx)) >= 0.5
+        # a feature nested in another component's hole (an eye inside a
+        # glasses rim) has no EXTERNAL contour of its own: measure it
+        for i in 1 + np.nonzero(prot & (perim[1:] == 0))[0]:
+            x, y, w_, h_ = stats[i, :4]
+            sub = (labels[y:y + h_, x:x + w_] == i).astype(np.uint8)
+            cs, _h2 = cv2.findContours(sub, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            perim[i] = max((cv2.arcLength(c, True) for c in cs), default=0.0)
     elong = perim[1:] / (4.0 * rmax + 1e-6)
     is_blob = (elong < BLOB_ELONGATION) & (rmax >= 2.0) & (area[1:] >= 16)
     # a blob narrower than ~0.4% of the image is a dot, not a feature (an
     # eye is wider): dots are neither colorable nor readable
     dot = rmax < max(2.0, BLOB_MIN_RADIUS * maxdim)
+    if protect is not None:
+        small = (elong < BLOB_ELONGATION) & (rmax >= 1.0) & \
+            (area[1:] >= PROTECT_MIN_COMPONENT)
+        is_blob = is_blob | (prot & small)
 
     keep_blob = is_blob.copy()
     if gray is not None and is_blob.any():
@@ -765,6 +1386,21 @@ def vectorize(ink, policy=None, detail="medium", subject_mask=None,
             inside = subject_mask[cy, cx] > 0
             very_dark = mean_gray < BLOB_INK_RATIO * median
             keep_blob &= (z == 2) | (inside & very_dark) | large
+        if protect is not None:
+            # features are judged against their own surround (a nostril is
+            # dark against skin, not against a subject that includes hair)
+            for j in np.nonzero(is_blob & prot & ~keep_blob)[0]:
+                i = j + 1
+                x, y, w_, h_ = stats[i, :4]
+                y0, x0 = max(0, y - 4), max(0, x - 4)
+                lab = labels[y0:y + h_ + 4, x0:x + w_ + 4]
+                ring = cv2.dilate((lab == i).astype(np.uint8), np.ones((5, 5), np.uint8))
+                ring = (ring > 0) & (lab == 0)
+                if not ring.any():
+                    continue
+                around = float(gray[y0:y + h_ + 4, x0:x + w_ + 4][ring].mean())
+                if mean_gray[j] < PROTECT_DARK_RATIO * around or large[j]:
+                    keep_blob[j] = True
 
     blob_ink = np.zeros_like(ink)
     ribbon_ink = np.zeros_like(ink)
@@ -781,6 +1417,13 @@ def vectorize(ink, policy=None, detail="medium", subject_mask=None,
         zs = np.asarray(zs)
         return float((zs == 2).mean()), float((zs == 0).mean())
 
+    def prot_of(pts):
+        if protect is None:
+            return 0.0
+        ps = [protect[min(ih - 1, max(0, int(y))), min(iw - 1, max(0, int(x)))]
+              for x, y in pts]
+        return float((np.asarray(ps) > 0).mean())
+
     entries = []                                   # dict(pts, closed, rank, sw, area)
 
     # ---- blobs: outline (outer contour + genuine holes)
@@ -794,30 +1437,46 @@ def vectorize(ink, policy=None, detail="medium", subject_mask=None,
                 pa = areas.get(parent, 0)
                 if pa <= 0 or areas[i] > 0.25 * pa:
                     continue                       # hole mirrors its parent
-            if cv2.arcLength(cnt, True) < MIN_STROKE_LEN or areas[i] < 16:
-                continue
-            approx = cv2.approxPolyDP(_smooth_contour(cnt, k=7), eps, True)
+            cp = protect is not None and prot_of(
+                [(float(q[0][0]), float(q[0][1])) for q in cnt]) >= 0.5
+            if cp:
+                if cv2.arcLength(cnt, True) < PROTECT_MIN_LEN or areas[i] < 4:
+                    continue
+                approx = cv2.approxPolyDP(_smooth_contour(cnt, k=3), eps_p, True)
+            else:
+                if cv2.arcLength(cnt, True) < MIN_STROKE_LEN or areas[i] < 16:
+                    continue
+                approx = cv2.approxPolyDP(_smooth_contour(cnt, k=7), eps, True)
             pts = [(float(p[0][0]), float(p[0][1])) for p in approx]
             if len(pts) < 3:
                 continue
             inner, outside = zone_of(pts)
-            sw = SW_BACKGROUND if outside > 0.5 else (
+            sw = SW_SUBJECT if cp else SW_BACKGROUND if outside > 0.5 else (
                 SW_SUBJECT if inner >= 0.6 else SW_SILHOUETTE)
             entries.append(dict(pts=pts, closed=True, rank=areas[i], sw=sw,
-                                area=areas[i]))
+                                area=areas[i], prot=cp))
 
     # ---- ribbons: centreline. Length floors apply to the whole connected
     # skeleton STRUCTURE (a ragged band thins into many short branches
     # between junctions — the outline is long as a whole, a grass tuft is
     # not), spurs are judged per branch.
     if ribbon_ink.any():
-        skel = _prune(_thin(ribbon_ink), SPUR_LEN)
+        thin = _thin(ribbon_ink)
+        skel = _prune(thin, SPUR_LEN)
+        if protect is not None:                # a short brow is not a spur
+            skel = np.where(protect > 0, _prune(thin, PROTECT_SPUR),
+                            skel).astype(np.uint8)
         _nc, clab = cv2.connectedComponents(skel, connectivity=8)
         polys = []
         struct_len, struct_inner, struct_box = {}, {}, {}
+        struct_prot = {}
         for pts, closed, jends in _skeleton_polylines(skel):
             length = _poly_len(pts)
-            if length < 4 or (jends == 1 and length < SPUR_LEN):
+            pf = prot_of(pts)
+            if pf >= 0.5:
+                if length < 3 or (jends == 1 and length < PROTECT_SPUR):
+                    continue
+            elif length < 4 or (jends == 1 and length < SPUR_LEN):
                 continue
             mid = pts[len(pts) // 2]
             cid = int(clab[min(ih - 1, max(0, int(mid[1]))),
@@ -825,6 +1484,7 @@ def vectorize(ink, policy=None, detail="medium", subject_mask=None,
             inner, outside = zone_of(pts)
             struct_len[cid] = struct_len.get(cid, 0.0) + length
             struct_inner[cid] = struct_inner.get(cid, 0.0) + length * inner
+            struct_prot[cid] = struct_prot.get(cid, 0.0) + length * pf
             bx = struct_box.get(cid, [1e9, 1e9, -1e9, -1e9])
             for x, y in pts:
                 bx = [min(bx[0], x), min(bx[1], y), max(bx[2], x), max(bx[3], y)]
@@ -835,7 +1495,12 @@ def vectorize(ink, policy=None, detail="medium", subject_mask=None,
             s_inner = struct_inner[cid] / total if total else 0.0
             bx = struct_box[cid]
             diag = math.hypot(bx[2] - bx[0], bx[3] - bx[1]) + 1e-6
-            if drop:
+            sp = protect is not None and total and struct_prot[cid] / total >= 0.5
+            if sp:
+                floor = PROTECT_MIN_LEN               # features: no texture rule
+                if total < floor:
+                    continue
+            elif drop:
                 floor = (INTERIOR_FLOOR if s_inner >= 0.6 else RING_FLOOR) * maxdim
                 # texture rule: a structure that packs far more line than
                 # its extent (fur shadow network) is texture, not a contour
@@ -844,23 +1509,30 @@ def vectorize(ink, policy=None, detail="medium", subject_mask=None,
                     continue
             else:
                 floor = MIN_STROKE_LEN
-            if total < max(MIN_STROKE_LEN, floor):
+            if not sp and total < max(MIN_STROKE_LEN, floor):
                 continue
-            pts = _smooth_open(pts, 5)
+            pts = _smooth_open(pts, 3 if sp else 5)
             arr = np.array(pts, np.float32).reshape(-1, 1, 2)
-            approx = cv2.approxPolyDP(arr, eps, closed)
+            approx = cv2.approxPolyDP(arr, eps_p if sp else eps, closed)
             pts = [(float(p[0][0]), float(p[0][1])) for p in approx]
             if len(pts) < (3 if closed else 2):
                 continue
-            sw = SW_BACKGROUND if outside > 0.5 else (
+            sw = SW_SUBJECT if sp else SW_BACKGROUND if outside > 0.5 else (
                 SW_SUBJECT if inner >= 0.6 else SW_SILHOUETTE)
             enclosed = abs(cv2.contourArea(np.array(pts, np.float32))) if closed else 0.0
             entries.append(dict(pts=pts, closed=closed, sw=sw, area=enclosed,
-                                rank=max(enclosed, length * length / 4.0)))
+                                rank=max(enclosed, length * length / 4.0),
+                                prot=bool(sp)))
 
-    # keep the richest strokes, drop the tail (soft max_strokes rule)
+    # keep the richest strokes, drop the tail (soft max_strokes rule);
+    # protected features have their own budget so busy photos keep them
     entries.sort(key=lambda e: -e["rank"])
-    entries = entries[:max_strokes]
+    if protect is None:
+        entries = entries[:max_strokes]
+    else:
+        entries = sorted([e for e in entries if e["prot"]][:PROTECT_MAX_STROKES]
+                         + [e for e in entries if not e["prot"]][:max_strokes],
+                         key=lambda e: -e["rank"])
     shapes = sorted((e for e in entries if e["closed"]), key=lambda e: -e["area"])
     strokes = sorted((e for e in entries if not e["closed"]), key=lambda e: -e["rank"])
 
@@ -960,16 +1632,22 @@ def _qa_adjust(policy, params, rep):
 
 
 def _assemble(elements, title, caption, policy_name, params, layout=None,
-              extra=""):
+              extra="", fidelity=None):
+    fid = ""
+    if fidelity is not None and fidelity.get("score") is not None:
+        fid = f' data-fidelity="{fidelity["score"]:.2f}"'
+        if fidelity["missing"]:
+            fid += f' data-fidelity-missing="{",".join(fidelity["missing"])}"'
     meta = (f'<g data-policy="{policy_name}" '
-            f'data-params="edge_c={params["edge_c"]:.0f};simplify={params["simplify"]:.1f}">'
-            + "".join(elements) + extra + "</g>")
+            f'data-params="edge_c={params["edge_c"]:.0f};simplify={params["simplify"]:.1f}"'
+            f'{fid}>' + "".join(elements) + extra + "</g>")
     return spage(title, meta, caption=caption, layout=layout)
 
 
 def spage_wrap(elements, title, caption, policy_name, params, layout=None,
-               extra=""):
-    return _assemble(elements, title, caption, policy_name, params, layout, extra)
+               extra="", fidelity=None):
+    return _assemble(elements, title, caption, policy_name, params, layout,
+                     extra, fidelity)
 
 
 def _ground_line(tr):
@@ -992,18 +1670,299 @@ def _ground_line(tr):
             + P(f"M {_f(x0)} {_f(gy)} L {_f(x1)} {_f(gy)}", 4) + "</g>")
 
 
+# ---------------------------------------------------------------- feature fidelity
+_PATH_TOK = re.compile(r"[MLCQZHVmlcqzhv]|-?\d*\.?\d+(?:[eE][-+]?\d+)?")
+
+
+def _path_polylines(d):
+    """SVG path data -> polylines [(x, y), ...] (curves sampled at 6
+    steps): enough geometry to measure how close a drawn line passes to a
+    point. Handles M L H V C Q Z, absolute and relative."""
+    toks = _PATH_TOK.findall(d)
+    lines, cur = [], []
+    x = y = sx = sy = 0.0
+    cmd, i = "M", 0
+
+    def nums(k):
+        nonlocal i
+        v = [float(t) for t in toks[i:i + k]]
+        i += k
+        return v
+
+    while i < len(toks):
+        if toks[i].isalpha():
+            cmd = toks[i]
+            i += 1
+            if cmd in "Zz":
+                if cur:
+                    cur.append((sx, sy))
+                x, y = sx, sy
+                continue
+        if i >= len(toks) or toks[i].isalpha():
+            continue
+        rel = cmd.islower()
+        c = cmd.upper()
+        ox_, oy_ = (x, y) if rel else (0.0, 0.0)
+        try:
+            if c == "M":
+                px, py = nums(2)
+                if len(cur) > 1:
+                    lines.append(cur)
+                x, y = px + ox_, py + oy_
+                sx, sy = x, y
+                cur = [(x, y)]
+                cmd = "l" if rel else "L"
+            elif c == "L":
+                px, py = nums(2)
+                x, y = px + ox_, py + oy_
+                cur.append((x, y))
+            elif c == "H":
+                (px,) = nums(1)
+                x = px + ox_
+                cur.append((x, y))
+            elif c == "V":
+                (py,) = nums(1)
+                y = py + oy_
+                cur.append((x, y))
+            elif c in "CQ":
+                k = 6 if c == "C" else 4
+                v = nums(k)
+                ctrl = [(v[j] + ox_, v[j + 1] + oy_) for j in range(0, k, 2)]
+                p0 = (x, y)
+                for t in (1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6, 1.0):
+                    u = 1 - t
+                    if c == "C":
+                        (c1, c2, p3) = ctrl
+                        bx = u**3 * p0[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t**3 * p3[0]
+                        by = u**3 * p0[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t**3 * p3[1]
+                    else:
+                        (c1, p3) = ctrl
+                        bx = u * u * p0[0] + 2 * u * t * c1[0] + t * t * p3[0]
+                        by = u * u * p0[1] + 2 * u * t * c1[1] + t * t * p3[1]
+                    cur.append((bx, by))
+                x, y = ctrl[-1]
+            else:
+                i += 1                                 # unsupported: skip a token
+        except ValueError:
+            break
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def _ink_segments(svg_or_elements):
+    """(A, B, half_width) arrays of the drawn line segments (page px).
+    A page string is cut to its photo-trace group (data-policy up to the
+    chrome — title and caption glyphs are not ink of the subject); the
+    ground contact line and stroke-less knockout fills never count."""
+    if isinstance(svg_or_elements, str):
+        svg = svg_or_elements
+        k = svg.find("data-policy")
+        if k >= 0:
+            end = svg.find('<g data-chrome', k)
+            svg = svg[k:end if end > 0 else len(svg)]
+        svg = re.sub(r'<g data-ground="1">.*?</g>', "", svg, flags=re.S)
+        els = re.findall(r"<path\b[^>]*>", svg)
+    else:
+        els = [e for el in svg_or_elements for e in re.findall(r"<path\b[^>]*>", el)]
+    a, b, hw = [], [], []
+    for el in els:
+        if "data-knockout" in el or 'stroke="none"' in el:
+            continue
+        m = re.search(r'stroke-width="([\d.]+)"', el)
+        half = float(m.group(1)) / 2 if m else 1.5
+        for d in re.findall(r' d="([^"]+)"', el):
+            for line in _path_polylines(d):
+                if len(line) == 1:
+                    line = line * 2
+                for p, q in zip(line[:-1], line[1:]):
+                    a.append(p)
+                    b.append(q)
+                    hw.append(half)
+    return (np.asarray(a, np.float64).reshape(-1, 2),
+            np.asarray(b, np.float64).reshape(-1, 2), np.asarray(hw, np.float64))
+
+
+def _fidelity_points(face):
+    """[(name, (x, y) image px, radius x IOD)] for one face: the five
+    landmarks, then each declared feature (its box centre; glasses = the
+    bridge between the eyes; gap_tooth/braces = mouth centre; freckles =
+    the image-left cheek; dimples = beside the image-left mouth corner;
+    headband = top of the face box)."""
+    lm = face["landmarks"]
+    iod, _ang, up = _face_frame(face)
+    pts = [(k, lm[k], FIDELITY_RADIUS) for k in FACE_KEYS]
+    mid = ((lm["eye_l"][0] + lm["eye_r"][0]) / 2, (lm["eye_l"][1] + lm["eye_r"][1]) / 2)
+    mc = ((lm["mouth_l"][0] + lm["mouth_r"][0]) / 2,
+          (lm["mouth_l"][1] + lm["mouth_r"][1]) / 2)
+    fboxes = face.get("feature_boxes") or {}
+    for name in face.get("features") or ():
+        if name in fboxes:
+            x, y, w, h = fboxes[name]
+            pts.append((name, (x + w / 2, y + h / 2),
+                        max(FIDELITY_RADIUS, 0.5 * math.hypot(w, h) / iod)))
+        elif name == "glasses":
+            pts.append((name, mid, FIDELITY_RADIUS))
+        elif name in ("gap_tooth", "braces"):
+            pts.append((name, mc, FIDELITY_RADIUS))
+        elif name == "freckles":
+            e = lm["eye_l"]
+            pts.append((name, (e[0] - up[0] * 0.55 * iod, e[1] - up[1] * 0.55 * iod), 0.3))
+        elif name == "dimples":
+            pts.append((name, (lm["mouth_l"][0] - 0.22 * iod, lm["mouth_l"][1]), 0.2))
+        elif name == "headband":
+            bx, by, bw, bh = face["box"]
+            pts.append((name, (bx + bw / 2, by + 0.02 * bh), 0.3))
+    return iod, pts
+
+
+def feature_fidelity(svg_or_elements, faces, image_shape):
+    """Does traced ink sit on each facial feature? faces (detect_faces_full
+    / hint format, IMAGE px of an image of image_shape (h, w[, c])) are
+    mapped to the page with the same _page_fit transform the trace used;
+    a feature is present when a drawn line (its stroke edge, not just its
+    centreline) passes within FIDELITY_RADIUS x the interocular distance.
+    svg_or_elements: a photo_to_svg / trace_lineart page, a fragment, or a
+    list of path elements in page coords. Returns
+      {"score": hits / total in [0, 1] (None without faces), "hits", "total",
+       "missing": ["face0.nose", ...],
+       "faces": [{"iod": page px, "features": {name: {"hit", "dist", "radius"}}}]}
+    It checks PRESENCE at the right place — not shape: a generative
+    redraw that moves the eyes or draws a different face drops it."""
+    ih, iw = image_shape[:2]
+    s, ox, oy = _page_fit(iw, ih)
+    a, b, hw = _ink_segments(svg_or_elements)
+    ab = b - a
+    ll = (ab * ab).sum(1) + 1e-12
+    out = {"score": None, "hits": 0, "total": 0, "missing": [], "faces": []}
+    for fi, face in enumerate(faces or ()):
+        iod, pts = _fidelity_points(face)
+        rec = {"iod": round(iod * s, 1), "features": {}}
+        for name, (px, py), rf in pts:
+            p = np.array([px * s + ox, py * s + oy])
+            r = rf * iod * s
+            if len(a):
+                t = np.clip(((p - a) * ab).sum(1) / ll, 0.0, 1.0)
+                d = np.hypot(*(a + ab * t[:, None] - p).T) - hw
+                dist = float(max(0.0, d.min()))
+            else:
+                dist = float("inf")
+            hit = dist <= r
+            key = name if name not in rec["features"] else f"{name}_{len(rec['features'])}"
+            rec["features"][key] = {"hit": bool(hit), "dist": round(dist, 1),
+                                    "radius": round(r, 1)}
+            out["total"] += 1
+            out["hits"] += int(hit)
+            if not hit:
+                out["missing"].append(f"face{fi}.{key}")
+        out["faces"].append(rec)
+    if out["total"]:
+        out["score"] = round(out["hits"] / out["total"], 3)
+    return out
+
+
+def read_fidelity(svg):
+    """The data-fidelity score recorded on a page, or None."""
+    m = re.search(r'data-fidelity="([\d.]+)"', svg)
+    return float(m.group(1)) if m else None
+
+
+# ---------------------------------------------------------------- line art ingestion
+LINEART_THR = (64, 200)            # Otsu threshold clamp for a line drawing (dark on light)
+LINEART_ASPECT_TOL = 0.03          # line art vs photo aspect mismatch tolerated (then resized)
+
+
+def _load_lineart(src, shape=None, max_dim=1600):
+    """Line drawing (file path or array: gray, BGR, BGRA, float 0-1 or
+    uint8; dark lines on a light ground) -> uint8 gray. With shape (the
+    photo's working (h, w)) it is resized onto the photo's pixel grid —
+    the aspect ratio must match within LINEART_ASPECT_TOL, or landmarks
+    and mask would not line up; without, it is capped at max_dim."""
+    if isinstance(src, (str, os.PathLike)):
+        from PIL import Image, ImageOps
+        im = ImageOps.exif_transpose(Image.open(src))
+        if im.mode in ("RGBA", "LA", "PA") or (im.mode == "P" and "transparency" in im.info):
+            im = im.convert("RGBA")
+            bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+            im = Image.alpha_composite(bg, im)       # transparent = paper
+        g = np.array(im.convert("L"))
+    else:
+        arr = np.asarray(src)
+        if arr.dtype == bool:
+            arr = np.where(arr, 0, 255).astype(np.uint8)   # True = line
+        elif arr.dtype != np.uint8:
+            arr = np.clip(arr.astype(np.float64) * (255.0 if arr.max() <= 1.0 else 1.0),
+                          0, 255).astype(np.uint8)
+        if arr.ndim == 3 and arr.shape[2] == 4:
+            a = arr[:, :, 3:4].astype(np.float32) / 255.0
+            arr = (arr[:, :, :3] * a + 255 * (1 - a)).astype(np.uint8)
+        if arr.ndim == 3:
+            arr = cv2.cvtColor(arr[:, :, :3], cv2.COLOR_BGR2GRAY)
+        if arr.ndim != 2:
+            raise ValueError(f"lineart: expected an image array, got shape {arr.shape}")
+        g = arr
+    h, w = g.shape
+    if shape is not None:
+        th, tw = shape[:2]
+        if abs((w / h) / (tw / th) - 1.0) > LINEART_ASPECT_TOL:
+            raise ValueError(
+                f"lineart is {w}x{h} but the photo is {tw}x{th}: the aspect "
+                "ratios differ, so landmarks and the subject mask would not line "
+                "up — generate the line art at the photo's aspect (or crop the "
+                "photo to match)")
+        if (h, w) != (th, tw):
+            g = cv2.resize(g, (tw, th), interpolation=cv2.INTER_AREA
+                           if w > tw else cv2.INTER_LINEAR)
+    elif max(h, w) > max_dim:
+        s = max_dim / max(h, w)
+        g = cv2.resize(g, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
+    return g
+
+
+def _lineart_ink(la, mult, protect=None):
+    """Line drawing -> binary ink: Otsu threshold (clamped to LINEART_THR,
+    so faint anti-aliased lines survive a resize), a light close, then a
+    component speck filter. No opening — model line art is often 1-2px."""
+    otsu, _ = cv2.threshold(la, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    thr = min(LINEART_THR[1], max(LINEART_THR[0], otsu))
+    ink = np.where(la < thr, 255, 0).astype(np.uint8)
+    ink = cv2.morphologyEx(ink, cv2.MORPH_CLOSE,
+                           cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(ink, 8)
+    if n <= 1:
+        return ink
+    area = stats[1:, cv2.CC_STAT_AREA]
+    keep = area >= MIN_COMPONENT * (1.5 if mult > 1.2 else 1.0)
+    if protect is not None:
+        from scipy import ndimage
+        prot = np.asarray(ndimage.mean(protect > 0, labels, np.arange(1, n))) >= 0.5
+        keep |= prot & (area >= PROTECT_MIN_COMPONENT)
+    return np.where(np.isin(labels, 1 + np.nonzero(keep)[0]), 255, 0).astype(np.uint8)
+
+
 # ---------------------------------------------------------------- public API
 def photo_to_svg(photo_path, *, style="clean", subject="auto", detail="medium",
                  title=None, caption=None, max_dim=1600, qa=True,
-                 layout=None):
+                 layout=None, hints=None, backends=None, allow_remote=False,
+                 lineart=None, protect_face=None):
     """Photo file -> standalone coloring page SVG string. layout="creative"
     marks open-composition pages (e.g. sketch traces) for the validator.
-    A background-dropped subject stands on a ground contact line."""
-    tr = _trace(photo_path, style, subject, detail, max_dim)
+    A background-dropped subject stands on a ground contact line.
+
+    hints: vision-hints dict or JSON path (parse_hints). backends:
+    {capability: registered name} (lib/imagemodels.py); a remote backend
+    raises PrivacyError unless allow_remote=True. lineart: a line drawing
+    (path or array) traced INSTEAD of the photo's own edges — see
+    trace_lineart. protect_face: None = the policy's flag (or True when
+    hints name faces), True/False forces it. Pages with faces record
+    feature_fidelity as data-fidelity on the policy group."""
+    tr = _trace(photo_path, style, subject, detail, max_dim, hints=hints,
+                backends=backends, allow_remote=allow_remote, lineart=lineart,
+                protect_face=protect_face)
     if qa:
         for _ in range(QA_MAX_ROUNDS):
             svg = _assemble(tr["elements"], title, caption, tr["label"],
-                            tr["params"], layout, _ground_line(tr))
+                            tr["params"], layout, _ground_line(tr), tr["fidelity"])
             rep = _qa_report(svg)
             if rep["ok"] and (rep["raster"] is None
                               or rep["raster"]["sliver_count"] <= 70):
@@ -1011,18 +1970,24 @@ def photo_to_svg(photo_path, *, style="clean", subject="auto", detail="medium",
             if not _qa_adjust(POLICIES[tr["label"]], tr["params"], rep):
                 break
             tr = _trace(photo_path, style, subject, detail, max_dim,
-                        overrides=tr["params"], detected=tr["detected"])
+                        overrides=tr["params"], detected=tr["detected"],
+                        ctx=tr["ctx"])
     return spage_wrap(tr["elements"], title, caption, tr["label"], tr["params"],
-                      layout, _ground_line(tr))
+                      layout, _ground_line(tr), tr["fidelity"])
 
 
 def photo_to_fragment(photo_path, *, style="clean", subject="auto",
-                      detail="medium", max_dim=1600, pad=20):
+                      detail="medium", max_dim=1600, pad=20, hints=None,
+                      backends=None, allow_remote=False, lineart=None,
+                      protect_face=None):
     """Photo -> G()-placeable charlib fragment. Local origin = the traced
     art's BOTTOM-CENTRE (same feet-anchor convention as every charlib
     helper): G(x, ground_y, fragment, s) stands the subject on a ground
-    line. No ground line of its own — the scene supplies it."""
-    tr = _trace(photo_path, style, subject, detail, max_dim)
+    line. No ground line of its own — the scene supplies it. hints /
+    backends / lineart / protect_face as for photo_to_svg."""
+    tr = _trace(photo_path, style, subject, detail, max_dim, hints=hints,
+                backends=backends, allow_remote=allow_remote, lineart=lineart,
+                protect_face=protect_face)
     ext = tr["extent"]                      # strokes + knockout mat
     if ext is not None:
         bcx, bcy = (ext[0] + ext[2]) / 2, ext[3]
@@ -1035,67 +2000,166 @@ def photo_to_fragment(photo_path, *, style="clean", subject="auto",
 
 def composite_page(photo_path, scene_body, ground_y, *, x=425, scale=1.0,
                    style="clean", detail="medium", title="My Photo Page",
-                   caption=None, num=None):
+                   caption=None, num=None, hints=None, backends=None,
+                   allow_remote=False, lineart=None, protect_face=None):
     """Traced photo subject matted onto a scene kit body beside charlib
     art. The fragment self-anchors at its ink bottom-centre, so it stands
     ON ground_y at (x, ground_y) like any charlib figure."""
-    frag = photo_to_fragment(photo_path, style=style, detail=detail)
+    frag = photo_to_fragment(photo_path, style=style, detail=detail,
+                             hints=hints, backends=backends,
+                             allow_remote=allow_remote, lineart=lineart,
+                             protect_face=protect_face)
     body = scene_body + G(x, ground_y, matted(frag, scale=scale), scale)
     return spage(title, body, caption=caption, num=num)
 
 
+def trace_lineart(lineart, photo=None, *, subject="auto", detail="medium",
+                  title=None, caption=None, max_dim=1600, qa=True,
+                  layout=None, hints=None, backends=None, allow_remote=False,
+                  protect_face=None, fragment=False):
+    """A line drawing from an image model (a local ControlNet line-art
+    preprocessor, an informative-drawings ONNX, or a generation model asked
+    to "redraw as a coloring page") -> house-style page: thresholded,
+    centreline-traced, stroke-tiered and QA'd like a photo trace.
+
+    With photo= the drawing is aligned onto the photo's pixel grid (same
+    aspect required) and the subject mask, landmarks, protection zones and
+    feature_fidelity all come from the PHOTO — so a generative redraw that
+    moved the eyes or drew a different face scores low: read_fidelity(svg)
+    below FIDELITY_MIN means reject or re-generate. Without a photo, faces
+    come from hints only (in the drawing's px). fragment=True returns a
+    photo_to_fragment-style fragment instead of a page."""
+    if fragment:
+        return photo_to_fragment(photo, detail=detail, subject=subject,
+                                 max_dim=max_dim, hints=hints,
+                                 backends=backends, allow_remote=allow_remote,
+                                 lineart=lineart, protect_face=protect_face)
+    return photo_to_svg(photo, subject=subject, detail=detail, title=title,
+                        caption=caption, max_dim=max_dim, qa=qa, layout=layout,
+                        hints=hints, backends=backends,
+                        allow_remote=allow_remote, lineart=lineart,
+                        protect_face=protect_face)
+
+
 def _trace(photo_path, style, subject, detail, max_dim, overrides=None,
-           detected=None):
+           detected=None, hints=None, backends=None, allow_remote=False,
+           lineart=None, protect_face=None, ctx=None):
     """One pass photo -> elements. Returns a dict: elements, label, params,
     ink, mask, drop (background removed?), detected (cached detection so
-    QA rounds do not rerun GrabCut)."""
-    gray, bgr = load_photo(photo_path, max_dim)
+    QA rounds do not rerun GrabCut), fidelity (None without faces) and ctx
+    (cached hints / line art / zones for the QA rounds)."""
+    if ctx is None:
+        ctx = dict(hints=hints, backends=_check_backends(backends),
+                   allow_remote=allow_remote, lineart=lineart,
+                   protect_face=protect_face)
+    backends = ctx["backends"]
+    if photo_path is None:
+        if ctx["lineart"] is None:
+            raise ValueError("a photo path is required (or lineart= alone)")
+        if "la" not in ctx:
+            ctx["la"] = _load_lineart(ctx["lineart"], None, max_dim)
+        gray = ctx["la"]
+        bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        src = ctx["lineart"]
+        ref_size = _upright_size(src) if isinstance(src, (str, os.PathLike)) \
+            else (np.asarray(src).shape[1], np.asarray(src).shape[0])
+    else:
+        gray, bgr = load_photo(photo_path, max_dim)
+        ref_size = _upright_size(photo_path)
+    if "hz" not in ctx:
+        ctx["hz"] = parse_hints(ctx["hints"], gray.shape, ref_size)
+    hz = ctx["hz"]
     if detected is None:
-        if subject == "auto":
-            detected = detect_subject(gray, bgr)
+        if subject == "auto" and photo_path is not None:
+            detected = detect_subject(gray, bgr, hints=hz, backends=backends,
+                                      allow_remote=allow_remote)
         else:
-            detected = (None, subject if subject in POLICIES else "generic", {})
+            label = subject if subject in POLICIES else (
+                (hz and hz["label"]) or "generic")
+            faces = (_all_faces(gray, bgr, hz, backends, allow_remote)
+                     if photo_path is not None else (hz["faces"] if hz else []))
+            detected = (None, label, {"faces_full": faces} if faces else {})
     mask, label, meta = detected
+    faces = meta.get("faces_full", [])
     policy = dict(POLICIES.get(label, POLICIES["generic"]))
     if overrides:
         policy.update({k: v for k, v in overrides.items() if k in policy})
     mult = DETAIL_MULT.get(detail, 1.0)
     drop = policy.get("bg") == "drop" and _mask_usable(mask, meta)
-    ink = extract_ink(gray, style=style, policy=policy, detail=detail,
-                      subject_mask=mask if drop else None, drop=drop)
-    # graceful degradation: sketch on an ultra-soft photo can find almost
-    # nothing — fall back to the clean extractor rather than an empty page
-    if style == "sketch":
-        n_comp, _labels, stats, _ = cv2.connectedComponentsWithStats(ink, 8)
-        solid = sum(1 for i in range(1, n_comp) if stats[i, 4] >= 40)
-        if solid < 3:
-            ink = extract_ink(gray, style="clean", policy=policy, detail=detail,
-                              subject_mask=mask if drop else None, drop=drop)
 
-    def finish(ink):
+    # feature protection: landmark zones (protect_face) + hinted keep boxes;
+    # hinted drop boxes win over both
+    if "protect" not in ctx:
+        pf = ctx["protect_face"]
+        on = pf if pf is not None else bool(
+            policy.get("protect_face") or any(f.get("source") == "hint" for f in faces))
+        keep = hz["keep"] if hz else []
+        protect = protection_zones(faces if on else [], gray.shape, keep) \
+            if ((on and faces) or keep) else None
+        dropz = _box_mask(hz["drop"], gray.shape) if hz and hz["drop"] else None
+        if protect is not None and dropz is not None:
+            protect = np.where(dropz > 0, 0, protect).astype(np.uint8)
+            protect = protect if protect.any() else None
+        ctx["protect"], ctx["dropz"] = protect, dropz
+    protect, dropz = ctx["protect"], ctx["dropz"]
+
+    def finish(ink, shade=gray, lines=False):
         if drop:
-            ink = _drop_background(ink, mask, policy, mult)
-        elif mask is not None:
-            ink = _focus_subject(ink, mask, mult)
+            ink = _drop_background(ink, mask, policy, mult, protect)
+        elif mask is not None and not lines:
+            ink = _focus_subject(ink, mask, mult, protect)
+        if dropz is not None:
+            ink = np.where(dropz > 0, 0, ink).astype(np.uint8)
         return ink, vectorize(ink, policy=policy, detail=detail,
-                              subject_mask=mask, gray=gray, drop=drop)
-    ink, elements = finish(ink)
-    # ...and the same degradation after vectorizing: flat, step-edged
-    # subjects give the ridge detector almost nothing to follow
-    if style == "sketch" and _elements_length(elements) < SKETCH_MIN_LENGTH:
-        ink, elements = finish(extract_ink(gray, style="clean", policy=policy,
-                                           detail=detail,
-                                           subject_mask=mask if drop else None,
-                                           drop=drop))
+                              subject_mask=mask, gray=shade, drop=drop,
+                              protect=protect)
+
+    if ctx["lineart"] is not None or backends.get("lineart"):
+        # an image model drew the lines: trace ITS ink (centreline, tiers,
+        # zones) while mask, landmarks and fidelity stay with the photo.
+        # (No soft-rule erosion: model line art is often 1-2px wide.)
+        if "la_aligned" not in ctx:
+            if ctx["lineart"] is not None:
+                ctx["la_aligned"] = gray if photo_path is None else \
+                    _load_lineart(ctx["lineart"], gray.shape, max_dim)
+            else:
+                la = _run_backend("lineart", bgr, backends, allow_remote, faces)
+                ctx["la_aligned"] = _load_lineart(la, gray.shape, max_dim)
+        la = ctx["la_aligned"]
+        ink, elements = finish(_lineart_ink(la, mult, protect), shade=la,
+                               lines=True)
+    else:
+        ink = extract_ink(gray, style=style, policy=policy, detail=detail,
+                          subject_mask=mask if drop else None, drop=drop,
+                          protect=protect)
+        # graceful degradation: sketch on an ultra-soft photo can find almost
+        # nothing — fall back to the clean extractor rather than an empty page
+        if style == "sketch":
+            n_comp, _labels, stats, _ = cv2.connectedComponentsWithStats(ink, 8)
+            solid = sum(1 for i in range(1, n_comp) if stats[i, 4] >= 40)
+            if solid < 3:
+                ink = extract_ink(gray, style="clean", policy=policy,
+                                  detail=detail,
+                                  subject_mask=mask if drop else None,
+                                  drop=drop, protect=protect)
+        ink, elements = finish(ink)
+        # ...and the same degradation after vectorizing: flat, step-edged
+        # subjects give the ridge detector almost nothing to follow
+        if style == "sketch" and _elements_length(elements) < SKETCH_MIN_LENGTH:
+            ink, elements = finish(extract_ink(gray, style="clean", policy=policy,
+                                               detail=detail,
+                                               subject_mask=mask if drop else None,
+                                               drop=drop, protect=protect))
     if drop and elements:
         # a traced subject is a FOREGROUND object: its open silhouette
         # cannot knock out scene lines behind it the way a filled helper
         # does, so the subject mask itself goes first as a white,
         # stroke-less knockout (matted() adds the halo around the strokes)
         elements = _knockout(mask, policy, mult) + elements
+    fidelity = feature_fidelity(elements, faces, gray.shape) if faces else None
     return dict(elements=elements, label=label, params=policy, ink=ink,
-                mask=mask, drop=drop, detected=detected,
-                extent=_elements_extent(elements))
+                mask=mask, drop=drop, detected=detected, fidelity=fidelity,
+                faces=faces, ctx=ctx, extent=_elements_extent(elements))
 
 
 def _knockout(mask, policy, mult):
@@ -1195,14 +2259,100 @@ def synthetic_photo(kind="animal", size=640):
                         (int(rng.integers(40, 110)), 90, 50), -1)
         cv2.rectangle(img, (int(size * 0.46), int(size * 0.3)),
                       (int(size * 0.54), size), (70, 60, 45), -1)
+    elif kind == "face_features":
+        # feature-fidelity tier: a head-and-shoulders portrait with KNOWN
+        # landmarks (synthetic_face_truth) — glasses, a mole, mottled skin
+        _draw_face_features(img, size)
     if kind == "low_light":
         img = (img * 0.3 + 8).astype(np.float32)
         grain = rng.normal(0, 10, img.shape).astype(np.float32)
     else:
         grain = rng.normal(0, 6, img.shape).astype(np.float32)
-    # soft shadow + sensor grain
-    img = cv2.GaussianBlur(img, (0, 0), 3)
+    # soft shadow + sensor grain (a portrait lens is sharper: features are
+    # small, so the face tier gets a lighter blur)
+    img = cv2.GaussianBlur(img, (0, 0), 1.2 if kind == "face_features" else 3)
     return np.clip(img + grain, 0, 255).astype(np.uint8)
+
+
+# face_features fixture geometry, fractions of the frame size (IMAGE-left
+# first). IOD 0.125 x 640 = 80px: a school-portrait framing, head ~40% of
+# the frame width
+_FACE_GEOM = dict(eye_l=(0.4375, 0.455), eye_r=(0.5625, 0.455),
+                  nose=(0.50, 0.535), mouth_l=(0.455, 0.605),
+                  mouth_r=(0.545, 0.605), mole=(0.588, 0.575),
+                  box=(0.33, 0.30, 0.34, 0.40))
+
+
+def _draw_face_features(img, size):
+    def P_(k):
+        return (int(round(_FACE_GEOM[k][0] * size)), int(round(_FACE_GEOM[k][1] * size)))
+
+    def L(v):
+        return max(1, int(round(v * size)))
+    skin, hair, dark = (150, 172, 205), (52, 46, 40), (35, 32, 30)
+    cx = size // 2
+    cv2.ellipse(img, (cx, size), (L(0.36), L(0.22)), 0, 0, 360, (140, 95, 60), -1)
+    cv2.rectangle(img, (cx - L(0.05), L(0.66)), (cx + L(0.05), L(0.80)), skin, -1)
+    cv2.ellipse(img, (cx, L(0.39)), (L(0.195), L(0.19)), 0, 0, 360, hair, -1)
+    cv2.ellipse(img, (cx, L(0.505)), (L(0.165), L(0.205)), 0, 0, 360, skin, -1)
+    rng = np.random.default_rng(7)                 # mottled skin: texture, not lines
+    for _ in range(70):
+        px = int(cx + rng.integers(-L(0.14), L(0.14)))
+        py = int(L(0.505) + rng.integers(-L(0.17), L(0.17)))
+        d = int(rng.integers(-14, 15))
+        cv2.circle(img, (px, py), int(rng.integers(2, 6)),
+                   tuple(c + d for c in skin), -1)
+    for k in ("eye_l", "eye_r"):
+        ex, ey = P_(k)
+        cv2.ellipse(img, (ex, ey - L(0.047)), (L(0.034), L(0.008)), 0, 195, 345,
+                    (70, 70, 85), L(0.006))                       # brow
+        cv2.ellipse(img, (ex, ey), (L(0.026), L(0.012)), 0, 0, 360, (235, 235, 235), -1)
+        cv2.circle(img, (ex, ey), L(0.010), (60, 70, 90), -1)     # iris
+        cv2.circle(img, (ex, ey), L(0.004), (15, 15, 15), -1)     # pupil
+        cv2.ellipse(img, (ex, ey), (L(0.026), L(0.012)), 0, 180, 360, dark, 2)
+        cv2.ellipse(img, (ex, ey), (L(0.045), L(0.033)), 0, 0, 360, dark, 2)  # glasses rim
+    (lx, ly), (rx, _ry) = P_("eye_l"), P_("eye_r")
+    cv2.line(img, (lx + L(0.045), ly - 2), (rx - L(0.045), ly - 2), dark, 2)   # bridge
+    nx, ny = P_("nose")
+    for sx_ in (-1, 1):                                               # nostrils
+        cv2.ellipse(img, (nx + sx_ * L(0.014), ny), (L(0.007), L(0.004)), 0, 0, 360,
+                    (80, 92, 118), -1)
+    (mlx, mly), (mrx, _m) = P_("mouth_l"), P_("mouth_r")
+    cv2.ellipse(img, (cx, mly + L(0.004)), ((mrx - mlx) // 2, L(0.010)), 0, 0, 360,
+                (105, 110, 170), -1)                                  # lips
+    cv2.ellipse(img, (cx, mly - L(0.004)), ((mrx - mlx) // 2, L(0.008)), 0, 10, 170,
+                (55, 45, 85), 2)                                      # mouth line
+    cv2.circle(img, P_("mole"), L(0.0045), (75, 85, 110), -1)
+
+
+def synthetic_face_truth(size=640):
+    """The face_features fixture's KNOWN face, in the detect_faces_full
+    dict format (image px), with its declared features: glasses and a
+    mole (feature box)."""
+    g = _FACE_GEOM
+    lm = {k: _pt((g[k][0] * size, g[k][1] * size)) for k in FACE_KEYS}
+    bx, by, bw, bh = g["box"]
+    m = 0.008 * size
+    mx, my = g["mole"][0] * size, g["mole"][1] * size
+    return [{"box": [int(bx * size), int(by * size), int(bw * size), int(bh * size)],
+             "score": 1.0, "landmarks": lm, "source": "truth",
+             "features": ["glasses", "mole"],
+             "feature_boxes": {"mole": [round(mx - m, 1), round(my - m, 1),
+                                        round(2 * m, 1), round(2 * m, 1)]}}]
+
+
+def synthetic_face_hints(size=640, units="px"):
+    """The hints dict an agent would write for the face_features fixture
+    (the known face, as px or norm). JSON-able."""
+    f = synthetic_face_truth(size)[0]
+    k = 1.0 / size if units == "norm" else 1.0
+    pt = lambda p: [round(p[0] * k, 4), round(p[1] * k, 4)]
+    bx = lambda b: [round(v * k, 4) for v in b]
+    return {"units": units,
+            "faces": [{"box": bx(f["box"]),
+                       "landmarks": {n: pt(p) for n, p in f["landmarks"].items()},
+                       "features": ["glasses",
+                                    {"name": "mole", "box": bx(f["feature_boxes"]["mole"])}]}]}
 
 
 # ---------------------------------------------------------------- CLI
@@ -1218,16 +2368,34 @@ def _main(argv):
     ap.add_argument("--title", default=None)
     ap.add_argument("--fragment", default=None,
                     help="also write a G()-placeable fragment SVG body")
+    ap.add_argument("--hints", default=None,
+                    help="vision-hints JSON (label, subject_box, faces, keep, drop)")
+    ap.add_argument("--lineart", default=None,
+                    help="trace this line drawing (aligned to the photo) instead "
+                         "of the photo's own edges")
+    ap.add_argument("--no-protect-face", action="store_true",
+                    help="disable facial-feature protection zones")
     a = ap.parse_args(argv)
-    svg = photo_to_svg(a.photo, style=a.style, subject=a.subject,
-                       detail=a.detail, title=a.title)
+    kw = dict(hints=a.hints, lineart=a.lineart,
+              protect_face=False if a.no_protect_face else None)
+    try:
+        svg = photo_to_svg(a.photo, style=a.style, subject=a.subject,
+                           detail=a.detail, title=a.title, **kw)
+    except HintError as e:
+        print(f"photolib: bad hints: {e}", file=sys.stderr)
+        return 2
     with open(a.out, "w") as fh:
         fh.write(svg)
     print("wrote", a.out)
+    fid = read_fidelity(svg)
+    if fid is not None:
+        m = re.search(r'data-fidelity-missing="([^"]*)"', svg)
+        print(f"feature fidelity {fid:.2f}"
+              + (f" (missing: {m.group(1)})" if m else " (all features traced)"))
     if a.fragment:
         with open(a.fragment, "w") as fh:
             fh.write(photo_to_fragment(a.photo, style=a.style,
-                                       detail=a.detail))
+                                       detail=a.detail, **kw))
         print("wrote", a.fragment)
     return 0
 
