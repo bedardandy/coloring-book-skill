@@ -39,6 +39,8 @@ rules that reference/drawing-guide.md previously asked models to eyeball:
                      (heads draw LAST and silently cover props); art of a
                      strictly FARTHER data-depth group drawn before the head
                      is correct occlusion and exempt
+  hand_hidden        a figure's own hand centred inside a white shape the
+                     same figure draws later (wide hair / head erases it)
   hand_arm           hand circles must OVERLAP some line endpoint (a 2px gap
                      reads as a floating bubble); line ends stopping just
                      outside a hand are flagged as near-misses
@@ -115,6 +117,7 @@ _SHAPE_TAGS = ("path", "circle", "ellipse", "rect", "line",
                "polygon", "polyline")
 _TRANSFORM_RE = re.compile(r"(translate|rotate|scale)\(\s*([^)]*)\)")
 _NUM_TOKEN_RE = re.compile(r"-?\d+(?:\.\d+)?")
+_STORY_META_RE = re.compile(r'<metadata data-story="[^"]*"\s*/>')
 _TEXT_RUN_RE = re.compile(r'<g data-text="1"[^>]*>.*?</g>', re.S)
 
 
@@ -612,6 +615,24 @@ def _mass_profile(items, top_y, bot_y):
     return [sum(grid[r * ncols:(r + 1) * ncols]) / ncols for r in range(nrows)]
 
 
+def _covers(it, x, y):
+    """True when world point (x, y) falls inside the filled shape `it`
+    (circle / ellipse by its world bbox ellipse, path by even-odd point in
+    polygon over its flattened subpaths)."""
+    if it.tag in ("circle", "ellipse"):
+        bb = it.wbbox
+        rx, ry = (bb[2] - bb[0]) / 2 or 1e-6, (bb[3] - bb[1]) / 2 or 1e-6
+        cx, cy = (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
+        return ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 < 1.0
+    inside = False
+    for poly in _path_polylines(it.el.get("d") or ""):
+        pts = [_apply(it.m, px, py) for px, py in poly]
+        for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]):
+            if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+                inside = not inside
+    return inside
+
+
 def _faces(items):
     """World-space face circles from data-face attrs, with document order."""
     out = []
@@ -1065,6 +1086,30 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_min=SPAN_MIN,
                 f"hand circle ({hx:.0f},{hy:.0f}) overlaps no line end — "
                 f"prop/leash may be detached")
 
+    # ---- hands hidden behind the figure's own head / hair -----------------------
+    # heads and their hair (pigtails, afro, braids, hijab drape) draw LAST,
+    # white-filled: a hand whose centre lands inside one of them is erased
+    # (the documented wave/up pose + wide-hair failure). Own-figure only —
+    # head_clearance owns foreign props.
+    for h in visible:
+        if h.el.get("data-hand") != "1" or h.figure is None or not h.wbbox:
+            continue
+        hx, hy = (h.wbbox[0] + h.wbbox[2]) / 2, (h.wbbox[1] + h.wbbox[3]) / 2
+        for it in visible:
+            if (it.figure is not h.figure or it.idx <= h.idx or not it.wbbox
+                    or it.el.get("fill") != "white" or it.el.get("data-hand")
+                    or it.tag not in ("circle", "ellipse", "path")):
+                continue
+            bb = it.wbbox
+            if not (bb[0] < hx < bb[2] and bb[1] < hy < bb[3]):
+                continue
+            if _covers(it, hx, hy):
+                add("MED", "hand_hidden",
+                    f"hand at ({hx:.0f},{hy:.0f}) sits inside a {it.tag} its "
+                    f"own figure draws later (head/hair) — it is erased; use a "
+                    f"pose whose hands clear the hair (wave_high / cheer)")
+                break
+
     # ---- ground tangency ------------------------------------------------------------
     for it in visible:
         gy = it.el.get("data-ground")
@@ -1337,7 +1382,10 @@ def lint_book(page_svgs, density_mean_tol=6):
         return len(re.findall(
             rf"<(?:{'|'.join(_SHAPE_TAGS)})[\s>]", svg))
 
-    normalized = [re.sub(r"\s+", " ", s_) for s_ in page_svgs]
+    # an embedded story record (lib/story.py annotate()) is metadata, not
+    # page content: two identical drawings with different records still
+    # duplicate each other
+    normalized = [re.sub(r"\s+", " ", _STORY_META_RE.sub("", s_)) for s_ in page_svgs]
     for i, s_ in enumerate(normalized):
         if s_ in seen:
             findings.append({"severity": "HIGH", "check": "duplicate_page",

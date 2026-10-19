@@ -62,9 +62,10 @@ as the same kid in a thumbnail (`cast_distinctness` flags them).
 - **Small features need size**: gap tooth, dimples, lashes and moles read at figure
   scale ≥1.2; on a distant (≤1.0) figure they are noise. Big features carry the likeness
   on small figures; small marks carry it on the model sheet and close-ups.
-- **Wide hair hides hands**: pigtails (1.7r), afro (1.62r), hijab (1.5r), long_wavy
+- **Wide hair hides hands**: pigtails (1.7r), ponytail (1.7r, its side), afro (1.62r), hijab (1.5r), long_wavy
   (1.45r), braids (1.42r) reach past the head-kill radius — use `kid_stand` poses
-  `wave_high` / `cheer` (`check_traits(t, poses=...)` warns).
+  `wave_high` / `cheer` (`check_traits(t, poses=...)` warns; the validator's
+  `hand_hidden` check measures it on the page).
 - **Gaze is staging, not identity**: `look` (-1..1) turns the head to a 3/4 view —
   features slide toward the gaze and the far ear hides. Set it per page so characters
   look at each other or at the thing the caption names (`space3d.look_toward`).

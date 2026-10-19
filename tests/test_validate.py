@@ -513,3 +513,27 @@ def test_hand_rolled_page_frame_is_chrome_by_geometry():
     stray = f'<rect x="20" y="300" width="200" height="100" fill="white" stroke="black"/>'
     rep2 = V.validate_svg(svg.replace(frame, frame + stray))
     assert any(f["check"] == "border_clearance" for f in rep2["findings"])
+
+
+# ---------------------------------------------------------------- hand_hidden
+def test_hand_hidden_by_own_wide_hair():
+    from charlib import G, spage, kid_stand
+    hidden = V.validate_svg(spage("x", G(425, 900, kid_stand({"hair": "pigtails"}, "wave"), 1.3),
+                                layout="activity"))
+    assert [f for f in hidden["findings"] if f["check"] == "hand_hidden"]
+    for pose in ("wave_high", "cheer"):
+        ok = V.validate_svg(spage("x", G(425, 900, kid_stand({"hair": "pigtails"}, pose), 1.3),
+                                layout="activity"))
+        assert not [f for f in ok["findings"] if f["check"] == "hand_hidden"]
+    short = V.validate_svg(spage("x", G(425, 900, kid_stand({"hair": "buzz"}, "wave"), 1.3),
+                               layout="activity"))
+    assert not [f for f in short["findings"] if f["check"] == "hand_hidden"]
+
+
+def test_lint_book_ignores_story_records():
+    from charlib import name_trace_page
+    from story import annotate
+    page = name_trace_page(["Max"])
+    a = annotate(page, {"page": "a", "kind": "names"})
+    b = annotate(page, {"page": "b", "kind": "names"})
+    assert any(f["check"] == "duplicate_page" for f in V.lint_book([a, b])["findings"])

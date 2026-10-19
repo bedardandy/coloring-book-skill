@@ -100,7 +100,7 @@ def creativity():
     thought bubble, both placed via speaker_top (the bubble tail ends 20px
     above the MEASURED head top), then the pattern menu + design template."""
     gy = 585
-    girl = G(215, gy, kid_stand(T1, "wave"), 0.95)
+    girl = G(215, gy, kid_stand(T1, "wave_high"), 0.95)   # pigtails swallow the stock wave hand
     pup = G(560, gy, dog({"coat": "spots"}), 1.5)
     girl_top = fragment_bbox(girl, stroke=False)[1]
     pup_head = (560 + 58 * 1.5, gy - 130 * 1.5)            # dog head top (local 58,-130)

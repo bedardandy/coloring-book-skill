@@ -532,7 +532,7 @@ HEADWEAR = (None, "hijab")                                    # headwear
 # hair (or headwear) reaching past the 1.3r head-kill radius, in r: stock
 # wave/up hands hide behind it — use the wave_high / cheer poses
 WIDE_HAIR = {"pigtails": 1.7, "long_wavy": 1.45, "afro": 1.62, "braids": 1.42,
-             "hijab": 1.5}
+             "hijab": 1.5, "ponytail": 1.7}   # ponytail: on the hair_part side only
 
 # head outlines as (rx, ry, centre dy, chin pinch, squareness) in r units —
 # rx/ry within ~10% of the circle so every hair silhouette still fits
