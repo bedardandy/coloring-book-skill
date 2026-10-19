@@ -122,8 +122,8 @@ line weights and the composition recipe. Keep pages deterministic; partial rebui
   composition if needed); `StoryBible.annotate(svg, page)` embeds each page's record.
 - **Photos as art** (`photolib`): traces stay local by default; for people, facial
   features are protected from the trace's despeckling — pass vision `hints` (your own
-  pixel-accurate read of faces, subject box, keep/drop regions) when YuNet misses, and
-  check `feature_fidelity`. Image-model backends (segmentation, depth, line art) are
+  pixel-accurate read of faces, subject box, keep/drop regions) when YuNet misses —
+  render `hints_overlay` and LOOK before tracing — and check `feature_fidelity`. Image-model backends (segmentation, depth, line art) are
   opt-in; a hosted one needs `allow_remote=True` AND the parent's consent for a person's
   photo (`reference/photo-guide.md`).
 `reference/library-guide.md` tours each library area (line vocabulary, letters, scene

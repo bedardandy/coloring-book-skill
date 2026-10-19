@@ -117,6 +117,10 @@ PROTECT_MIN_LEN = 8.0              # image-px floor for protected strokes (pupil
 PROTECT_SPUR = 4.0                 # spur pruning inside zones (a short brow is not a spur)
 PROTECT_DARK_RATIO = 0.85          # protected blob kept if darker than 85% of the median
 PROTECT_SIMPLIFY = 0.4             # simplify epsilon x this inside zones (small shapes stay round)
+PUPIL_WINDOW = 0.22               # iris search window half-size, x interocular distance
+PUPIL_DARK = 0.35                 # iris = darker than window min + this x (median - min)
+PUPIL_CONTRAST = 25.0             # below this median-min gray range: no iris (closed / soft)
+PUPIL_R = (0.05, 0.12)            # iris dot radius clamp, x interocular distance
 PROTECT_MAX_STROKES = 80           # protected strokes ride outside the max_strokes cut, up to this
 FIDELITY_RADIUS = 0.20             # feature_fidelity: ink within this x IOD of a feature = present
 FIDELITY_MIN = 0.80                # line art from a generative model below this = identity drift
@@ -269,6 +273,43 @@ def _all_faces(gray, bgr, hz, backends, allow_remote):
 # ---------------------------------------------------------------- vision hints
 class HintError(ValueError):
     """Malformed hints dict (raised with the offending field named)."""
+
+
+def hints_overlay(photo_path, hints=None, out_path=None, *, max_dim=1600):
+    """Draw what the pipeline will use ON the photo, for the agent to LOOK
+    at before tracing: YuNet faces (blue), hinted faces (magenta) with
+    their five landmarks, the subject box (yellow), keep boxes (green) and
+    drop boxes (red). Spatial reasoning is good but not infallible — a
+    hinted eye 30px off protects the wrong pixels. Returns the BGR image;
+    writes a PNG when out_path is given. Local only."""
+    gray, bgr = load_photo(photo_path, max_dim)
+    hz = parse_hints(hints, gray.shape, _upright_size(photo_path))
+    img = bgr.copy()
+    t = max(2, round(max(img.shape[:2]) / 400))
+
+    def box(b, col):
+        x, y, w, h = (int(round(v)) for v in b)
+        cv2.rectangle(img, (x, y), (x + w, y + h), col, t)
+
+    for f in _all_faces(gray, bgr, hz, None, False):
+        col = (255, 0, 255) if f.get("source") == "hint" else (255, 0, 0)
+        box(f["box"], col)
+        for name, (x, y) in f["landmarks"].items():
+            cv2.circle(img, (int(round(x)), int(round(y))), 2 * t, col, -1)
+            cv2.putText(img, name, (int(x) + 3 * t, int(y) - 2 * t),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.25 * t, col, max(1, t // 2))
+        for b in (f.get("feature_boxes") or {}).values():
+            box(b, col)
+    if hz:
+        if hz.get("subject_box"):
+            box(hz["subject_box"], (0, 220, 255))
+        for b in hz.get("keep") or ():
+            box(b, (0, 180, 0))
+        for b in hz.get("drop") or ():
+            box(b, (0, 0, 255))
+    if out_path:
+        cv2.imwrite(out_path, img)
+    return img
 
 
 def _upright_size(path):
@@ -1919,6 +1960,56 @@ def _load_lineart(src, shape=None, max_dim=1600):
     return g
 
 
+def _pupils(gray, faces, dropz=None):
+    """Filled iris dots for protected faces, page coords. Per eye landmark:
+    the dark component nearest the landmark inside a PUPIL_WINDOW x iod
+    window (darker than the window's min + PUPIL_DARK x its range) becomes a
+    dot at its centroid, radius from its area clamped to PUPIL_R x iod. A
+    window without real contrast (a closed eye, a soft photo) adds nothing."""
+    ih, iw = gray.shape
+    s, ox, oy = _page_fit(iw, ih)
+    out = []
+    for f in faces:
+        lm = f.get("landmarks") or {}
+        if "eye_l" not in lm or "eye_r" not in lm:
+            continue
+        iod = math.hypot(lm["eye_r"][0] - lm["eye_l"][0], lm["eye_r"][1] - lm["eye_l"][1])
+        if iod < 12:
+            continue
+        R = max(3, int(round(PUPIL_WINDOW * iod)))
+        for key in ("eye_l", "eye_r"):
+            ex, ey = (int(round(v)) for v in lm[key])
+            x0, y0, x1, y1 = max(0, ex - R), max(0, ey - R), min(iw, ex + R + 1), min(ih, ey + R + 1)
+            if x1 - x0 < 3 or y1 - y0 < 3:
+                continue
+            if dropz is not None and dropz[ey if ey < ih else ih - 1, ex if ex < iw else iw - 1]:
+                continue
+            win = cv2.GaussianBlur(gray[y0:y1, x0:x1], (3, 3), 0).astype(np.float32)
+            lo, med = float(win.min()), float(np.median(win))
+            if med - lo < PUPIL_CONTRAST:
+                continue
+            # seed at the darkest pixel near the landmark; the iris is the dark
+            # component around it, cut to a disk so a glasses rim or a lash
+            # line touching it does not join in
+            hh, ww = win.shape
+            yy, xx = np.mgrid[0:hh, 0:ww]
+            core = np.hypot(xx - (ex - x0), yy - (ey - y0)) <= 0.5 * R
+            sy, sx = np.unravel_index(np.where(core, win, 1e9).argmin(), win.shape)
+            dark = (win <= lo + PUPIL_DARK * (med - lo)) & \
+                (np.hypot(xx - sx, yy - sy) <= 0.55 * R)
+            n, lab = cv2.connectedComponents(dark.astype(np.uint8), connectivity=8)
+            blob = lab == lab[sy, sx]
+            if not dark[sy, sx] or not blob.any():
+                continue
+            ys_, xs_ = np.nonzero(blob)
+            r = math.sqrt(len(xs_) / math.pi)
+            r = min(PUPIL_R[1] * iod, max(PUPIL_R[0] * iod, r))
+            cx, cy = xs_.mean() + x0, ys_.mean() + y0
+            out.append(f'<circle data-pupil="1" cx="{_f(cx * s + ox)}" cy="{_f(cy * s + oy)}" '
+                       f'r="{_f(r * s)}" fill="black" stroke="black" stroke-width="{_f(SW_SUBJECT)}"/>')
+    return out
+
+
 def _lineart_ink(la, mult, protect=None):
     """Line drawing -> binary ink: Otsu threshold (clamped to LINEART_THR,
     so faint anti-aliased lines survive a resize), a light close, then a
@@ -2101,6 +2192,7 @@ def _trace(photo_path, style, subject, detail, max_dim, overrides=None,
             protect = np.where(dropz > 0, 0, protect).astype(np.uint8)
             protect = protect if protect.any() else None
         ctx["protect"], ctx["dropz"] = protect, dropz
+        ctx["protect_faces"] = bool(on and faces)
     protect, dropz = ctx["protect"], ctx["dropz"]
 
     def finish(ink, shade=gray, lines=False):
@@ -2150,6 +2242,12 @@ def _trace(photo_path, style, subject, detail, max_dim, overrides=None,
                                                detail=detail,
                                                subject_mask=mask if drop else None,
                                                drop=drop, protect=protect))
+    if ctx.get("protect_faces") and ctx["lineart"] is None \
+            and not backends.get("lineart"):
+        # an eye's lids and lashes trace as a squiggle that reads "asleep";
+        # the iris, drawn as a filled dot, is what reads "open eye" at
+        # coloring-book size (the parametric faces' dot-eye convention)
+        elements = elements + _pupils(gray, faces, dropz)
     if drop and elements:
         # a traced subject is a FOREGROUND object: its open silhouette
         # cannot knock out scene lines behind it the way a filled helper
@@ -2370,12 +2468,22 @@ def _main(argv):
                     help="also write a G()-placeable fragment SVG body")
     ap.add_argument("--hints", default=None,
                     help="vision-hints JSON (label, subject_box, faces, keep, drop)")
+    ap.add_argument("--overlay", default=None,
+                    help="write a PNG of the detected/hinted faces, landmarks and "
+                         "boxes drawn on the photo (look at it before tracing)")
     ap.add_argument("--lineart", default=None,
                     help="trace this line drawing (aligned to the photo) instead "
                          "of the photo's own edges")
     ap.add_argument("--no-protect-face", action="store_true",
                     help="disable facial-feature protection zones")
     a = ap.parse_args(argv)
+    if a.overlay:
+        try:
+            hints_overlay(a.photo, a.hints, a.overlay)
+        except HintError as e:
+            print(f"bad hints: {e}", file=sys.stderr)
+            return 2
+        print("wrote", a.overlay)
     kw = dict(hints=a.hints, lineart=a.lineart,
               protect_face=False if a.no_protect_face else None)
     try:

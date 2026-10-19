@@ -366,11 +366,41 @@ the modules listed below.
 ## photolib (photo → coloring outline)
 
 - `load_photo` — EXIF-rotate, load, downscale, return (gray uint8, BGR).
+- `detect_faces_full` — YuNet faces WITH landmarks, in image px:
+- `face_landmarks` — Faces of a photo file in the detect_faces_full dict format: YuNet,
+- `HintError` — Malformed hints dict (raised with the offending field named).
+- `hints_overlay` — Draw what the pipeline will use ON the photo, for the agent to LOOK
+- `normalize_face` — Validate one face dict (box required; landmarks, score, features
+- `parse_hints` — Validate a vision-hints dict (or a path to its JSON file) and return
+- `protection_zones` — uint8 mask (255 = protected) of FEATURE zones in image px: per face
 - `detect_subject` — Soft-rule fallback chain, all local. Returns
 - `extract_ink` — Binary ink mask (255 = line) from a grayscale photo. subject_mask
 - `vectorize` — Ink mask -> ordered list of SVG path elements in PAGE coordinates.
 - `spage_wrap`
+- `feature_fidelity` — Does traced ink sit on each facial feature? faces (detect_faces_full
+- `read_fidelity` — The data-fidelity score recorded on a page, or None.
 - `photo_to_svg` — Photo file -> standalone coloring page SVG string. layout="creative
 - `photo_to_fragment` — Photo -> G()-placeable charlib fragment. Local origin = the traced
 - `composite_page` — Traced photo subject matted onto a scene kit body beside charlib
+- `trace_lineart` — A line drawing from an image model (a local ControlNet line-art
 - `synthetic_photo` — Deterministic photo-like fixture (soft gradients + shapes + grain)
+- `synthetic_face_truth` — The face_features fixture's KNOWN face, in the detect_faces_full
+- `synthetic_face_hints` — The hints dict an agent would write for the face_features fixture
+
+## imagemodels (pluggable image-model backends)
+
+- `BackendError` — Unknown backend, wrong capability, missing weights, bad output.
+- `PrivacyError` — A remote backend was asked to see a photo without allow_remote=True.
+- `register_backend` — Register fn(bgr) -> result under name for one capability. remote=True
+- `unregister_backend` — Remove a backend (built-ins included). Missing names are ignored.
+- `get_backend` — The registry entry for name (a dict); BackendError when unknown.
+- `list_backends` — [(name, capability, remote)] sorted by name, optionally filtered.
+- `check_privacy` — Raise PrivacyError if backend `name` is remote and allow_remote is not
+- `run_backend` — Run a registered backend on a BGR uint8 image (privacy gate first)
+- `validate_output` — Check a backend result and bring it onto the input frame (h, w).
+- `segment_from_output` — Model output -> float/bool map (pre-resize): (1, C, H, W) with C > 1
+- `lineart_from_output` — Model output (1, C, H, W) -> uint8 dark-lines-on-white: channels
+- `depth_from_output` — Model output -> float32 depth, LARGER = NEARER. MiDaS / Depth-Anything
+- `onnx_segmenter` — fn(bgr) -> uint8 subject mask from a LOCAL ONNX segmentation model
+- `onnx_lineart` — fn(bgr) -> uint8 line drawing (dark on white) from a LOCAL ONNX
+- `onnx_depth` — fn(bgr) -> float32 depth (larger = nearer) from a LOCAL ONNX

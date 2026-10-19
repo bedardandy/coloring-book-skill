@@ -35,10 +35,13 @@ from charlib import (HAIR_STYLES, FACE_SHAPES, EYE_STYLES, NOSE_STYLES,
                      MOUTH_STYLES, EAR_STYLES, BROW_STYLES, HEADWEAR, WIDE_HAIR,
                      face_traits, kid_stand, spage, TXT, W)
 
-# population centres of the 5-point landmark ratios (adult + child portraits
-# at the YuNet box convention); a trait moves off its classic value only when
-# the measurement does
-IOD_BOX = 0.42             # interocular distance / face-box width
+# centres of the 5-point landmark ratios. These are ANTHROPOMETRIC ESTIMATES
+# (interpupillary ~63 mm adult / ~52 mm child over a cheek-to-cheek face
+# width ~140 / ~115 mm), not calibrated on a portrait set: a trait moves off
+# its classic value only when a measurement is clearly away from them, and
+# the user confirms every suggestion
+IOD_BOX = 0.44             # interocular distance / face-box width (cheek to cheek)
+IOD_TOL = 0.035            # ...within this of the centre = classic spacing
 MOUTH_IOD = 0.82           # mouth-corner width / interocular distance
 LOWER_IOD = (0.95, 1.25)   # eye-line -> mouth-line / iod: below = round, above = long
 YAW_GAIN = 2.2             # nose offset from the eye midpoint / iod -> look
@@ -80,6 +83,10 @@ def _pt(lm, k):
     return float(v[0]), float(v[1])
 
 
+def _centre(b):
+    return b[0] + b[2] / 2, b[1] + b[3] / 2
+
+
 def _clamp(v, lo, hi):
     return min(hi, max(lo, v))
 
@@ -115,7 +122,7 @@ def traits_from_face(face):
             if box:
                 ratio = iod / max(1.0, float(box[2]))
                 measures["iod_box"] = round(ratio, 3)
-                if abs(ratio - IOD_BOX) > 0.02:
+                if abs(ratio - IOD_BOX) > IOD_TOL:
                     traits["eye_spacing"] = round(_clamp(0.38 + (ratio - IOD_BOX) * 1.2,
                                                          0.31, 0.45), 3)
             if lower < LOWER_IOD[0]:
@@ -127,19 +134,27 @@ def traits_from_face(face):
                                                  0.8, 1.3), 3)
     else:
         notes.append("no landmarks: proportions not measured (trait buckets only)")
+    if face.get("source"):
+        measures["source"] = face["source"]
+    fboxes = face.get("feature_boxes") or {}
     for f in face.get("features") or ():
         word = f if isinstance(f, str) else f.get("name", "")
+        at = None
+        if not isinstance(f, str):
+            at = f.get("at") or (_centre(f["box"]) if f.get("box") else None)
+        elif word in fboxes:
+            at = _centre(fboxes[word])
         if word in FEATURE_TRAITS:
             traits.update(FEATURE_TRAITS[word])
-        elif word == "mole" and box and not isinstance(f, str) and f.get("at"):
+        elif word == "mole" and box and at:
             # a mole position in image px -> offset in head radii from the
             # face centre (r ~ half the box width)
             fx = box[0] + box[2] / 2
             fy = box[1] + box[3] * 0.55
             r = box[2] / 2
             traits.setdefault("moles", []).append(
-                (round(_clamp((f["at"][0] - fx) / r, -0.75, 0.75), 2),
-                 round(_clamp((f["at"][1] - fy) / r, -0.4, 0.8), 2)))
+                (round(_clamp((at[0] - fx) / r, -0.75, 0.75), 2),
+                 round(_clamp((at[1] - fy) / r, -0.4, 0.8), 2)))
         elif word == "mole":
             traits.setdefault("moles", []).append((0.45, 0.5))
             notes.append("mole position not given: placed on the image-right cheek — "

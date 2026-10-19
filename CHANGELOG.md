@@ -1,5 +1,57 @@
 # Changelog
 
+## 2026-10-19 — individual features, real depth, story continuity, image models
+
+Built for the current model generation's spatial reasoning — and every number such a
+model authors (a depth, a hinted eye position, a page's continuity claims) is checked by
+code or by eye on a render, never trusted from the plan.
+
+- **Individual facial features** (`charlib.face` / `face_traits`): `face_shape`, `eyes`
+  (dot/round/almond/smile) + `lashes`, measured `eye_spacing` / `eye_size` /
+  `smile_width`, `nose`, `ears`, `mouth` (grin, gap_tooth), `dimples`, `moles`, freckle
+  density, `brows="thick"`, a 3/4 head turn (`look`), `hair_part`, six new hair styles
+  (ponytail, afro, bun, braids, side_part, bald) and `headwear="hijab"`. Every default is
+  the classic face — a golden hash pins 1378 classic variants byte-identical. A visual
+  pass fixed the eerie first drafts: lashes on the lid read as a scowl, round eyes in
+  glasses as hypnotic spirals, dimples beside the mouth as smirk brackets, a plain
+  ponytail cap as a beanie.
+- **`lib/likeness.py`**: `traits_from_face` (landmarks → measured proportions with
+  documented, uncalibrated anthropometric centres; feature words → traits),
+  `describe_traits`, `check_traits`, `cast_distinctness`, `model_sheet` (the "Meet
+  <name>!" approval page; showcase 21). `reference/likeness-guide.md`.
+- **`lib/space3d.py`**: one-point-perspective `Camera`, depth-sorted `Stage` (far→near,
+  mats, contact lines after mats, `data-depth` tags, `gaze`), colorable `room_box`,
+  `path_recede`, `box3d`, `table3d`, `receding_row`, `ground_grid`, `ground_ellipse` —
+  converging lines stop at the 14 px sliver floor. Validator `depth_order` (MED);
+  `head_clearance` exempts strictly farther depth groups. Showcase 20.
+  `reference/spatial-guide.md`.
+- **`lib/story.py`**: the story bible (`story.json`) + continuity linter — trait drift,
+  prop-state windows, solve-beat actor, location anchors, refrain cadence, arc coverage,
+  caption rules, rendered caption/figure cross-checks — `python3 -m lib.story`. On the
+  bundled example it found a bedroom whose window and bed swapped sides (04/05), a
+  refrain gap (05-06) and past tense (08/09): all fixed, pages embed their story record,
+  example checks clean. `reference/story-mode.md` "Continuity" + "Coherence craft".
+- **Validator `hand_hidden`** (MED): a figure's own hand erased by its own wide hair —
+  found the girl's raised hand swallowed by a pigtail puff on showcase 12 (fixed with
+  `wave_high`). `lint_book` ignores story records when looking for duplicates.
+- **Photo mode, people**: YuNet landmarks are surfaced (`face_landmarks`,
+  `detect_faces_full`, IMAGE-left/right) and the never-wired `protect_face` policy flag
+  now protects eyes, brows, nose, mouth, glasses and declared marks from despeckling;
+  protected eyes get iris dots (a traced lid alone reads asleep); `feature_fidelity`
+  scores the trace (synthetic portrait: 1.0 protected vs 0.43 unprotected) and is a gated
+  eval tier.
+- **Vision hints** (`hints=`, CLI `--hints`): the agent's own pixel read — faces with
+  landmarks and features, subject box, keep / drop boxes — strictly validated;
+  `hints_overlay` / `--overlay` draws them on the photo to check by eye.
+- **`lib/imagemodels.py`**: pluggable segment / landmarks / depth / lineart backends
+  (local ONNX via `cv2.dnn`, or any callable); a remote backend raises `PrivacyError`
+  unless `allow_remote=True`, naming the consent a person's photo needs.
+  `trace_lineart` / `lineart=` turns an image model's line drawing into the house style
+  with fidelity as the identity-drift guard. No weights bundled; nothing phones home.
+- Docs: SKILL.md workflow (likeness, story bible, depth, continuity gate), library guide,
+  model-tiers (provisional per-tier use of the new capabilities), catalog covers the new
+  modules.
+
 ## 2026-09-24 — photo mode on real photos
 
 The photo pipeline was scored on synthetic fixtures only; on real photos a golden

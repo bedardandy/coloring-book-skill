@@ -20,6 +20,8 @@ jobs:
         run: python tools/pii_scan.py --gate
       - name: Fast tests (deterministic, no raster QA)
         run: pytest -q -m "not slow"
+      - name: Story continuity gate (example bible)
+        run: python -m lib.story examples/where-is-button/story.json
       - name: Photo-pipeline evaluation gate
         run: python tools/eval_photo.py --styles clean,sketch --gate
       - name: Full example book build + validation

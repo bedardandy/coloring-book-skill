@@ -16,7 +16,24 @@ built end-to-end by the skill.*
 
 - **Parametric characters, not AI likeness.** Each child is a small trait vector
   (hair silhouette, glasses, freckles, height, a personal motif). Same recognizable
-  kid on every page, zero identity drift, no photos needed or wanted.
+  kid on every page, zero identity drift, no photos needed.
+- **Individual features, kept.** The face vocabulary carries what makes a child
+  *that* child: face shape, measured eye spacing and smile width, eye style and lashes,
+  nose, ears, a gap-tooth grin, dimples, moles, freckle density, 13 hair styles and a
+  hijab — every default is the classic face. From an optional photo, local landmark
+  detection measures the proportions (`lib/likeness.py`); the user confirms a
+  "Meet Harper!" model sheet before the book is drawn
+  ([`reference/likeness-guide.md`](reference/likeness-guide.md)).
+- **Real depth.** `lib/space3d.py` is a one-point-perspective camera and a depth-sorted
+  stage: "Max in front, Lily behind the table" places by world depth, so size, ground
+  contact, draw order and gaze come out of the arithmetic; perspective rooms, paths,
+  boxes and tables are drawn colorable (converging lines stop before they pinch into
+  slivers) ([`reference/spatial-guide.md`](reference/spatial-guide.md)).
+- **Story continuity as code.** A story bible (`story.json`: cast, locations with
+  fixed anchors, the lost toy's state timeline, every beat's caption) and
+  `python3 -m lib.story` lint trait drift, props appearing before they are found,
+  rooms whose furniture swaps sides, refrain cadence and caption rules — on the plan
+  and on the rendered pages. It found three real defects in the bundled example.
 - **Everything is bold vector line art** (SVG → PDF), tuned to age-band line weights.
   No diffusion raster output, no broken gray lines.
 - **A shape library instead of freehand geometry.** LLMs reliably botch bicycles and
@@ -57,7 +74,12 @@ built end-to-end by the skill.*
   golden retriever. Its limits are measured, not guessed: the evaluation gate scores
   real sample photos as well as synthetic fixtures. Low-contrast subjects that fill
   the frame (a tan teddy on a tan wall) still segment poorly, and multi-subject
-  scenes get the soft rule only. See [`reference/photo-guide.md`](reference/photo-guide.md).
+  scenes get the soft rule only. Faces keep their eyes, nose, mouth, glasses and
+  declared marks (landmark protection zones, scored by `feature_fidelity`); the agent
+  can pass its own pixel-accurate **vision hints**, and optional **image-model
+  backends** (segmentation, depth, line art — local ONNX or any callable) plug into
+  the chain. Hosted models are refused unless explicitly allowed. See
+  [`reference/photo-guide.md`](reference/photo-guide.md).
 
 ## Install
 
@@ -77,6 +99,7 @@ cd examples/where-is-button
 python3 make_book.py          # full book -> Harper-Coloring-Book.pdf
 python3 make_book.py 05       # rebuild just page 5
 python3 -m lib.validate examples/where-is-button/pages/*.svg   # from the repo root
+python3 -m lib.story examples/where-is-button/story.json examples/where-is-button/pages/*.svg
 ```
 
 `python3 tools/showcase.py` renders one page per content pack into
@@ -90,10 +113,16 @@ library.
   faces/figures, animals, furniture, vehicles, letters, creativity pages, page/PDF assembly
 - `lib/scenes.py` — scene kits with declared ground lines
 - `lib/validate.py` — the deterministic page validator and book linter
-- `lib/photolib.py` — photo-to-outline tracing
+- `lib/space3d.py` — perspective camera, depth-sorted stage, colorable 3D primitives
+- `lib/likeness.py` — photo landmarks → traits, trait checks, model sheet
+- `lib/story.py` — story bible + continuity linter (`python3 -m lib.story`)
+- `lib/photolib.py` — photo-to-outline tracing (faces protected, vision hints)
+- `lib/imagemodels.py` — pluggable image-model backends with a privacy gate
 - `reference/drawing-guide.md` — collision gotchas, age-band rules, composition recipe
 - `reference/story-mode.md` + `reference/story-tropes.md` — the 10-beat arc and 18 story
   structures for ages 3-6
+- `reference/likeness-guide.md` — individual features: photo cue → trait, rendering rules
+- `reference/spatial-guide.md` — camera, stage, z bands, the vanishing-point sliver rule
 - `reference/shape-cookbook.md` — relative-proportion recipes for everyday objects
 - `reference/catalog.md` — every helper, indexed by interest (auto-generated)
 - `reference/model-tiers.md` — operating modes and escalation ladder by model capability
@@ -113,8 +142,10 @@ when.
 - **Documentation and recipes** (`SKILL.md`, `reference/`): CC BY-SA 4.0.
 - Upstream reference material and its licensing: [CREDITS.md](CREDITS.md).
 
-Photos of real children never belong in this pipeline — the skill extracts trait
-*buckets* ("short hair, glasses") at most, and works fine with none.
+Photos are optional and stay on your machine: the skill reads trait buckets and a few
+clamped proportions from them, never stores or commits them, and refuses to send one to
+a hosted image model unless you explicitly allow it (with a parent's consent for a
+child's photo). It works fine with no photos at all.
 
 ## Using this outside Claude Code (other agents / LLMs)
 

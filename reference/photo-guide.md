@@ -183,6 +183,27 @@ Inside a zone (constants `PROTECT_*` in photolib):
 
 Skin texture outside the zones drops exactly as before.
 
+**Open eyes.** Lids, lashes and the sclera edge trace as a squiggle that
+reads "asleep" at page size (the fidelity score still says 1.0 — ink is
+there). So a protected face (photo trace, not model line art) gets an iris
+dot per eye: the dark component around the darkest pixel near each eye
+landmark, cut to a disk so a glasses rim cannot join it, radius from its
+area clamped to 0.05-0.12 × IOD (`PUPIL_*`). A window without real contrast
+(a closed eye, a very soft photo) adds nothing. Dots carry `data-pupil="1"`.
+This is the parametric faces' dot-eye convention, and it is what reads.
+
+**Check your hints by eye.** `hints_overlay(photo, hints, "overlay.png")`
+(CLI `--overlay overlay.png`) draws YuNet faces (blue), hinted faces
+(magenta) with their landmarks and feature boxes, the subject box (yellow),
+keep (green) and drop (red) boxes onto the working image. Look at it
+before tracing: a hinted eye 30 px off protects the wrong pixels.
+
+**From a photo to a character.** `face_landmarks()` output feeds
+`likeness.traits_from_face(face)` (measured eye spacing / smile width /
+face length + feature words → trait keys) — the route for the PARAMETRIC
+book characters, which stay consistent on every page. Tracing a person's
+photo is for a one-off "photo page", not for the cast.
+
 `feature_fidelity(svg_or_elements, faces, image_shape)` maps each
 landmark (and declared feature: glasses → bridge, mole → its box centre
 ...) onto the page with the trace's own `_page_fit` and reports whether

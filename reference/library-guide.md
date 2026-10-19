@@ -105,7 +105,16 @@ charlib characters. Subject policies (face/car/house/animal…) are SOFT rules �
 loop adjusts them. Honest limits (2026-09): best on ONE high-contrast subject in
 `sketch` style; interiors, fences and grass trace as noise and `clean` can double
 contours. Say so to the user instead of shipping a noisy trace. All processing is
-local; the bundled YuNet face model (Apache-2.0) never phones home. See
+local; the bundled YuNet face model (Apache-2.0) never phones home.
+People: `face_landmarks(photo, hints=)` (YuNet's five points, IMAGE-left/right) feeds
+feature-protection zones (eyes, brows, nose, mouth, glasses, declared marks survive the
+despeckling; protected eyes get iris dots) and `feature_fidelity` scores the trace.
+Vision `hints=` (your own pixel read: faces, subject box, keep/drop boxes — verify with
+`hints_overlay`) fix what YuNet/GrabCut miss. `lib/imagemodels.py` registers optional
+backends — segment / landmarks / depth / lineart, local ONNX via `cv2.dnn` or any
+callable; remote ones raise `PrivacyError` unless `allow_remote=True` (and a person's
+photo needs consent). `trace_lineart` / `lineart=` normalizes an image model's line
+drawing into the house style, with fidelity as the identity-drift guard. See
 `photo-guide.md`.
 
 ## Page assembly and QA
