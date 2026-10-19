@@ -210,11 +210,13 @@ def depth_room():
                 C(0, 10, 12, 4, "white"))
 
     st.add(lamp, x=0, z=1500, y=520, name="lamp", contact=False)
-    st.add(lambda: kid_stand(T2, "wave"), x=-170, z=830, name="Max")
+    st.add(lambda: kid_stand(dict(T2, look=st.gaze("Max", "Lily")), "wave"),
+           x=-170, z=830, name="Max")
     # Lily's feet (y~778) fall inside the table top's page band, so the
     # slab hides her legs instead of leaving fragments under it
     st.add_table(x=60, z=1020, w=250, d=190, h=80, name="table")
-    st.add(lambda: kid_stand(T1, "wave_high"), x=60, z=1300, name="Lily")
+    st.add(lambda: kid_stand(dict(T1, look=st.gaze("Lily", "Max")), "wave_high"),
+           x=60, z=1300, name="Lily")
     st.add_box(x=270, z=1120, w=150, d=160, h=110, name="toy box")
     st.add(lambda: dog_sit({"coat": "spots"}), x=230, z=880, name="dog",
            flip=True)
