@@ -3,7 +3,8 @@
 and validate each with lib.validate — a fast visual + deterministic smoke
 of the whole library. Run from anywhere:
 
-    python tools/showcase.py
+    python tools/showcase.py           # every page
+    python tools/showcase.py 20 07     # only pages whose name contains 20/07
 """
 import os
 import sys
@@ -33,7 +34,9 @@ from charlib import (W, G, spage, kid_stand, kid_run, kid_jump,          # noqa:
                      dino, soccer_ball, bird_side, crater_ground, fit_fragment,
                      fragment_bbox, LINE, C, P, cloud, matted, flower,
                      grass_tuft, lamppost, ball, castle_small, airplane, pond,
-                     tree_round, tree_pine)
+                     tree_round, tree_pine, dog_sit)
+from space3d import (Camera, Stage, room_box, wall_quad,          # noqa: E402
+                     ground_ellipse)
 from validate import validate_svg  # noqa: E402
 
 T1 = {"hair": "pigtails", "outfit": "dress"}
@@ -193,6 +196,34 @@ def farm_day():
             matted(chicken(128, g + 24, w=118)))
 
 
+# ---------------------------------------------------------------- depth page
+# lib/space3d.py: one-point-perspective room + a depth-sorted Stage. Every
+# position below is a WORLD (x, z); page position, scale and contact line
+# follow from the camera, and Stage.render() paints far to near.
+def depth_room():
+    cam = Camera()
+    st = Stage(cam)
+
+    def lamp():          # feet origin = shade rim; cord ends AT the ceiling
+        return (LINE(0, -46, 0, -120, 4) +
+                P("M -56 0 L -30 -50 L 30 -50 L 56 0 Z", 5, "white") +
+                C(0, 10, 12, 4, "white"))
+
+    st.add(lamp, x=0, z=1500, y=520, name="lamp", contact=False)
+    st.add(lambda: kid_stand(T2, "wave"), x=-170, z=830, name="Max")
+    # Lily's feet (y~778) fall inside the table top's page band, so the
+    # slab hides her legs instead of leaving fragments under it
+    st.add_table(x=60, z=1020, w=250, d=190, h=80, name="table")
+    st.add(lambda: kid_stand(T1, "wave_high"), x=60, z=1300, name="Lily")
+    st.add_box(x=270, z=1120, w=150, d=160, h=110, name="toy box")
+    st.add(lambda: dog_sit({"coat": "spots"}), x=230, z=880, name="dog",
+           flip=True)
+    return (room_box(cam, height=640, door=True) +
+            wall_quad(cam, -380, 1050, 1450, 300, 450, inset=16) +
+            ground_ellipse(cam, -40, 1150, 260, 170) +          # rug
+            st.render())
+
+
 def pages():
     gr, fl = "ground", "float"
     return {
@@ -256,6 +287,7 @@ def pages():
         "10-scenes-space": space_landing(),
         "11-scenes-farm": farm_day(),
         "12-creativity": creativity(),
+        "20-depth": depth_room(),
     }
 
 
@@ -292,8 +324,11 @@ def main():
         _photo, style="sketch", title="Sketch Style", layout="creative",
         caption="The same dog in sketch style."))
 
+    only = sys.argv[1:]
     bad = 0
     for name in sorted(builders):
+        if only and not any(o in name for o in only):
+            continue
         kind, content = builders[name]
         svg = content if kind == "page" else spage(
             name.split("-", 1)[1].replace("-", " ").title(), content,

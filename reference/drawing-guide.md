@@ -183,6 +183,11 @@ and printed by the CLI.
 Rotate `variant` between pages of the same setting so spreads don't repeat
 a layout; keep one variant per scene across a single book for coherence.
 
+For explicit depth ("in front of / behind / far away", room interiors, paths
+running into the distance) place by world depth with `lib/space3d.py`
+(`Camera` + depth-sorted `Stage`): the three layers become z bands — see
+`reference/spatial-guide.md`.
+
 ## Vision-reviewed composition lessons (2026-08)
 - Scene-kit suns/clouds sit at y>=215: sky tokens at title height collide
   with page titles (was a real defect in scene_meadow/street/beach/farm).

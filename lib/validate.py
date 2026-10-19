@@ -36,7 +36,9 @@ rules that reference/drawing-guide.md previously asked models to eyeball:
                      advances); legacy <text> falls back to the DejaVu
                      per-char estimate (the 0.55x/0.62x rule)
   head_clearance     no foreign element inside a face's 1.3r kill radius
-                     (heads draw LAST and silently cover props)
+                     (heads draw LAST and silently cover props); art of a
+                     strictly FARTHER data-depth group drawn before the head
+                     is correct occlusion and exempt
   hand_arm           hand circles must OVERLAP some line endpoint (a 2px gap
                      reads as a floating bubble); line ends stopping just
                      outside a hand are flagged as near-misses
@@ -45,6 +47,16 @@ rules that reference/drawing-guide.md previously asked models to eyeball:
                      gap floor (3-4mm at 100dpi)
   mat_swallow        a later knockout mat fully covering an earlier element
                      (the documented "dog's halo ate the mound" failure)
+  depth_order        over <g data-depth="z"> groups (lib/space3d.py Stage
+                     output, or hand-tagged): MED when a FARTHER group is
+                     drawn at a larger scale (data-depth-scale) or stands
+                     lower on the page (data-depth-ground, else its bbox
+                     bottom) than a nearer one, and MED "farther object
+                     painted over nearer one" when a group lying wholly
+                     behind another (data-depth > the other's
+                     data-depth-far, default its data-depth) is drawn AFTER
+                     it and their boxes overlap. Summary in report["depth"]
+                     (absent when the page has no depth groups)
   float_noise        leftover long decimals (should be impossible post-serialize)
 
 Text is never scene art: <text> elements and every glyph path inside a
@@ -92,6 +104,8 @@ MID_RATIO = 0.40           # middle-band ink must reach >= 40% of the heavier
                            # tests in tests/test_validate.py)
 MASS_MIN_BAND = 5.0        # below this % in EVERY band the page is sparse, not
                            # hourglass-shaped (scene_span owns that failure)
+DEPTH_SCALE_TOL = 0.01     # depth_order slack between groups: scale and
+DEPTH_GROUND_TOL = 2.0     # ground-y (px) tags are rounded to 0.01 / 0.1
 FG_FIG_H = 300             # ~kid_stand at scale 1.2 (hair + raised hand) — the
                            # recipe's foreground size; smaller figures get the
                            # "scale figures 1.2-1.4" advice
@@ -658,7 +672,7 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_min=SPAN_MIN,
                  min_face_r=MIN_FACE_R, caption_y=CAPTION_Y, title_y=TITLE_Y,
                  require_span=True, mid_ratio=MID_RATIO):
     """Validate one serialized page SVG. Returns a report dict:
-    {ok, findings: [{severity, check, msg}], counts, span, mass}.
+    {ok, findings: [{severity, check, msg}], counts, span, mass[, depth]}.
 
     `span` is the scene_span measurement: {top, bottom, px, raw_top} — the
     extent of ink-bearing rows (raw_top also counts lone thin strokes).
@@ -670,7 +684,11 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_min=SPAN_MIN,
     ink; `skip` names why a page was not judged (layout opt-out, ...).
     Ownership: scene_span owns the scene's vertical EXTENT (strip pages,
     floating scenes: HIGH); mass_distribution owns where ink sits WITHIN the
-    page (hollow middle: MED). require_span=False skips both."""
+    page (hollow middle: MED). require_span=False skips both.
+
+    `depth` (only on pages with <g data-depth> groups) is the depth_order
+    summary: {groups, order (names in draw order), scale_conflicts,
+    inversions}."""
     findings = []
 
     def add(sev, check, msg):
@@ -912,6 +930,34 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_min=SPAN_MIN,
         if not it.chrome and (y > H - BORDER_INSET or y < BORDER_INSET + 20):
             add("MED", "text_fit", f"text baseline y={y:.0f} outside safe area")
 
+    # ---- depth groups (lib/space3d.py) ------------------------------------------
+    # outermost <g data-depth="z"> groups, and the world depth of every element
+    # inside one: head_clearance and depth_order read them. Empty (no effect)
+    # on pages without depth groups.
+    groups = []
+    elem_z = {}
+
+    def depth_walk(node, in_mat, z):
+        tag = node.tag.replace(_SVG_NS, "")
+        if tag not in ("svg", "g"):
+            if z is not None:
+                elem_z[id(node)] = z
+            return
+        im = in_mat or node.get("data-mat") == "1"
+        if (z is None and tag == "g" and not im
+                and node.get("data-depth") is not None):
+            groups.append(node)  # the outermost depth group owns its subtree
+            try:
+                z = float(node.get("data-depth"))
+            except ValueError:
+                z = None
+        for ch in node:
+            depth_walk(ch, im, z)
+
+    depth_walk(root, False, None)
+    face_z = {it.idx: elem_z.get(id(it.el)) for it in visible
+              if it.el.get("data-face")}
+
     # ---- head clearance ----------------------------------------------------------
     # Two real failure modes, checked separately:
     #   (a) a small foreign element FULLY inside the kill disk gets silently
@@ -950,6 +996,12 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_min=SPAN_MIN,
                            for px, py in corners)
             small = max(bb[2] - bb[0], bb[3] - bb[1]) <= 1.6 * kill_r
             if fully_in and small:
+                # a FARTHER depth group's art drawn before a nearer head
+                # (a distant tree trunk behind a kid) is correct occlusion
+                fz, ez = face_z.get(fidx), elem_z.get(id(it.el))
+                if (fz is not None and ez is not None and ez > fz
+                        and it.idx < fidx):
+                    continue
                 # a detail INSIDE an earlier, larger background shape that
                 # extends beyond the kill disk (building window, rug stripe)
                 # is ordinary depth layering behind a foreground figure —
@@ -1150,6 +1202,84 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_min=SPAN_MIN,
                         seen_msgs.add(msg)
                         add("HIGH", "mat_swallow", msg)
 
+    # ---- depth order ---------------------------------------------------------
+    # <g data-depth="z"> groups (space3d.Stage) carry their world depth; the
+    # perspective contract is arithmetic: farther = smaller and higher on the
+    # page, and painted BEFORE anything nearer that it overlaps
+    depth_rep = None
+    if groups:
+        vis_bb = {id(it.el): it.wbbox for it in visible
+                  if it.wbbox and not it.text and not it.chrome}
+
+        def art_boxes(node, in_mat):
+            tag = node.tag.replace(_SVG_NS, "")
+            if tag == "g":
+                if node.get("data-text") == "1":
+                    return []
+                im = in_mat or node.get("data-mat") == "1"
+                return [b for ch in node for b in art_boxes(ch, im)]
+            bb = None if in_mat else vis_bb.get(id(node))
+            return [bb] if bb else []
+
+        def num(node, key):
+            try:
+                return float(node.get(key))
+            except (TypeError, ValueError):
+                return None
+
+        dg = []
+        for k, node in enumerate(groups):
+            z = num(node, "data-depth")
+            boxes = art_boxes(node, False)
+            if z is None or not boxes:
+                continue
+            bb = (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                  max(b[2] for b in boxes), max(b[3] for b in boxes))
+            zf = num(node, "data-depth-far")
+            gy = num(node, "data-depth-ground")
+            dg.append({"name": node.get("data-depth-name") or f"#{k + 1}",
+                       "z": z, "z_far": max(z, zf) if zf is not None else z,
+                       "scale": num(node, "data-depth-scale"),
+                       "ground": gy if gy is not None else bb[3],
+                       "bbox": bb, "order": k})
+        n_scale = n_occ = 0
+        for a in dg:
+            for b in dg:
+                if not a["z"] > b["z"]:
+                    continue     # a is the FARTHER one of each pair
+                if (a["scale"] is not None and b["scale"] is not None
+                        and a["scale"] > b["scale"] + DEPTH_SCALE_TOL):
+                    n_scale += 1
+                    add("MED", "depth_order",
+                        f"farther '{a['name']}' (z={a['z']:g}) is drawn at "
+                        f"scale {a['scale']:g}, larger than nearer "
+                        f"'{b['name']}' (z={b['z']:g}, scale {b['scale']:g}) "
+                        f"— perspective shrinks with depth: place both with "
+                        f"space3d Camera.place()/Stage")
+                if a["ground"] > b["ground"] + DEPTH_GROUND_TOL:
+                    n_scale += 1
+                    add("MED", "depth_order",
+                        f"farther '{a['name']}' (z={a['z']:g}) stands at "
+                        f"y={a['ground']:.0f}, lower on the page than nearer "
+                        f"'{b['name']}' (z={b['z']:g}, y={b['ground']:.0f}) "
+                        f"— farther ground sits closer to the horizon: place "
+                        f"both with space3d Camera.place()/Stage")
+                if a["z"] > b["z_far"] and a["order"] > b["order"]:
+                    ab, bb_ = a["bbox"], b["bbox"]
+                    ov = (max(ab[0], bb_[0]), max(ab[1], bb_[1]),
+                          min(ab[2], bb_[2]), min(ab[3], bb_[3]))
+                    if ov[0] < ov[2] and ov[1] < ov[3]:
+                        n_occ += 1
+                        add("MED", "depth_order",
+                            f"farther object painted over nearer one: "
+                            f"'{a['name']}' (z={a['z']:g}) is drawn after "
+                            f"'{b['name']}' (z={b['z']:g}) and overlaps it "
+                            f"at {[round(v) for v in ov]} — draw far to near "
+                            f"(space3d Stage.render() sorts)")
+        depth_rep = {"groups": len(dg),
+                     "order": [g_["name"] for g_ in dg],
+                     "scale_conflicts": n_scale, "inversions": n_occ}
+
     # ---- float noise lint ------------------------------------------------------------------
     for m_ in re.finditer(r'([a-zA-Z-]+)="(-?\d+\.\d{3,})"', svg_str):
         add("LOW", "float_noise",
@@ -1166,8 +1296,11 @@ def validate_svg(svg_str, *, clearance=CLEARANCE, span_min=SPAN_MIN,
     counts = {"HIGH": 0, "MED": 0, "LOW": 0}
     for f_ in findings:
         counts[f_["severity"]] += 1
-    return {"ok": counts["HIGH"] == 0, "findings": findings, "counts": counts,
-            "span": span_rep, "mass": mass_rep}
+    rep = {"ok": counts["HIGH"] == 0, "findings": findings, "counts": counts,
+           "span": span_rep, "mass": mass_rep}
+    if depth_rep is not None:
+        rep["depth"] = depth_rep
+    return rep
 
 
 # ------------------------------------------------------------------ file/book API
@@ -1244,6 +1377,12 @@ if __name__ == "__main__":
         print(f"   {ext}mass bands top/mid/bottom {mb['bands']['top']:.1f}/"
               f"{mb['bands']['mid']:.1f}/{mb['bands']['bottom']:.1f}%"
               + ("" if mb["judged"] else f" [not judged: {mb['skip']}]"))
+        dp = rep.get("depth")
+        if dp:
+            print(f"   depth groups {dp['groups']} (drawn "
+                  f"{' > '.join(dp['order'])}); inversions "
+                  f"{dp['inversions']}, scale/ground conflicts "
+                  f"{dp['scale_conflicts']}")
         for f_ in rep["findings"]:
             print(f"   [{f_['severity']}] {f_['check']}: {f_['msg']}")
         bad += rep["counts"]["HIGH"]
