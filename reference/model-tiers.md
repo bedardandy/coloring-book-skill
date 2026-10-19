@@ -84,6 +84,20 @@ statements were badly miscalibrated (70-80% claimed on failed elements). Rules:
   tool is available. If it is not, tell the user plainly that page quality is unverified
   and recommend a review pass with a stronger model.
 
+## The 2026-10 capabilities by tier (provisional — not yet benchmarked)
+Depth staging, measured likeness, the story bible and vision hints arrived after r3. Until
+a benchmark calibrates them, use them like this:
+| Capability | Strong | Mid | Small/fast |
+|---|---|---|---|
+| `space3d` Camera/Stage | plan pages in world coords; custom 3D from the primitives | Stage + `room_box`/`table3d` with the guide's z table; no hand projection math | scene kits only — a room_box page with the worked example at most |
+| Facial traits / likeness | full vocabulary; `look` gaze staging | full vocabulary; `look` only via `stage.gaze` | hair/glasses/outfit/height + at most two marks |
+| Story bible | mandatory in story mode | mandatory | mandatory — it is arithmetic, not judgment |
+| Vision hints on photos | write them; VERIFY by overlaying the boxes/landmarks on the photo and looking | write them only with the overlay check | don't author hints; YuNet + GrabCut only |
+Better spatial reasoning is exactly where a confident wrong answer hurts most: a hinted
+eye 30px off protects the wrong pixels, a stage z off by 2x shrinks a hero below the face
+floor. Numbers you author get checked by code (validator, `depth_order`, `lib.story`,
+`feature_fidelity`) or by your own eyes on a render — never trusted from the plan.
+
 ## Blind-rater test for custom poses (any tier that draws one)
 A pose that YOU know is "kneeling" may read as "a girl in a poofy dress" to everyone
 else — r3 found this on three kneel variants in a row. Before shipping a custom pose or

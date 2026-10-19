@@ -7,7 +7,10 @@ description: Create a personalized printable kids' coloring book (PDF) starring 
 
 Produce a letter-size vector PDF of bold line-art pages starring the user's kids/family/pets.
 Characters are PARAMETRIC (trait vectors), never photo-likeness generation — this guarantees
-the same recognizable character on every page and avoids identity drift entirely.
+the same recognizable character on every page and avoids identity drift entirely. Likeness
+comes from putting each person's INDIVIDUAL features into that vector (hair silhouette,
+glasses, face shape, measured eye spacing, gap tooth, freckles, a mole…) —
+`reference/likeness-guide.md`.
 
 **NON-NEGOTIABLE: this skill's quality lives in executing `lib/charlib.py` with Python**
 (cairosvg + Ghostscript; `python3`). Never re-implement the drawing library by hand or "approximate"
@@ -27,18 +30,26 @@ the whole build).
 
 ### 1. Cast setup — trait vector per character
 For each kid collect/derive: name, age, hair style (one of `charlib.HAIR_STYLES`:
-bob_bangs, bob [+headband], tousled, long_wavy, pigtails, curly, buzz), glasses y/n,
-freckles y/n, a personal motif (star/strawberry/truck/butterfly/dino/ball...), favorite
-things, relative height. Pets: species (dog/cat), coat (plain/spots/patch/stripes), collar.
-Record the OUTFIT in the trait dict and use it everywhere (`t["outfit"]`) — never
-override per-page, and when a cast recurs across books, copy trait dicts verbatim
-(silently changing a signature outfit or feature breaks recognition).
-Adults (grandparent etc.): long_wavy hair + glasses works well; `beard=True` exists.
+bob_bangs, bob [+headband], tousled, long_wavy, pigtails, curly, buzz, ponytail, afro, bun,
+braids, side_part, bald; or `headwear="hijab"`), glasses, freckles, a personal motif
+(star/strawberry/truck/butterfly/dino/ball...), favorite things, relative height — then the
+INDIVIDUAL features that make this child this child: `face_shape`, `eyes` (+`lashes`),
+`eye_spacing`, `nose`, `ears`, `mouth` (gap_tooth / grin), `dimples`, `moles`, freckle
+density (full vocabulary + photo-cue table in `reference/likeness-guide.md`). Pets: species
+(dog/cat), coat (plain/spots/patch/stripes), collar. Record the OUTFIT in the trait dict and
+use it everywhere (`t["outfit"]`) — never override per-page, and when a cast recurs across
+books, copy trait dicts verbatim (silently changing a signature outfit or feature breaks
+recognition). Adults: `hair="bald"` + `beard=True` + glasses, or long_wavy + glasses.
 
-If PHOTOS are provided: look at them ONLY to classify trait buckets (hair style/length,
-glasses, freckles, pet coat pattern) — never attempt to reproduce a face. State the traits
-you extracted so the user can correct them. Distinguishability at this fidelity comes from
-hair silhouette + glasses + freckles + motif + height, not facial geometry.
+If PHOTOS are provided (they stay on the machine — `likeness-guide.md` "Privacy"):
+measure a frontal face locally with `photolib.face_landmarks(photo)` →
+`likeness.traits_from_face(face)` (measured eye spacing / smile width / face length), and
+LOOK at the photo yourself for hair silhouette, glasses, gap tooth, freckles, mole position.
+Then: `likeness.describe_traits(t)` → read the list back so the user corrects it;
+`likeness.check_traits(t, poses)` + `likeness.cast_distinctness(cast)`; render
+`likeness.model_sheet(t)` ("Meet Harper!" — front face, 3/4 turnaround, figure) and get a
+yes BEFORE drawing the book. Recognition at this fidelity comes in salience order: hair
+silhouette > glasses > height > outfit > face shape > marks (gap tooth, freckles, mole).
 
 ### 2. Mode + plan
 - **themed** (default): ~10 pages, each starring the kids together in one child's favorite
@@ -48,7 +59,12 @@ hair silhouette + glasses + freckles + motif + height, not facial geometry.
   the child's age and interests (one-sentence pitch each) and let them pick. Captions on
   every page: 15-25 words, simple present tense, repeat names, chant-along refrain every
   1-2 pages, the child acts (never watches). Low-stakes obstacles only (hidden toy, shy
-  pet). No rhyme.
+  pet). No rhyme. **Write the story bible (`story.json`) BEFORE drawing** — cast trait
+  dicts, locations with their fixed anchors (window left, bed left…), the lost item's
+  state timeline, every beat's caption/actor/props — show `StoryBible.outline()` to the
+  user, and run `python3 -m lib.story story.json` until it is clean
+  (`reference/story-mode.md` "Continuity"). The bundled example's checker caught a bedroom
+  whose bed swapped sides between pages and a refrain that skipped two pages.
 Plan page-type variety: cover, name-tracing page (`name_trace_page`), scene pages
 (start from a `scenes.py` kit matching the setting), one find-the-X activity page,
 ONE creativity page (`symmetry_page` / `finish_page` / `design_template` — a story beat
@@ -60,7 +76,10 @@ bottom-crams without it): ground line ~905; one midground anchor (tree / house /
 furniture / shelf) whose top reaches y≈450-550; main figures ~300-380 px tall
 (`kid_stand` scale 1.2-1.5) standing ON the ground line; sky fillers spread across the
 sky lane, none in the title zone (y<145). This is the three-layer recipe in
-`reference/drawing-guide.md`; the validator measures it.
+`reference/drawing-guide.md`; the validator measures it. When the page has real depth
+("in front of / behind / far away", a room interior, a path into the distance), plan it
+in WORLD coordinates instead: `space3d.Camera` + `Stage` turn the three layers into z bands
+and derive size, ground contact and draw order from depth (`reference/spatial-guide.md`).
 
 ### 3. Render
 Write a `make_book.py` in the output dir that copies the proven structure:
@@ -94,8 +113,21 @@ line weights and the composition recipe. Keep pages deterministic; partial rebui
 - **Scenes.** Start from a `lib/scenes.py` kit and place figures on its declared ground
   line; add your own midground anchor — kit anchors add depth but do not fill the middle
   band.
+- **Depth.** For layered staging use `space3d.Stage` (far→near painter's order, mats,
+  contact lines, `data-depth` tags) with `room_box` / `path_recede` / `box3d` /
+  `table3d` / `receding_row`; named characters at z ≤ ~1350 (faces stay ≥ r28).
+- **Gaze and continuity.** Characters look at what the caption says they look at:
+  `dict(t, look=stage.gaze("Max", "Lily"))` turns the head (3/4 view). A recurring
+  location keeps its anchors on the same side on every page (`mirrored()`/`GM()` the
+  composition if needed); `StoryBible.annotate(svg, page)` embeds each page's record.
+- **Photos as art** (`photolib`): traces stay local by default; for people, facial
+  features are protected from the trace's despeckling — pass vision `hints` (your own
+  pixel-accurate read of faces, subject box, keep/drop regions) when YuNet misses, and
+  check `feature_fidelity`. Image-model backends (segmentation, depth, line art) are
+  opt-in; a hosted one needs `allow_remote=True` AND the parent's consent for a person's
+  photo (`reference/photo-guide.md`).
 `reference/library-guide.md` tours each library area (line vocabulary, letters, scene
-kits, creativity layer, photo mode) with the calls that matter.
+kits, depth, likeness, story bible, creativity layer, photo mode) with the calls that matter.
 
 ### 4. Validate, then look
 Run the DETERMINISTIC gate first: `python3 -m lib.validate pages/*.svg` (exit 1 on any
@@ -106,7 +138,11 @@ y430-715 is hollow — add a midground anchor whose top reaches y≈450-550), fi
 sizes, caption-band + title-zone intrusion, text width, head-kill-radius prop
 clearance, hand/arm overlap, wheel ground tangency, near-parallel sliver gaps,
 knockout-mat halo swallowing, duplicate pages and density pacing
-(`lib.validate.lint_book`). Fix every HIGH by moving/scaling per the message; MEDs need
+(`lib.validate.lint_book`), depth order on `space3d` pages (`depth_order`), and hands
+erased by their own wide hair (`hand_hidden`). Then run the CONTINUITY gate:
+`python3 -m lib.story story.json pages/*.svg` (trait drift, prop-state, location anchors,
+refrain cadence, caption rules, rendered captions vs the bible; exit 1 on HIGH).
+Fix every HIGH by moving/scaling per the message; MEDs need
 a look; LOWs are lint. Non-scene pages opt out of the extent and mass rules via
 `spage(..., layout="activity")` (name tracing / find-the-X), `"creative"`, or
 `"vignette"` (back cover). Report the validator's numbers, never estimates.
@@ -126,5 +162,6 @@ escalation ladder in `reference/model-tiers.md` and say so in the report.
 
 ### 5. Deliver
 Merge to PDF via `build()` (cairosvg + ghostscript). Report the PDF path, page list,
-which traits distinguish each character, and any compromise you shipped. If the user
+which traits distinguish each character (`describe_traits`), the validator and story-check
+counts, and any compromise you shipped. If the user
 has a family share, offer to copy there.

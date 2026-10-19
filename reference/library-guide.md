@@ -49,6 +49,35 @@ mountain_range, road (+ROAD_H), rail_track, fence_picket/ranch, pond, beach_shor
 forest_border, skyline, bridge`. Wrap your own sky decoration in `sky(fragment)` so
 the validator excludes it from scene mass.
 
+## Depth and perspective (`lib/space3d.py`)
+`Camera()` is a one-point-perspective pinhole on the page (horizon y520, ground at
+z=800 → y940 at scale 1.3); `cam.place(x, z)` → `(px, feet_y, scale)` for `G()`.
+`Stage(cam).add(art, x, z, name=)` / `add_table` / `add_box` / `add_row` then `render()`
+draws far→near, mats each item, draws contact lines after the mats and tags every group
+`data-depth` (the validator's `depth_order` check reads it). Colorable 3D primitives:
+`room_box` (interior with ceiling, boards/tiles, back-wall window/door), `wall_quad`,
+`path_recede`, `box3d` (visible faces only), `table3d`, `receding_row`, `ground_grid`,
+`ground_ellipse` — all stop converging lines before they pinch into slivers.
+`look_toward(x_from, x_to)` / `stage.gaze(a, b)` give a face `look` value. Guide:
+`spatial-guide.md`.
+
+## Individual features and likeness (`face()` traits, `lib/likeness.py`)
+`face()` / `face_traits(t)` take `face_shape`, `eyes` (+`lashes`, `eye_size`),
+`eye_spacing`, `nose`, `ears`, `mouth` (grin, gap_tooth), `smile_width`, `dimples`,
+`moles`, freckle density, `brows="thick"`, `look` (3/4 head turn), `hair_part`,
+`headwear="hijab"` and six more hair styles — every default is the classic face.
+`likeness.traits_from_face(face)` (landmarks → measured proportions, feature words →
+traits), `describe_traits`, `check_traits`, `cast_distinctness`, `model_sheet(t)` (the
+approval page). Guide: `likeness-guide.md`.
+
+## Story bible (`lib/story.py`)
+`StoryBible` (JSON: cast, locations + anchors, prop state timelines, beats with
+caption / actor / props / time) + `outline()` for user approval; `check(bible, pages)`
+and `python3 -m lib.story story.json pages/*.svg` lint continuity and captions in the
+validator's HIGH/MED/LOW vocabulary; `bible.annotate(svg, page)` embeds the record so
+rendered pages are cross-checked. `ARC_10` is the 10-beat arc as data. Guide:
+`story-mode.md` "Continuity".
+
 ## Interest packs
 200+ object helpers across vehicles, trains, air, boats, space, flowers/garden, wild
 animals, farm, pets, games, buildings, structures, props and costumes — find them by
@@ -86,3 +115,4 @@ outdir, only=, pdf_name=)` renders SVG/PNG/PDF per page and merges with Ghostscr
 counts uncolorable slivers and asserts print-safe stroke widths;
 `python3 -m lib.validate pages/*.svg` is the deterministic gate;
 `lib.validate.lint_book(svgs)` catches duplicate pages and density pacing.
+`python3 -m lib.story story.json pages/*.svg` is the continuity gate.
